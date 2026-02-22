@@ -1,6 +1,6 @@
-# JidoCode Multi‑Project Coding Assistant Runtime — Module-by-Module Specification
+# JidoCodeServer Multi‑Project Coding Assistant Runtime — Module-by-Module Specification
 
-This document specifies a **module-by-module architecture** for the JidoCode runtime, aligned to:
+This document specifies a **module-by-module architecture** for the JidoCodeServer runtime, aligned to:
 
 - **Project = container** (supervision boundary, shared assets, sandbox policy, tool runner)
 - **Conversation = `JidoConversation` runtime instance** (event ingestion + projections)
@@ -21,33 +21,33 @@ This document specifies a **module-by-module architecture** for the JidoCode run
 
 ### Top-level application
 
-- `JidoCode.Application`  
-  - starts `JidoCode.Engine.Supervisor`
+- `JidoCodeServer.Application`  
+  - starts `JidoCodeServer.Engine.Supervisor`
 
 ### Engine-level (multi-project)
 
-- `JidoCode.Engine.Supervisor`
-  - `JidoCode.Engine.ProjectRegistry` (Registry)
-  - `JidoCode.Engine.ProjectSupervisor` (DynamicSupervisor)
-  - `JidoCode.Engine.ProtocolSupervisor` (optional)
+- `JidoCodeServer.Engine.Supervisor`
+  - `JidoCodeServer.Engine.ProjectRegistry` (Registry)
+  - `JidoCodeServer.Engine.ProjectSupervisor` (DynamicSupervisor)
+  - `JidoCodeServer.Engine.ProtocolSupervisor` (optional)
 
 ### Project-level (per project instance)
 
-- `JidoCode.Project.Supervisor`
-  - `JidoCode.Project.Server` (GenServer)
-  - `JidoCode.Project.AssetStore` (GenServer + ETS owner)
-  - `JidoCode.Project.Policy` (GenServer or pure module)
-  - `JidoCode.Project.TaskSupervisor` (Task.Supervisor)
-  - `JidoCode.Project.ConversationRegistry` (Registry)
-  - `JidoCode.Project.ConversationSupervisor` (DynamicSupervisor)
-  - `JidoCode.Project.Watcher` (optional)
-  - `JidoCode.Project.ProtocolSupervisor` (optional per-project MCP/A2A)
+- `JidoCodeServer.Project.Supervisor`
+  - `JidoCodeServer.Project.Server` (GenServer)
+  - `JidoCodeServer.Project.AssetStore` (GenServer + ETS owner)
+  - `JidoCodeServer.Project.Policy` (GenServer or pure module)
+  - `JidoCodeServer.Project.TaskSupervisor` (Task.Supervisor)
+  - `JidoCodeServer.Project.ConversationRegistry` (Registry)
+  - `JidoCodeServer.Project.ConversationSupervisor` (DynamicSupervisor)
+  - `JidoCodeServer.Project.Watcher` (optional)
+  - `JidoCodeServer.Project.ProtocolSupervisor` (optional per-project MCP/A2A)
 
 ---
 
 # 1) Public facade
 
-## `JidoCode`
+## `JidoCodeServer`
 **Summary:** Public API facade for assistants/frontends.
 
 **Responsibilities**
@@ -73,7 +73,7 @@ This document specifies a **module-by-module architecture** for the JidoCode run
 
 # 2) Engine modules (application-level, multi-project)
 
-## `JidoCode.Engine.Supervisor`
+## `JidoCodeServer.Engine.Supervisor`
 **Summary:** Supervises global registries and the dynamic supervisor for projects.
 
 **Responsibilities**
@@ -83,16 +83,16 @@ This document specifies a **module-by-module architecture** for the JidoCode run
 **Supervision child specs**
 ```elixir
 children = [
-  {Registry, keys: :unique, name: JidoCode.Engine.ProjectRegistry},
-  {DynamicSupervisor, name: JidoCode.Engine.ProjectSupervisor, strategy: :one_for_one},
-  JidoCode.Engine.ProtocolSupervisor # optional
+  {Registry, keys: :unique, name: JidoCodeServer.Engine.ProjectRegistry},
+  {DynamicSupervisor, name: JidoCodeServer.Engine.ProjectSupervisor, strategy: :one_for_one},
+  JidoCodeServer.Engine.ProtocolSupervisor # optional
 ]
-Supervisor.start_link(children, strategy: :one_for_one, name: JidoCode.Engine.Supervisor)
+Supervisor.start_link(children, strategy: :one_for_one, name: JidoCodeServer.Engine.Supervisor)
 ```
 
 ---
 
-## `JidoCode.Engine.ProjectRegistry`
+## `JidoCodeServer.Engine.ProjectRegistry`
 **Summary:** `Registry` mapping `project_id -> project pid(s)`.
 
 **Responsibilities**
@@ -106,7 +106,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: JidoCode.Engine.Su
 
 ---
 
-## `JidoCode.Engine`
+## `JidoCodeServer.Engine`
 **Summary:** Internal Engine API used by the facade.
 
 **Responsibilities**
@@ -125,7 +125,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: JidoCode.Engine.Su
 
 ---
 
-## `JidoCode.Engine.ProtocolSupervisor` (optional)
+## `JidoCodeServer.Engine.ProtocolSupervisor` (optional)
 **Summary:** Hosts global protocol listeners (single-port multiplexers).
 
 **Responsibilities**
@@ -135,17 +135,17 @@ Supervisor.start_link(children, strategy: :one_for_one, name: JidoCode.Engine.Su
 **Supervision child specs (example)**
 ```elixir
 children = [
-  {JidoCode.Protocol.MCP.Gateway, [engine: JidoCode.Engine]},
-  {JidoCode.Protocol.A2A.Gateway, [engine: JidoCode.Engine]}
+  {JidoCodeServer.Protocol.MCP.Gateway, [engine: JidoCodeServer.Engine]},
+  {JidoCodeServer.Protocol.A2A.Gateway, [engine: JidoCodeServer.Engine]}
 ]
-Supervisor.start_link(children, strategy: :one_for_one, name: JidoCode.Engine.ProtocolSupervisor)
+Supervisor.start_link(children, strategy: :one_for_one, name: JidoCodeServer.Engine.ProtocolSupervisor)
 ```
 
 ---
 
 # 3) Project modules (project-level container)
 
-## `JidoCode.Project.Supervisor`
+## `JidoCodeServer.Project.Supervisor`
 **Summary:** Per-project supervision boundary (isolation container).
 
 **Responsibilities**
@@ -156,22 +156,22 @@ Supervisor.start_link(children, strategy: :one_for_one, name: JidoCode.Engine.Pr
 **Supervision child specs (template)**
 ```elixir
 children = [
-  {JidoCode.Project.Server, init},
-  {JidoCode.Project.AssetStore, init},
-  {JidoCode.Project.Policy, init},
-  {Task.Supervisor, name: via(project_id, JidoCode.Project.TaskSupervisor)},
-  {Registry, keys: :unique, name: via(project_id, JidoCode.Project.ConversationRegistry)},
-  {DynamicSupervisor, name: via(project_id, JidoCode.Project.ConversationSupervisor), strategy: :one_for_one},
-  {JidoCode.Project.Watcher, init} # optional
+  {JidoCodeServer.Project.Server, init},
+  {JidoCodeServer.Project.AssetStore, init},
+  {JidoCodeServer.Project.Policy, init},
+  {Task.Supervisor, name: via(project_id, JidoCodeServer.Project.TaskSupervisor)},
+  {Registry, keys: :unique, name: via(project_id, JidoCodeServer.Project.ConversationRegistry)},
+  {DynamicSupervisor, name: via(project_id, JidoCodeServer.Project.ConversationSupervisor), strategy: :one_for_one},
+  {JidoCodeServer.Project.Watcher, init} # optional
 ]
-Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, JidoCode.Project.Supervisor))
+Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, JidoCodeServer.Project.Supervisor))
 ```
 
 > Prefer `via` (Registry/Horde) naming rather than atoms.
 
 ---
 
-## `JidoCode.Project.Server`
+## `JidoCodeServer.Project.Server`
 **Summary:** Project “control plane” GenServer.
 
 **Responsibilities**
@@ -195,7 +195,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, Ji
 
 ---
 
-## `JidoCode.Project.Layout`
+## `JidoCodeServer.Project.Layout`
 **Summary:** Pure helpers for filesystem layout.
 
 **Responsibilities**
@@ -209,7 +209,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, Ji
 
 ---
 
-## `JidoCode.Project.AssetStore`
+## `JidoCodeServer.Project.AssetStore`
 **Summary:** ETS-backed store of compiled project assets (shared across conversations).
 
 **Responsibilities**
@@ -236,7 +236,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, Ji
 
 ---
 
-## `JidoCode.Project.Loaders.Skill`
+## `JidoCodeServer.Project.Loaders.Skill`
 **Summary:** Loads markdown skills from `.jido/skills`.
 
 **Responsibilities**
@@ -249,7 +249,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, Ji
 
 ---
 
-## `JidoCode.Project.Loaders.Command`
+## `JidoCodeServer.Project.Loaders.Command`
 **Summary:** Loads markdown slash commands from `.jido/commands`.
 
 **Responsibilities**
@@ -262,7 +262,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, Ji
 
 ---
 
-## `JidoCode.Project.Loaders.Workflow`
+## `JidoCodeServer.Project.Loaders.Workflow`
 **Summary:** Loads workflows from `.jido/workflows`.
 
 **Responsibilities**
@@ -275,7 +275,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, Ji
 
 ---
 
-## `JidoCode.Project.Loaders.SkillGraph`
+## `JidoCodeServer.Project.Loaders.SkillGraph`
 **Summary:** Loads/builds skill graph snapshot from `.jido/skill_graph`.
 
 **Responsibilities**
@@ -288,7 +288,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, Ji
 
 ---
 
-## `JidoCode.Project.Policy`
+## `JidoCodeServer.Project.Policy`
 **Summary:** Project sandbox and authorization policy.
 
 **Responsibilities**
@@ -308,7 +308,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, Ji
 
 ---
 
-## `JidoCode.Project.ToolCatalog`
+## `JidoCodeServer.Project.ToolCatalog`
 **Summary:** Computes the tool inventory for a project.
 
 **Responsibilities**
@@ -324,7 +324,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, Ji
 
 ---
 
-## `JidoCode.Project.ToolRunner`
+## `JidoCodeServer.Project.ToolRunner`
 **Summary:** Single execution pathway for all tool calls in a project.
 
 **Responsibilities**
@@ -346,7 +346,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, Ji
 
 ---
 
-## `JidoCode.Project.Watcher` (optional)
+## `JidoCodeServer.Project.Watcher` (optional)
 **Summary:** File watcher for `.jido/*` that triggers asset reload.
 
 **Responsibilities**
@@ -357,7 +357,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, Ji
 
 ---
 
-## `JidoCode.Project.ConversationRegistry`
+## `JidoCodeServer.Project.ConversationRegistry`
 **Summary:** Project-local registry mapping `conversation_id -> conversation pid`.
 
 **Responsibilities**
@@ -365,7 +365,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, Ji
 
 ---
 
-## `JidoCode.Project.ConversationSupervisor`
+## `JidoCodeServer.Project.ConversationSupervisor`
 **Summary:** Project-local DynamicSupervisor for conversation servers.
 
 **Responsibilities**
@@ -373,13 +373,13 @@ Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, Ji
 - Typically `:transient` restart for conversation processes
 
 **Child spec**
-- `{JidoCode.Conversation.Server, %{project_id: ..., conversation_id: ..., opts: ...}}`
+- `{JidoCodeServer.Conversation.Server, %{project_id: ..., conversation_id: ..., opts: ...}}`
 
 ---
 
 # 4) Conversation modules (conversation = `JidoConversation` runtime)
 
-## `JidoCode.Conversation.Server`
+## `JidoCodeServer.Conversation.Server`
 **Summary:** Thin GenServer wrapper around a `JidoConversation` instance.
 
 **Responsibilities**
@@ -404,7 +404,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, Ji
 
 ---
 
-## `JidoCode.Conversation.Loop`
+## `JidoCodeServer.Conversation.Loop`
 **Summary:** Pure decision logic triggered after each ingest.
 
 **Responsibilities**
@@ -419,7 +419,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, Ji
 
 ---
 
-## `JidoCode.Conversation.LLM`
+## `JidoCodeServer.Conversation.LLM`
 **Summary:** Adapter around `JidoAi` for LLM calls (streaming and tool-use).
 
 **Responsibilities**
@@ -434,7 +434,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, Ji
 
 ---
 
-## `JidoCode.Conversation.ToolBridge`
+## `JidoCodeServer.Conversation.ToolBridge`
 **Summary:** Bridges tool-request events to Project tool execution and returns tool result events.
 
 **Responsibilities**
@@ -453,7 +453,7 @@ Implementation choices:
 
 # 5) Protocol adapters (MCP, A2A) as event adapters
 
-## `JidoCode.Protocol.MCP.Gateway` (optional, global)
+## `JidoCodeServer.Protocol.MCP.Gateway` (optional, global)
 **Summary:** Global MCP server multiplexing requests by `project_id`.
 
 **Responsibilities**
@@ -469,7 +469,7 @@ Implementation choices:
 
 ---
 
-## `JidoCode.Protocol.MCP.ProjectServer` (optional, per-project)
+## `JidoCodeServer.Protocol.MCP.ProjectServer` (optional, per-project)
 **Summary:** Per-project MCP server (no multiplexing).
 
 **Responsibilities**
@@ -478,7 +478,7 @@ Implementation choices:
 
 ---
 
-## `JidoCode.Protocol.A2A.Gateway` (optional, global)
+## `JidoCodeServer.Protocol.A2A.Gateway` (optional, global)
 **Summary:** A2A endpoint exposing projects as agent hosts and conversations as sessions.
 
 **Responsibilities**
@@ -497,7 +497,7 @@ Implementation choices:
 
 # 6) Signals and telemetry
 
-## `JidoCode.Telemetry`
+## `JidoCodeServer.Telemetry`
 **Summary:** Centralizes emission of `JidoSignal` events.
 
 **Responsibilities**
@@ -516,13 +516,13 @@ Implementation choices:
 
 # 7) Recommended types
 
-## `JidoCode.Types.Event`
+## `JidoCodeServer.Types.Event`
 - `%{type: String.t(), at: DateTime.t(), data: map(), meta: map()}`
 
-## `JidoCode.Types.ToolSpec`
+## `JidoCodeServer.Types.ToolSpec`
 - `%{name: String.t(), description: String.t(), input_schema: map(), output_schema: map(), safety: map()}`
 
-## `JidoCode.Types.ToolCall`
+## `JidoCodeServer.Types.ToolCall`
 - `%{name: String.t(), args: map(), meta: map()}`
 
 ---

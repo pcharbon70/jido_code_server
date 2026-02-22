@@ -1,4 +1,4 @@
-# JidoCode Multi‑Project Coding Assistant Runtime — Tight Alignment Rewrite
+# JidoCodeServer Multi‑Project Coding Assistant Runtime — Tight Alignment Rewrite
 
 This document rewrites the proposed architecture so it aligns tightly with the existing Jido ecosystem work:
 
@@ -33,23 +33,23 @@ This document rewrites the proposed architecture so it aligns tightly with the e
 ### Application level: hosts many isolated projects
 
 ```text
-JidoCode.Engine.Supervisor
-├─ JidoCode.Engine.ProjectRegistry     (Registry: project_instance_id -> pid)
-├─ JidoCode.Engine.ProjectSupervisor   (DynamicSupervisor: starts projects)
-└─ JidoCode.Engine.ProtocolSupervisor  (optional: global listeners / multiplexers)
+JidoCodeServer.Engine.Supervisor
+├─ JidoCodeServer.Engine.ProjectRegistry     (Registry: project_instance_id -> pid)
+├─ JidoCodeServer.Engine.ProjectSupervisor   (DynamicSupervisor: starts projects)
+└─ JidoCodeServer.Engine.ProtocolSupervisor  (optional: global listeners / multiplexers)
 ```
 
 ### Project level: hosts shared assets + many parallel conversations
 
 ```text
-JidoCode.Project.Supervisor (one per project instance)
-├─ JidoCode.Project.Server            (GenServer: config, lifecycle, routing)
-├─ JidoCode.Project.AssetStore        (ETS + GenServer: skills/commands/workflows/graph)
-├─ JidoCode.Project.Policy            (GenServer: sandbox + tool allowlists)
-├─ JidoCode.Project.ToolRunner        (module + Task.Supervisor child)
-├─ JidoCode.Project.TaskSupervisor    (Task.Supervisor: tool exec + timeouts)
-├─ JidoCode.Project.ConversationReg   (Registry: conversation_id -> pid)
-└─ JidoCode.Project.ConversationSup   (DynamicSupervisor: conversations)
+JidoCodeServer.Project.Supervisor (one per project instance)
+├─ JidoCodeServer.Project.Server            (GenServer: config, lifecycle, routing)
+├─ JidoCodeServer.Project.AssetStore        (ETS + GenServer: skills/commands/workflows/graph)
+├─ JidoCodeServer.Project.Policy            (GenServer: sandbox + tool allowlists)
+├─ JidoCodeServer.Project.ToolRunner        (module + Task.Supervisor child)
+├─ JidoCodeServer.Project.TaskSupervisor    (Task.Supervisor: tool exec + timeouts)
+├─ JidoCodeServer.Project.ConversationReg   (Registry: conversation_id -> pid)
+└─ JidoCodeServer.Project.ConversationSup   (DynamicSupervisor: conversations)
 ```
 
 ---
@@ -109,7 +109,7 @@ Each conversation process is a thin wrapper around a `JidoConversation` instance
 A practical shape:
 
 ```text
-JidoCode.Conversation.Server (GenServer)
+JidoCodeServer.Conversation.Server (GenServer)
 - state: %{conversation: JidoConversation.t(), project_id: ..., conversation_id: ...}
 - handle_cast({:event, e}, state) -> ingest -> emit follow-up events
 ```
@@ -149,9 +149,9 @@ This is the “spine”:
 ### Tool sandboxing lives at the Project layer
 
 **All tool calls go through:**
-`JidoCode.Project.Policy.validate(tool_call, project_root)`  
+`JidoCodeServer.Project.Policy.validate(tool_call, project_root)`  
 then execute via:
-`JidoCode.Project.ToolRunner.run(action, args, ctx)`
+`JidoCodeServer.Project.ToolRunner.run(action, args, ctx)`
 
 Default policy rules:
 - any filesystem path arg is resolved under `project_root`
