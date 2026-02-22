@@ -29,12 +29,14 @@ defmodule JidoCodeServer.Project.Supervisor do
     policy = Naming.via(project_id, :policy)
     project_server = Naming.via(project_id, :project_server)
     protocol_supervisor = Naming.via(project_id, :protocol_supervisor)
+    policy_opts = Keyword.get(opts, :policy, [])
 
     children = [
       {JidoCodeServer.Project.ConversationRegistry, name: conversation_registry},
       {JidoCodeServer.Project.ConversationSupervisor, name: conversation_supervisor},
       {JidoCodeServer.Project.AssetStore, [name: asset_store, project_id: project_id]},
-      {JidoCodeServer.Project.Policy, [name: policy, project_id: project_id]},
+      {JidoCodeServer.Project.Policy,
+       Keyword.merge([name: policy, project_id: project_id, root_path: root_path], policy_opts)},
       {JidoCodeServer.Project.TaskSupervisor, name: task_supervisor},
       {JidoCodeServer.Project.ProtocolSupervisor, name: protocol_supervisor},
       {JidoCodeServer.Project.Server,
