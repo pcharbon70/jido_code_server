@@ -19,6 +19,26 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     "additionalProperties" => :additionalProperties,
     "additional_properties" => :additional_properties
   }
+  @max_sensitivity_findings 25
+  @sensitive_key_fragments [
+    "token",
+    "secret",
+    "password",
+    "api_key",
+    "apikey",
+    "authorization",
+    "credential",
+    "private_key",
+    "access_key"
+  ]
+  @sensitive_patterns [
+    {:bearer_token, ~r/\bBearer\s+[A-Za-z0-9\-\._~\+\/]+=*/i},
+    {:openai_key, ~r/\bsk-[A-Za-z0-9]{16,}\b/},
+    {:github_token, ~r/\bghp_[A-Za-z0-9]{20,}\b/},
+    {:github_pat, ~r/\bgithub_pat_[A-Za-z0-9_]{20,}\b/},
+    {:aws_access_key, ~r/\bAKIA[0-9A-Z]{16}\b/},
+    {:slack_token, ~r/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/}
+  ]
 
   @spec run(map(), map()) :: {:ok, map()} | {:error, term()}
   def run(project_ctx, tool_call) when is_map(project_ctx) do
@@ -72,7 +92,12 @@ defmodule Jido.Code.Server.Project.ToolRunner do
          {:ok, result} <- execute_within_task(project_ctx, spec, call),
          :ok <- enforce_result_limits(project_ctx, result) do
       duration_ms = System.monotonic_time(:millisecond) - started_at
-      response = success_response(call, spec, duration_ms, result)
+
+      response =
+        call
+        |> success_response(spec, duration_ms, result)
+        |> maybe_flag_sensitive_result(project_ctx)
+
       Telemetry.emit("tool.completed", response)
       {:ok, response}
     else
@@ -416,6 +441,122 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   rescue
     _error -> 0
   end
+
+  defp maybe_flag_sensitive_result(response, project_ctx) do
+    findings =
+      response
+      |> Map.get(:result)
+      |> collect_sensitivity_findings()
+
+    if findings == [] do
+      response
+    else
+      emit_sensitive_artifact_signal(project_ctx, response, findings)
+
+      response
+      |> Map.put(:risk_flags, ["sensitive_artifact_detected"])
+      |> Map.put(:sensitivity_findings_count, length(findings))
+      |> Map.put(
+        :sensitivity_finding_kinds,
+        findings
+        |> Enum.map(&Atom.to_string(&1.kind))
+        |> Enum.uniq()
+        |> Enum.sort()
+      )
+    end
+  end
+
+  defp emit_sensitive_artifact_signal(project_ctx, response, findings) do
+    Telemetry.emit("security.sensitive_artifact_detected", %{
+      project_id: project_ctx.project_id,
+      conversation_id: Map.get(response, :conversation_id),
+      correlation_id: Map.get(response, :correlation_id),
+      tool: Map.get(response, :tool),
+      finding_count: length(findings),
+      finding_kinds:
+        findings
+        |> Enum.map(&Atom.to_string(&1.kind))
+        |> Enum.uniq()
+        |> Enum.sort(),
+      finding_paths: findings |> Enum.map(& &1.path) |> Enum.take(10)
+    })
+  end
+
+  defp collect_sensitivity_findings(term) do
+    term
+    |> scan_term_for_sensitivity([], [])
+    |> Enum.uniq_by(&{&1.kind, &1.path})
+    |> Enum.take(@max_sensitivity_findings)
+  end
+
+  defp scan_term_for_sensitivity(%_{} = _struct, _path, acc), do: acc
+
+  defp scan_term_for_sensitivity(term, path, acc) when is_map(term) do
+    Enum.reduce(term, acc, fn {key, value}, findings ->
+      key_string = sensitivity_key_string(key)
+      next_path = [key_string | path]
+
+      findings =
+        if sensitivity_key?(key_string) and non_empty_value?(value) do
+          [%{kind: :sensitive_key, path: sensitivity_path(next_path)} | findings]
+        else
+          findings
+        end
+
+      scan_term_for_sensitivity(value, next_path, findings)
+    end)
+  end
+
+  defp scan_term_for_sensitivity(term, path, acc) when is_list(term) do
+    Enum.with_index(term)
+    |> Enum.reduce(acc, fn {value, index}, findings ->
+      scan_term_for_sensitivity(value, ["[#{index}]" | path], findings)
+    end)
+  end
+
+  defp scan_term_for_sensitivity(term, path, acc) when is_tuple(term) do
+    term
+    |> Tuple.to_list()
+    |> scan_term_for_sensitivity(path, acc)
+  end
+
+  defp scan_term_for_sensitivity(term, path, acc) when is_binary(term) do
+    case sensitive_string_kind(term) do
+      nil -> acc
+      kind -> [%{kind: kind, path: sensitivity_path(path)} | acc]
+    end
+  end
+
+  defp scan_term_for_sensitivity(_term, _path, acc), do: acc
+
+  defp sensitive_string_kind(term) when is_binary(term) do
+    Enum.find_value(@sensitive_patterns, fn {kind, pattern} ->
+      if Regex.match?(pattern, term), do: kind, else: nil
+    end)
+  end
+
+  defp sensitivity_key?(key) when is_binary(key) do
+    normalized =
+      key
+      |> String.downcase()
+      |> String.replace(~r/[^a-z0-9]+/, "_")
+
+    Enum.any?(@sensitive_key_fragments, &String.contains?(normalized, &1))
+  end
+
+  defp sensitivity_key_string(key) when is_binary(key), do: key
+  defp sensitivity_key_string(key) when is_atom(key), do: Atom.to_string(key)
+  defp sensitivity_key_string(key), do: inspect(key)
+
+  defp sensitivity_path(path) do
+    path
+    |> Enum.reverse()
+    |> Enum.join(".")
+  end
+
+  defp non_empty_value?(value) when is_binary(value), do: String.trim(value) != ""
+  defp non_empty_value?(nil), do: false
+  defp non_empty_value?(_value), do: true
 
   defp maybe_emit_timeout_signals(project_ctx, tool_call, :timeout) do
     tool = tool_name(tool_call)

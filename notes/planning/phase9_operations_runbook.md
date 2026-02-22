@@ -36,6 +36,8 @@
   - page immediately; indicates outside-root path attempt.
 - `security.sensitive_path_denied`:
   - page for unexpected access to denylisted sensitive files (investigate credential handling and tool prompts).
+- `security.sensitive_artifact_detected`:
+  - warning by default; investigate if frequent, since tool results are returning potentially sensitive content.
 - `security.network_denied`:
   - warning by default; page if repeated and unexpected for a project with enabled egress policy.
   - includes endpoint-denied and protocol-denied (`network_protocol_denied`) policy outcomes.

@@ -68,7 +68,18 @@
   - known token patterns (OpenAI-style keys, GitHub PATs, AWS access keys, Slack token patterns, Bearer values)
 - Recent error diagnostics now store redacted content only.
 
-### 6. Sensitive file-path denylist controls
+### 6. Sensitive artifact classification in tool results
+
+- Tool runner now scans tool result payloads for sensitive key/value indicators.
+- If detected, successful tool responses are annotated with:
+  - `risk_flags: ["sensitive_artifact_detected"]`
+  - `sensitivity_findings_count`
+  - `sensitivity_finding_kinds`
+- Security telemetry emits:
+  - `security.sensitive_artifact_detected`
+- This creates a non-blocking detection path for potentially sensitive tool outputs.
+
+### 7. Sensitive file-path denylist controls
 
 - Policy now blocks denylisted sensitive file-path access by default for path-like tool args.
 - Default denylist covers common credential file patterns:
@@ -81,7 +92,7 @@
 - Security telemetry emits:
   - `security.sensitive_path_denied`
 
-### 7. Network egress policy controls
+### 8. Network egress policy controls
 
 - Tool metadata now marks network-capable tools (`command.run.*`, `workflow.run.*`) in `ToolCatalog`.
 - Policy enforces network egress controls:
@@ -94,7 +105,7 @@
 - Policy telemetry now emits security signal on denied network attempts:
   - `security.network_denied`
 
-### 8. Correlation ID propagation across runtime boundaries
+### 9. Correlation ID propagation across runtime boundaries
 
 - Conversation ingest now guarantees a correlation ID on every incoming event and propagates it to emitted events.
 - LLM lifecycle events (`llm.started`, `assistant.delta`, `tool.requested`, `assistant.message`, `llm.completed`) carry the same correlation ID.
@@ -104,7 +115,7 @@
   - policy decision records (`recent_decisions`, `policy.allowed`, `policy.denied`)
 - This enables end-to-end incident stitching by `project_id` + `conversation_id` + `correlation_id`.
 
-### 9. Incident timeline extraction for response workflows
+### 10. Incident timeline extraction for response workflows
 
 - Runtime API now exposes:
   - `Jido.Code.Server.incident_timeline(project_id, conversation_id, opts \\ [])`
@@ -128,6 +139,7 @@
   - correlation ID propagation through conversation + tool + policy paths
   - bounded incident timeline extraction (conversation + telemetry merge)
   - generated correlation ID fallback when ingest events omit one
+  - sensitive artifact detection signal on risky tool outputs
   - sandbox violation security signal
   - sensitive path deny-by-default and explicit allowlist override
   - network deny-by-default and allowlist enforcement
