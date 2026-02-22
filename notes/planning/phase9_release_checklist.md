@@ -1,4 +1,4 @@
-# JidoCodeServer Phase 9 Release Checklist
+# Jido.Code.Server Phase 9 Release Checklist
 
 ## Quality Gates
 

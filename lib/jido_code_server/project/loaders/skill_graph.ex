@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Project.Loaders.SkillGraph do
+defmodule Jido.Code.Server.Project.Loaders.SkillGraph do
   @moduledoc """
   Loads a skill graph snapshot from markdown files in `.jido/skill_graph`.
   """

@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Engine.ProjectSupervisor do
+defmodule Jido.Code.Server.Engine.ProjectSupervisor do
   @moduledoc """
   Dynamic supervisor for project runtime processes.
   """
@@ -17,7 +17,7 @@ defmodule JidoCodeServer.Engine.ProjectSupervisor do
 
   @spec start_project(keyword()) :: DynamicSupervisor.on_start_child()
   def start_project(opts) do
-    DynamicSupervisor.start_child(__MODULE__, {JidoCodeServer.Engine.Project, opts})
+    DynamicSupervisor.start_child(__MODULE__, {Jido.Code.Server.Engine.Project, opts})
   end
 
   @spec stop_project(pid()) :: :ok | {:error, :not_found | term()}

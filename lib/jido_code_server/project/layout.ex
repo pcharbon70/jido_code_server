@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Project.Layout do
+defmodule Jido.Code.Server.Project.Layout do
   @moduledoc """
   Filesystem layout helpers for project runtime directories.
   """

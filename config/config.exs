@@ -1,7 +1,7 @@
 import Config
 
 config :jido_code_server,
-  project_id_generator: {JidoCodeServer.ProjectId, :generate, []},
+  project_id_generator: {Jido.Code.Server.ProjectId, :generate, []},
   default_data_dir: ".jido",
   tool_timeout_ms: 30_000,
   tool_timeout_alert_threshold: 3,

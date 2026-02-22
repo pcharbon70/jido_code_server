@@ -1,9 +1,9 @@
-defmodule JidoCodeServer.TestSupport.TempProject do
+defmodule Jido.Code.Server.TestSupport.TempProject do
   @moduledoc """
   Helpers for creating temporary project roots with `.jido` layout during tests.
   """
 
-  alias JidoCodeServer.Project.Layout
+  alias Jido.Code.Server.Project.Layout
 
   @spec create!(keyword()) :: String.t()
   def create!(opts \\ []) do

@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Project.ConversationRegistry do
+defmodule Jido.Code.Server.Project.ConversationRegistry do
   @moduledoc """
   Project-local in-memory conversation registry.
   """

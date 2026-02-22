@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Types.ToolCall do
+defmodule Jido.Code.Server.Types.ToolCall do
   @moduledoc """
   Tool invocation payload type and normalization helpers.
   """

@@ -1,10 +1,10 @@
-defmodule JidoCodeServer.Conversation.ToolBridge do
+defmodule Jido.Code.Server.Conversation.ToolBridge do
   @moduledoc """
   Bridge between conversation tool requests and project tool execution.
   """
 
-  alias JidoCodeServer.Project.ToolRunner
-  alias JidoCodeServer.Types.ToolCall
+  alias Jido.Code.Server.Project.ToolRunner
+  alias Jido.Code.Server.Types.ToolCall
 
   @spec handle_tool_requested(map(), String.t(), map()) :: {:ok, [map()]}
   def handle_tool_requested(project_ctx, conversation_id, tool_call)

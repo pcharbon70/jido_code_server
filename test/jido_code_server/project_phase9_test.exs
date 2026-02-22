@@ -1,20 +1,22 @@
-defmodule JidoCodeServer.ProjectPhase9Test do
+defmodule Jido.Code.Server.ProjectPhase9Test do
   use ExUnit.Case, async: false
 
-  alias JidoCodeServer.Engine.ProjectRegistry
-  alias JidoCodeServer.Project.AssetStore
-  alias JidoCodeServer.Project.Layout
-  alias JidoCodeServer.Project.Policy
-  alias JidoCodeServer.Project.ToolRunner
-  alias JidoCodeServer.Telemetry
-  alias JidoCodeServer.TestSupport.TempProject
+  alias Jido.Code.Server, as: Runtime
+
+  alias Jido.Code.Server.Engine.ProjectRegistry
+  alias Jido.Code.Server.Project.AssetStore
+  alias Jido.Code.Server.Project.Layout
+  alias Jido.Code.Server.Project.Policy
+  alias Jido.Code.Server.Project.ToolRunner
+  alias Jido.Code.Server.Telemetry
+  alias Jido.Code.Server.TestSupport.TempProject
 
   setup do
     Telemetry.reset()
 
     on_exit(fn ->
-      Enum.each(JidoCodeServer.list_projects(), fn %{project_id: project_id} ->
-        _ = JidoCodeServer.stop_project(project_id)
+      Enum.each(Runtime.list_projects(), fn %{project_id: project_id} ->
+        _ = Runtime.stop_project(project_id)
       end)
     end)
 
@@ -25,10 +27,10 @@ defmodule JidoCodeServer.ProjectPhase9Test do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
 
-    assert {:ok, project_id} = JidoCodeServer.start_project(root, project_id: "phase9-schema")
+    assert {:ok, project_id} = Runtime.start_project(root, project_id: "phase9-schema")
 
     assert {:error, %{status: :error, tool: "asset.search", reason: reason}} =
-             JidoCodeServer.run_tool(project_id, %{
+             Runtime.run_tool(project_id, %{
                name: "asset.search",
                args: %{"type" => "skill"}
              })
@@ -55,26 +57,26 @@ defmodule JidoCodeServer.ProjectPhase9Test do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:ok, project_id} =
-             JidoCodeServer.start_project(root,
+             Runtime.start_project(root,
                project_id: "phase9-policy-audit",
                allow_tools: ["asset.list"]
              )
 
     assert {:ok, %{status: :ok}} =
-             JidoCodeServer.run_tool(project_id, %{
+             Runtime.run_tool(project_id, %{
                name: "asset.list",
                args: %{"type" => "skill"},
                meta: %{"conversation_id" => "phase9-c1"}
              })
 
     assert {:error, %{status: :error, reason: :denied}} =
-             JidoCodeServer.run_tool(project_id, %{
+             Runtime.run_tool(project_id, %{
                name: "asset.search",
                args: %{"type" => "skill", "query" => "example"},
                meta: %{"conversation_id" => "phase9-c1"}
              })
 
-    diagnostics = JidoCodeServer.diagnostics(project_id)
+    diagnostics = Runtime.diagnostics(project_id)
 
     assert event_count(diagnostics, "policy.allowed") >= 1
     assert event_count(diagnostics, "policy.denied") >= 1
@@ -97,19 +99,19 @@ defmodule JidoCodeServer.ProjectPhase9Test do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:ok, project_id} =
-             JidoCodeServer.start_project(root,
+             Runtime.start_project(root,
                project_id: "phase9-sandbox",
                network_egress_policy: :allow
              )
 
     assert {:error, %{status: :error, reason: :outside_root}} =
-             JidoCodeServer.run_tool(project_id, %{
+             Runtime.run_tool(project_id, %{
                name: "command.run.example_command",
                args: %{"path" => "../outside.md"},
                meta: %{"conversation_id" => "phase9-c2"}
              })
 
-    diagnostics = JidoCodeServer.diagnostics(project_id)
+    diagnostics = Runtime.diagnostics(project_id)
     assert event_count(diagnostics, "security.sandbox_violation") >= 1
   end
 
@@ -118,24 +120,24 @@ defmodule JidoCodeServer.ProjectPhase9Test do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:ok, project_id} =
-             JidoCodeServer.start_project(root, project_id: "phase9-network-deny")
+             Runtime.start_project(root, project_id: "phase9-network-deny")
 
     tool_names =
       project_id
-      |> JidoCodeServer.list_tools()
+      |> Runtime.list_tools()
       |> Enum.map(& &1.name)
 
     refute "command.run.example_command" in tool_names
     refute "workflow.run.example_workflow" in tool_names
 
     assert {:error, %{status: :error, reason: :network_denied}} =
-             JidoCodeServer.run_tool(project_id, %{
+             Runtime.run_tool(project_id, %{
                name: "command.run.example_command",
                args: %{"path" => ".jido/commands/example_command.md"},
                meta: %{"conversation_id" => "phase9-network-c1"}
              })
 
-    diagnostics = JidoCodeServer.diagnostics(project_id)
+    diagnostics = Runtime.diagnostics(project_id)
     assert event_count(diagnostics, "security.network_denied") >= 1
   end
 
@@ -144,21 +146,21 @@ defmodule JidoCodeServer.ProjectPhase9Test do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:ok, project_id} =
-             JidoCodeServer.start_project(root,
+             Runtime.start_project(root,
                project_id: "phase9-network-allow",
                network_egress_policy: :allow
              )
 
     tool_names =
       project_id
-      |> JidoCodeServer.list_tools()
+      |> Runtime.list_tools()
       |> Enum.map(& &1.name)
 
     assert "command.run.example_command" in tool_names
     assert "workflow.run.example_workflow" in tool_names
 
     assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
-             JidoCodeServer.run_tool(project_id, %{
+             Runtime.run_tool(project_id, %{
                name: "command.run.example_command",
                args: %{"path" => ".jido/commands/example_command.md"}
              })
@@ -169,14 +171,14 @@ defmodule JidoCodeServer.ProjectPhase9Test do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:ok, project_id} =
-             JidoCodeServer.start_project(root,
+             Runtime.start_project(root,
                project_id: "phase9-network-allowlist",
                network_egress_policy: :allow,
                network_allowlist: ["example.com"]
              )
 
     assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
-             JidoCodeServer.run_tool(project_id, %{
+             Runtime.run_tool(project_id, %{
                name: "command.run.example_command",
                args: %{
                  "path" => ".jido/commands/example_command.md",
@@ -186,7 +188,7 @@ defmodule JidoCodeServer.ProjectPhase9Test do
              })
 
     assert {:error, %{status: :error, reason: :network_endpoint_denied}} =
-             JidoCodeServer.run_tool(project_id, %{
+             Runtime.run_tool(project_id, %{
                name: "command.run.example_command",
                args: %{
                  "path" => ".jido/commands/example_command.md",
@@ -195,7 +197,7 @@ defmodule JidoCodeServer.ProjectPhase9Test do
                meta: %{"conversation_id" => "phase9-network-c2"}
              })
 
-    diagnostics = JidoCodeServer.diagnostics(project_id)
+    diagnostics = Runtime.diagnostics(project_id)
     assert event_count(diagnostics, "security.network_denied") >= 1
   end
 
@@ -238,15 +240,18 @@ defmodule JidoCodeServer.ProjectPhase9Test do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:ok, project_id} =
-             JidoCodeServer.start_project(root,
+             Runtime.start_project(root,
                project_id: "phase9-runtime-opts",
                tool_max_output_bytes: 64
              )
 
     assert {:error, %{status: :error, reason: {:output_too_large, _size, 64}}} =
-             JidoCodeServer.run_tool(project_id, %{name: "asset.list", args: %{"type" => "skill"}})
+             Runtime.run_tool(project_id, %{
+               name: "asset.list",
+               args: %{"type" => "skill"}
+             })
 
-    diagnostics = JidoCodeServer.diagnostics(project_id)
+    diagnostics = Runtime.diagnostics(project_id)
 
     assert diagnostics.runtime_opts[:tool_max_output_bytes] == 64
   end
@@ -255,20 +260,23 @@ defmodule JidoCodeServer.ProjectPhase9Test do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
 
-    assert {:ok, project_id} = JidoCodeServer.start_project(root, project_id: "phase9-loader")
+    assert {:ok, project_id} = Runtime.start_project(root, project_id: "phase9-loader")
 
     invalid_skill = Path.join(root, ".jido/skills/broken.md")
     File.write!(invalid_skill, <<255, 0, 255>>)
 
-    assert :ok = JidoCodeServer.reload_assets(project_id)
+    assert :ok = Runtime.reload_assets(project_id)
 
-    diagnostics = JidoCodeServer.assets_diagnostics(project_id)
+    diagnostics = Runtime.assets_diagnostics(project_id)
     assert diagnostics.loaded?
     assert diagnostics.errors != []
     assert Enum.any?(diagnostics.errors, &(&1.reason == :invalid_utf8))
 
     assert {:ok, %{status: :ok}} =
-             JidoCodeServer.run_tool(project_id, %{name: "asset.list", args: %{"type" => "skill"}})
+             Runtime.run_tool(project_id, %{
+               name: "asset.list",
+               args: %{"type" => "skill"}
+             })
   end
 
   test "invalid llm adapter emits llm.failed while conversation remains available" do
@@ -276,28 +284,29 @@ defmodule JidoCodeServer.ProjectPhase9Test do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:ok, project_id} =
-             JidoCodeServer.start_project(root,
+             Runtime.start_project(root,
                project_id: "phase9-llm-failure",
                conversation_orchestration: true,
                llm_adapter: :missing_adapter
              )
 
     assert {:ok, "phase9-llm-c1"} =
-             JidoCodeServer.start_conversation(project_id, conversation_id: "phase9-llm-c1")
+             Runtime.start_conversation(project_id, conversation_id: "phase9-llm-c1")
 
     assert :ok =
-             JidoCodeServer.send_event(project_id, "phase9-llm-c1", %{
+             Runtime.send_event(project_id, "phase9-llm-c1", %{
                "type" => "user.message",
                "content" => "hello"
              })
 
     assert :ok =
-             JidoCodeServer.send_event(project_id, "phase9-llm-c1", %{
+             Runtime.send_event(project_id, "phase9-llm-c1", %{
                "type" => "user.message",
                "content" => "still there?"
              })
 
-    assert {:ok, timeline} = JidoCodeServer.get_projection(project_id, "phase9-llm-c1", :timeline)
+    assert {:ok, timeline} =
+             Runtime.get_projection(project_id, "phase9-llm-c1", :timeline)
 
     failed_count =
       timeline
@@ -305,7 +314,7 @@ defmodule JidoCodeServer.ProjectPhase9Test do
 
     assert failed_count >= 2
 
-    diagnostics = JidoCodeServer.conversation_diagnostics(project_id, "phase9-llm-c1")
+    diagnostics = Runtime.conversation_diagnostics(project_id, "phase9-llm-c1")
     assert diagnostics.status == :idle
   end
 
@@ -314,7 +323,7 @@ defmodule JidoCodeServer.ProjectPhase9Test do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:ok, project_id} =
-             JidoCodeServer.start_project(root,
+             Runtime.start_project(root,
                project_id: "phase9-watcher-storm",
                watcher: true,
                watcher_debounce_ms: 30
@@ -330,11 +339,11 @@ defmodule JidoCodeServer.ProjectPhase9Test do
     end)
 
     assert_eventually(fn ->
-      JidoCodeServer.list_assets(project_id, :skill)
+      Runtime.list_assets(project_id, :skill)
       |> Enum.any?(&(&1.name == "storm_skill"))
     end)
 
-    diagnostics = JidoCodeServer.diagnostics(project_id)
+    diagnostics = Runtime.diagnostics(project_id)
     completed_count = event_count(diagnostics, "project.watcher_reload_completed")
 
     assert completed_count >= 1
@@ -352,7 +361,7 @@ defmodule JidoCodeServer.ProjectPhase9Test do
         project_id = "phase9-load-#{index}"
 
         assert {:ok, ^project_id} =
-                 JidoCodeServer.start_project(root,
+                 Runtime.start_project(root,
                    project_id: project_id,
                    conversation_orchestration: true,
                    llm_adapter: :deterministic
@@ -366,7 +375,7 @@ defmodule JidoCodeServer.ProjectPhase9Test do
         conversation_id = "#{project_id}-c#{index}"
 
         assert {:ok, ^conversation_id} =
-                 JidoCodeServer.start_conversation(project_id, conversation_id: conversation_id)
+                 Runtime.start_conversation(project_id, conversation_id: conversation_id)
 
         {project_id, conversation_id}
       end
@@ -378,7 +387,7 @@ defmodule JidoCodeServer.ProjectPhase9Test do
           message = "load-message #{project_id}/#{conversation_id}"
 
           :ok =
-            JidoCodeServer.send_event(project_id, conversation_id, %{
+            Runtime.send_event(project_id, conversation_id, %{
               "type" => "user.message",
               "content" => message
             })
@@ -394,7 +403,7 @@ defmodule JidoCodeServer.ProjectPhase9Test do
 
     Enum.each(results, fn {:ok, {project_id, conversation_id, message}} ->
       assert {:ok, timeline} =
-               JidoCodeServer.get_projection(project_id, conversation_id, :timeline)
+               Runtime.get_projection(project_id, conversation_id, :timeline)
 
       user_messages =
         timeline

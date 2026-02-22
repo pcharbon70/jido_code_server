@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Project.ProtocolSupervisor do
+defmodule Jido.Code.Server.Project.ProtocolSupervisor do
   @moduledoc """
   Placeholder supervisor for project-scoped protocol listeners.
   """

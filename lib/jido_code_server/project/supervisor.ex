@@ -1,11 +1,11 @@
-defmodule JidoCodeServer.Project.Supervisor do
+defmodule Jido.Code.Server.Project.Supervisor do
   @moduledoc """
   Per-project supervision boundary.
   """
 
   use Supervisor
 
-  alias JidoCodeServer.Project.Naming
+  alias Jido.Code.Server.Project.Naming
 
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts \\ []) do
@@ -34,14 +34,14 @@ defmodule JidoCodeServer.Project.Supervisor do
     watcher_opts = Keyword.get(opts, :watcher_opts, [])
 
     children = [
-      {JidoCodeServer.Project.ConversationRegistry, name: conversation_registry},
-      {JidoCodeServer.Project.ConversationSupervisor, name: conversation_supervisor},
-      {JidoCodeServer.Project.AssetStore, [name: asset_store, project_id: project_id]},
-      {JidoCodeServer.Project.Policy,
+      {Jido.Code.Server.Project.ConversationRegistry, name: conversation_registry},
+      {Jido.Code.Server.Project.ConversationSupervisor, name: conversation_supervisor},
+      {Jido.Code.Server.Project.AssetStore, [name: asset_store, project_id: project_id]},
+      {Jido.Code.Server.Project.Policy,
        Keyword.merge([name: policy, project_id: project_id, root_path: root_path], policy_opts)},
-      {JidoCodeServer.Project.TaskSupervisor, name: task_supervisor},
-      {JidoCodeServer.Project.ProtocolSupervisor, name: protocol_supervisor},
-      {JidoCodeServer.Project.Server,
+      {Jido.Code.Server.Project.TaskSupervisor, name: task_supervisor},
+      {Jido.Code.Server.Project.ProtocolSupervisor, name: protocol_supervisor},
+      {Jido.Code.Server.Project.Server,
        [
          name: project_server,
          project_id: project_id,
@@ -59,7 +59,7 @@ defmodule JidoCodeServer.Project.Supervisor do
 
         children ++
           [
-            {JidoCodeServer.Project.Watcher,
+            {Jido.Code.Server.Project.Watcher,
              [
                name: watcher,
                project_id: project_id,

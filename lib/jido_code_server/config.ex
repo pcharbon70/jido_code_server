@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Config do
+defmodule Jido.Code.Server.Config do
   @moduledoc """
   Accessors for runtime configuration defaults used by scaffolding modules.
   """
@@ -7,7 +7,7 @@ defmodule JidoCodeServer.Config do
 
   @spec project_id_generator() :: {module(), atom(), list()}
   def project_id_generator do
-    Application.get_env(@app, :project_id_generator, {JidoCodeServer.ProjectId, :generate, []})
+    Application.get_env(@app, :project_id_generator, {Jido.Code.Server.ProjectId, :generate, []})
   end
 
   @spec default_data_dir() :: String.t()

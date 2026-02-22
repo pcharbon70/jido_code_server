@@ -1,15 +1,15 @@
-defmodule JidoCodeServer.Conversation.Loop do
+defmodule Jido.Code.Server.Conversation.Loop do
   @moduledoc """
   Pure conversation state transitions executed after each ingest.
   """
 
-  alias JidoCodeServer.Conversation.LLM
-  alias JidoCodeServer.Conversation.ToolBridge
-  alias JidoCodeServer.Project.Policy
-  alias JidoCodeServer.Project.ToolCatalog
-  alias JidoCodeServer.Types.Event
-  alias JidoCodeServer.Types.ToolCall
-  alias JidoCodeServer.Types.ToolSpec
+  alias Jido.Code.Server.Conversation.LLM
+  alias Jido.Code.Server.Conversation.ToolBridge
+  alias Jido.Code.Server.Project.Policy
+  alias Jido.Code.Server.Project.ToolCatalog
+  alias Jido.Code.Server.Types.Event
+  alias Jido.Code.Server.Types.ToolCall
+  alias Jido.Code.Server.Types.ToolSpec
 
   @max_orchestration_steps 64
 

@@ -1,11 +1,11 @@
-defmodule JidoCodeServer.Protocol.A2A.Gateway do
+defmodule Jido.Code.Server.Protocol.A2A.Gateway do
   @moduledoc """
   Global A2A adapter that maps task/message operations to conversation events.
   """
 
   use GenServer
 
-  alias JidoCodeServer.Engine
+  alias Jido.Code.Server.Engine
 
   @type project_id :: String.t()
   @type task_id :: String.t()

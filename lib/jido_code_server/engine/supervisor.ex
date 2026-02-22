@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Engine.Supervisor do
+defmodule Jido.Code.Server.Engine.Supervisor do
   @moduledoc """
   Top-level engine supervisor for global runtime services.
   """
@@ -13,9 +13,9 @@ defmodule JidoCodeServer.Engine.Supervisor do
   @impl true
   def init(_opts) do
     children = [
-      JidoCodeServer.Engine.ProjectRegistry,
-      JidoCodeServer.Engine.ProjectSupervisor,
-      JidoCodeServer.Engine.ProtocolSupervisor
+      Jido.Code.Server.Engine.ProjectRegistry,
+      Jido.Code.Server.Engine.ProjectSupervisor,
+      Jido.Code.Server.Engine.ProtocolSupervisor
     ]
 
     Supervisor.init(children, strategy: :one_for_one)

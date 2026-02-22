@@ -1,6 +1,6 @@
 # Jido Code Server
 
-Elixir runtime scaffold for the JidoCodeServer project.
+Elixir runtime scaffold for the Jido.Code.Server project.
 
 ## Status
 

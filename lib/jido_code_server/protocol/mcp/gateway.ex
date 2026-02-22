@@ -1,12 +1,12 @@
-defmodule JidoCodeServer.Protocol.MCP.Gateway do
+defmodule Jido.Code.Server.Protocol.MCP.Gateway do
   @moduledoc """
   Global MCP adapter that multiplexes requests by `project_id`.
   """
 
   use GenServer
 
-  alias JidoCodeServer.Engine
-  alias JidoCodeServer.Types.ToolCall
+  alias Jido.Code.Server.Engine
+  alias Jido.Code.Server.Types.ToolCall
 
   @type project_id :: String.t()
   @type conversation_id :: String.t()

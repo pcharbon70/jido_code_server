@@ -1,25 +1,27 @@
-defmodule JidoCodeServerTest do
+defmodule Jido.Code.ServerTest do
   use ExUnit.Case, async: true
 
-  alias JidoCodeServer.TestSupport.FakeAction
-  alias JidoCodeServer.TestSupport.FakeLLM
-  alias JidoCodeServer.TestSupport.TempProject
+  alias Jido.Code.Server, as: Runtime
+  alias Jido.Code.Server.TestSupport.FakeAction
+  alias Jido.Code.Server.TestSupport.FakeLLM
+  alias Jido.Code.Server.TestSupport.TempProject
+  alias Runtime.Config
 
   test "root module is available" do
-    assert Code.ensure_loaded?(JidoCodeServer)
+    assert Code.ensure_loaded?(Runtime)
   end
 
   test "phase 0 config defaults are loaded" do
-    assert JidoCodeServer.Config.default_data_dir() == ".jido"
-    assert JidoCodeServer.Config.tool_timeout_ms() == 30_000
-    assert JidoCodeServer.Config.tool_timeout_alert_threshold() == 3
-    assert JidoCodeServer.Config.tool_max_output_bytes() == 262_144
-    assert JidoCodeServer.Config.tool_max_artifact_bytes() == 131_072
-    assert JidoCodeServer.Config.network_egress_policy() == :deny
-    assert JidoCodeServer.Config.network_allowlist() == []
-    assert JidoCodeServer.Config.llm_timeout_ms() == 120_000
-    assert JidoCodeServer.Config.tool_max_concurrency() == 8
-    assert JidoCodeServer.Config.watcher_debounce_ms() == 250
+    assert Config.default_data_dir() == ".jido"
+    assert Config.tool_timeout_ms() == 30_000
+    assert Config.tool_timeout_alert_threshold() == 3
+    assert Config.tool_max_output_bytes() == 262_144
+    assert Config.tool_max_artifact_bytes() == 131_072
+    assert Config.network_egress_policy() == :deny
+    assert Config.network_allowlist() == []
+    assert Config.llm_timeout_ms() == 120_000
+    assert Config.tool_max_concurrency() == 8
+    assert Config.watcher_debounce_ms() == 250
   end
 
   test "temp project helper creates expected layout" do

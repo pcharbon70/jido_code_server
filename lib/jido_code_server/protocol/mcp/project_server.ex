@@ -1,11 +1,11 @@
-defmodule JidoCodeServer.Protocol.MCP.ProjectServer do
+defmodule Jido.Code.Server.Protocol.MCP.ProjectServer do
   @moduledoc """
   Per-project MCP adapter that delegates to the global MCP gateway logic.
   """
 
   use GenServer
 
-  alias JidoCodeServer.Protocol.MCP.Gateway
+  alias Jido.Code.Server.Protocol.MCP.Gateway
 
   @type conversation_id :: String.t()
 

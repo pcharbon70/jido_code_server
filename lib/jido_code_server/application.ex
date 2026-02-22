@@ -1,6 +1,6 @@
-defmodule JidoCodeServer.Application do
+defmodule Jido.Code.Server.Application do
   @moduledoc """
-  Application entrypoint for the JidoCodeServer runtime.
+  Application entrypoint for the Jido.Code.Server runtime.
   """
 
   use Application
@@ -8,10 +8,10 @@ defmodule JidoCodeServer.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      JidoCodeServer.Engine.Supervisor
+      Jido.Code.Server.Engine.Supervisor
     ]
 
-    opts = [strategy: :one_for_one, name: JidoCodeServer.Supervisor]
+    opts = [strategy: :one_for_one, name: Jido.Code.Server.Supervisor]
     Supervisor.start_link(children, opts)
   end
 end

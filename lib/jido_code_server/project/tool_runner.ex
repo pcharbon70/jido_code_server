@@ -1,14 +1,14 @@
-defmodule JidoCodeServer.Project.ToolRunner do
+defmodule Jido.Code.Server.Project.ToolRunner do
   @moduledoc """
   Unified, policy-gated tool execution path for project runtime.
   """
 
-  alias JidoCodeServer.Config
-  alias JidoCodeServer.Project.AssetStore
-  alias JidoCodeServer.Project.Policy
-  alias JidoCodeServer.Project.ToolCatalog
-  alias JidoCodeServer.Telemetry
-  alias JidoCodeServer.Types.ToolCall
+  alias Jido.Code.Server.Config
+  alias Jido.Code.Server.Project.AssetStore
+  alias Jido.Code.Server.Project.Policy
+  alias Jido.Code.Server.Project.ToolCatalog
+  alias Jido.Code.Server.Telemetry
+  alias Jido.Code.Server.Types.ToolCall
 
   @timeout_table __MODULE__.Timeouts
   @schema_atom_keys %{

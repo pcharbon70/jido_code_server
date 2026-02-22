@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Telemetry do
+defmodule Jido.Code.Server.Telemetry do
   @moduledoc """
   Telemetry emission facade with lightweight in-memory diagnostics counters.
   """

@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Engine.ProjectRegistry do
+defmodule Jido.Code.Server.Engine.ProjectRegistry do
   @moduledoc """
   Registry helpers for project process lookup and naming.
   """

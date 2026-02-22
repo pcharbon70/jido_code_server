@@ -1,8 +1,8 @@
-# JidoCodeServer Phase 9 Operations Runbook
+# Jido.Code.Server Phase 9 Operations Runbook
 
 ## Scope
 
-- Runtime namespace: `JidoCodeServer`
+- Runtime namespace: `Jido.Code.Server`
 - Focus: project runtime health, tool execution safety, and incident triage
 - Applies to: project supervisors, conversation runtime, policy/tool boundaries, watcher reload pipeline
 
@@ -11,7 +11,7 @@
 1. Confirm runtime boots cleanly:
    - `mix ci`
 2. Verify project-level diagnostics are reachable:
-   - `JidoCodeServer.diagnostics(project_id)`
+   - `Jido.Code.Server.diagnostics(project_id)`
 3. Verify telemetry counters are advancing:
    - `diagnostics.telemetry.event_counts`
 4. Verify recent error queue is bounded and redacted:
@@ -48,19 +48,19 @@
 
 1. Identify affected `project_id` and `conversation_id` from telemetry payload.
 2. Pull bounded timeline:
-   - conversation projection: `JidoCodeServer.get_projection(project_id, conversation_id, :timeline)`
-   - project diagnostics: `JidoCodeServer.diagnostics(project_id)`
+   - conversation projection: `Jido.Code.Server.get_projection(project_id, conversation_id, :timeline)`
+   - project diagnostics: `Jido.Code.Server.diagnostics(project_id)`
 3. Classify incident:
    - policy denial spike
    - sandbox violation
    - repeated timeout failures
    - loader/watcher degradation
 4. Apply containment:
-   - stop high-error conversations with `JidoCodeServer.stop_conversation/2`
-   - if needed, stop affected project with `JidoCodeServer.stop_project/1`
+   - stop high-error conversations with `Jido.Code.Server.stop_conversation/2`
+   - if needed, stop affected project with `Jido.Code.Server.stop_project/1`
 5. Recover:
    - fix invalid assets or runtime configuration
-   - reload assets via `JidoCodeServer.reload_assets/1`
+   - reload assets via `Jido.Code.Server.reload_assets/1`
    - restart project and verify diagnostics return to healthy baseline
 
 ## Failure Injection Commands (Pre-Release Validation)

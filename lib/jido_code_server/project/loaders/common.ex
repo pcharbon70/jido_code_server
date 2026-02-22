@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Project.Loaders.Common do
+defmodule Jido.Code.Server.Project.Loaders.Common do
   @moduledoc false
 
   @type asset_type :: :skill | :command | :workflow

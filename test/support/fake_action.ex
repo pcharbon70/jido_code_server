@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.TestSupport.FakeAction do
+defmodule Jido.Code.Server.TestSupport.FakeAction do
   @moduledoc """
   Minimal fake tool action adapter used by unit tests.
   """

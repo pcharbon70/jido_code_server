@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Project.ConversationSupervisor do
+defmodule Jido.Code.Server.Project.ConversationSupervisor do
   @moduledoc """
   Dynamic supervisor for per-project conversation runtime processes.
   """
@@ -20,7 +20,7 @@ defmodule JidoCodeServer.Project.ConversationSupervisor do
 
   @spec start_conversation(GenServer.server(), keyword()) :: DynamicSupervisor.on_start_child()
   def start_conversation(supervisor, opts) do
-    DynamicSupervisor.start_child(supervisor, {JidoCodeServer.Conversation.Server, opts})
+    DynamicSupervisor.start_child(supervisor, {Jido.Code.Server.Conversation.Server, opts})
   end
 
   @spec stop_conversation(GenServer.server(), pid()) :: :ok | {:error, term()}

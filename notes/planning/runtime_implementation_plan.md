@@ -1,4 +1,4 @@
-# JidoCodeServer Runtime Implementation Plan (Phased)
+# Jido.Code.Server Runtime Implementation Plan (Phased)
 
 ## 1. Inputs and Alignment
 
@@ -45,7 +45,7 @@ Suggested cadence: 9 phases across ~10-12 weeks for one engineer, or ~6-8 weeks 
 
 ### Modules/Areas
 
-- `JidoCodeServer.Application` (initial scaffold)
+- `Jido.Code.Server.Application` (initial scaffold)
 - Build/test/tooling configuration
 - Core dependency setup (`JidoConversation`, `JidoAction`, `JidoAi`, `JidoSignal`, optional protocol deps)
 
@@ -85,11 +85,11 @@ Suggested cadence: 9 phases across ~10-12 weeks for one engineer, or ~6-8 weeks 
 
 ### Modules
 
-- `JidoCodeServer`
-- `JidoCodeServer.Engine`
-- `JidoCodeServer.Engine.Supervisor`
-- `JidoCodeServer.Engine.ProjectRegistry`
-- `JidoCodeServer.Engine.ProtocolSupervisor` (stub only)
+- `Jido.Code.Server`
+- `Jido.Code.Server.Engine`
+- `Jido.Code.Server.Engine.Supervisor`
+- `Jido.Code.Server.Engine.ProjectRegistry`
+- `Jido.Code.Server.Engine.ProtocolSupervisor` (stub only)
 
 ### Work Packages
 
@@ -105,7 +105,7 @@ Suggested cadence: 9 phases across ~10-12 weeks for one engineer, or ~6-8 weeks 
 
 ### Deliverables
 
-- Working project lifecycle entrypoints from `JidoCodeServer`.
+- Working project lifecycle entrypoints from `Jido.Code.Server`.
 - Registry-backed project lookup/listing.
 - Unit/integration tests for project lifecycle behavior.
 
@@ -126,11 +126,11 @@ Suggested cadence: 9 phases across ~10-12 weeks for one engineer, or ~6-8 weeks 
 
 ### Modules
 
-- `JidoCodeServer.Project.Supervisor`
-- `JidoCodeServer.Project.Server`
-- `JidoCodeServer.Project.Layout`
-- `JidoCodeServer.Project.ConversationRegistry`
-- `JidoCodeServer.Project.ConversationSupervisor`
+- `Jido.Code.Server.Project.Supervisor`
+- `Jido.Code.Server.Project.Server`
+- `Jido.Code.Server.Project.Layout`
+- `Jido.Code.Server.Project.ConversationRegistry`
+- `Jido.Code.Server.Project.ConversationSupervisor`
 
 ### Work Packages
 
@@ -168,12 +168,12 @@ Suggested cadence: 9 phases across ~10-12 weeks for one engineer, or ~6-8 weeks 
 
 ### Modules
 
-- `JidoCodeServer.Project.AssetStore`
-- `JidoCodeServer.Project.Loaders.Skill`
-- `JidoCodeServer.Project.Loaders.Command`
-- `JidoCodeServer.Project.Loaders.Workflow`
-- `JidoCodeServer.Project.Loaders.SkillGraph`
-- `JidoCodeServer.Project.Server` (`reload_assets` and list/query integration)
+- `Jido.Code.Server.Project.AssetStore`
+- `Jido.Code.Server.Project.Loaders.Skill`
+- `Jido.Code.Server.Project.Loaders.Command`
+- `Jido.Code.Server.Project.Loaders.Workflow`
+- `Jido.Code.Server.Project.Loaders.SkillGraph`
+- `Jido.Code.Server.Project.Server` (`reload_assets` and list/query integration)
 
 ### Work Packages
 
@@ -212,10 +212,10 @@ Suggested cadence: 9 phases across ~10-12 weeks for one engineer, or ~6-8 weeks 
 
 ### Modules
 
-- `JidoCodeServer.Project.Policy`
-- `JidoCodeServer.Project.ToolCatalog`
-- `JidoCodeServer.Project.ToolRunner`
-- `JidoCodeServer.Project.TaskSupervisor`
+- `Jido.Code.Server.Project.Policy`
+- `Jido.Code.Server.Project.ToolCatalog`
+- `Jido.Code.Server.Project.ToolRunner`
+- `Jido.Code.Server.Project.TaskSupervisor`
 
 ### Work Packages
 
@@ -258,12 +258,12 @@ Suggested cadence: 9 phases across ~10-12 weeks for one engineer, or ~6-8 weeks 
 
 ### Modules
 
-- `JidoCodeServer.Conversation.Server`
-- `JidoCodeServer.Conversation.Loop`
-- `JidoCodeServer.Types.Event`
-- `JidoCodeServer.Types.ToolCall`
-- `JidoCodeServer.Types.ToolSpec`
-- `JidoCodeServer.Project.Server` (full event/projection integration)
+- `Jido.Code.Server.Conversation.Server`
+- `Jido.Code.Server.Conversation.Loop`
+- `Jido.Code.Server.Types.Event`
+- `Jido.Code.Server.Types.ToolCall`
+- `Jido.Code.Server.Types.ToolSpec`
+- `Jido.Code.Server.Project.Server` (full event/projection integration)
 
 ### Work Packages
 
@@ -304,10 +304,10 @@ Suggested cadence: 9 phases across ~10-12 weeks for one engineer, or ~6-8 weeks 
 
 ### Modules
 
-- `JidoCodeServer.Conversation.LLM`
-- `JidoCodeServer.Conversation.ToolBridge`
-- `JidoCodeServer.Conversation.Loop` (full orchestration behavior)
-- `JidoCodeServer.Project.ToolRunner` (runtime integration)
+- `Jido.Code.Server.Conversation.LLM`
+- `Jido.Code.Server.Conversation.ToolBridge`
+- `Jido.Code.Server.Conversation.Loop` (full orchestration behavior)
+- `Jido.Code.Server.Project.ToolRunner` (runtime integration)
 
 ### Work Packages
 
@@ -341,8 +341,8 @@ Suggested cadence: 9 phases across ~10-12 weeks for one engineer, or ~6-8 weeks 
 
 ### Modules
 
-- `JidoCodeServer.Telemetry`
-- `JidoCodeServer.Project.Watcher` (optional, now implemented)
+- `Jido.Code.Server.Telemetry`
+- `Jido.Code.Server.Project.Watcher` (optional, now implemented)
 - Additional diagnostics endpoints in `Project.Server`/`Conversation.Server`
 
 ### Work Packages
@@ -382,10 +382,10 @@ Suggested cadence: 9 phases across ~10-12 weeks for one engineer, or ~6-8 weeks 
 
 ### Modules
 
-- `JidoCodeServer.Protocol.MCP.Gateway`
-- `JidoCodeServer.Protocol.MCP.ProjectServer` (optional)
-- `JidoCodeServer.Protocol.A2A.Gateway`
-- `JidoCodeServer.Engine.ProtocolSupervisor` (activate with real children)
+- `Jido.Code.Server.Protocol.MCP.Gateway`
+- `Jido.Code.Server.Protocol.MCP.ProjectServer` (optional)
+- `Jido.Code.Server.Protocol.A2A.Gateway`
+- `Jido.Code.Server.Engine.ProtocolSupervisor` (activate with real children)
 
 ### Work Packages
 
@@ -459,37 +459,37 @@ Suggested cadence: 9 phases across ~10-12 weeks for one engineer, or ~6-8 weeks 
 
 | Module | Phase |
 | --- | --- |
-| `JidoCodeServer` | 1 |
-| `JidoCodeServer.Application` | 0 |
-| `JidoCodeServer.Engine.Supervisor` | 1 |
-| `JidoCodeServer.Engine.ProjectRegistry` | 1 |
-| `JidoCodeServer.Engine` | 1 |
-| `JidoCodeServer.Engine.ProtocolSupervisor` | 1 (stub), 8 (active) |
-| `JidoCodeServer.Project.Supervisor` | 2 |
-| `JidoCodeServer.Project.Server` | 2, 3, 5 |
-| `JidoCodeServer.Project.Layout` | 2 |
-| `JidoCodeServer.Project.AssetStore` | 3 |
-| `JidoCodeServer.Project.Loaders.Skill` | 3 |
-| `JidoCodeServer.Project.Loaders.Command` | 3 |
-| `JidoCodeServer.Project.Loaders.Workflow` | 3 |
-| `JidoCodeServer.Project.Loaders.SkillGraph` | 3 |
-| `JidoCodeServer.Project.Policy` | 4 |
-| `JidoCodeServer.Project.ToolCatalog` | 4 |
-| `JidoCodeServer.Project.ToolRunner` | 4, 6 |
-| `JidoCodeServer.Project.Watcher` | 7 |
-| `JidoCodeServer.Project.ConversationRegistry` | 2 |
-| `JidoCodeServer.Project.ConversationSupervisor` | 2 |
-| `JidoCodeServer.Conversation.Server` | 5 |
-| `JidoCodeServer.Conversation.Loop` | 5, 6 |
-| `JidoCodeServer.Conversation.LLM` | 6 |
-| `JidoCodeServer.Conversation.ToolBridge` | 6 |
-| `JidoCodeServer.Protocol.MCP.Gateway` | 8 |
-| `JidoCodeServer.Protocol.MCP.ProjectServer` | 8 |
-| `JidoCodeServer.Protocol.A2A.Gateway` | 8 |
-| `JidoCodeServer.Telemetry` | 7 |
-| `JidoCodeServer.Types.Event` | 5 |
-| `JidoCodeServer.Types.ToolSpec` | 5 |
-| `JidoCodeServer.Types.ToolCall` | 5 |
+| `Jido.Code.Server` | 1 |
+| `Jido.Code.Server.Application` | 0 |
+| `Jido.Code.Server.Engine.Supervisor` | 1 |
+| `Jido.Code.Server.Engine.ProjectRegistry` | 1 |
+| `Jido.Code.Server.Engine` | 1 |
+| `Jido.Code.Server.Engine.ProtocolSupervisor` | 1 (stub), 8 (active) |
+| `Jido.Code.Server.Project.Supervisor` | 2 |
+| `Jido.Code.Server.Project.Server` | 2, 3, 5 |
+| `Jido.Code.Server.Project.Layout` | 2 |
+| `Jido.Code.Server.Project.AssetStore` | 3 |
+| `Jido.Code.Server.Project.Loaders.Skill` | 3 |
+| `Jido.Code.Server.Project.Loaders.Command` | 3 |
+| `Jido.Code.Server.Project.Loaders.Workflow` | 3 |
+| `Jido.Code.Server.Project.Loaders.SkillGraph` | 3 |
+| `Jido.Code.Server.Project.Policy` | 4 |
+| `Jido.Code.Server.Project.ToolCatalog` | 4 |
+| `Jido.Code.Server.Project.ToolRunner` | 4, 6 |
+| `Jido.Code.Server.Project.Watcher` | 7 |
+| `Jido.Code.Server.Project.ConversationRegistry` | 2 |
+| `Jido.Code.Server.Project.ConversationSupervisor` | 2 |
+| `Jido.Code.Server.Conversation.Server` | 5 |
+| `Jido.Code.Server.Conversation.Loop` | 5, 6 |
+| `Jido.Code.Server.Conversation.LLM` | 6 |
+| `Jido.Code.Server.Conversation.ToolBridge` | 6 |
+| `Jido.Code.Server.Protocol.MCP.Gateway` | 8 |
+| `Jido.Code.Server.Protocol.MCP.ProjectServer` | 8 |
+| `Jido.Code.Server.Protocol.A2A.Gateway` | 8 |
+| `Jido.Code.Server.Telemetry` | 7 |
+| `Jido.Code.Server.Types.Event` | 5 |
+| `Jido.Code.Server.Types.ToolSpec` | 5 |
+| `Jido.Code.Server.Types.ToolCall` | 5 |
 
 ## 6. Cross-Phase Non-Negotiables
 
@@ -594,7 +594,7 @@ This section defines required controls to implement in addition to the phase pla
 
 The runtime is considered complete when all are true:
 
-1. Core APIs from `JidoCodeServer` are stable and documented.
+1. Core APIs from `Jido.Code.Server` are stable and documented.
 2. Multi-project and multi-conversation isolation is proven by integration tests.
 3. Conversation runtime behavior is event-driven and deterministic.
 4. All tool calls are policy-gated and executed via project `ToolRunner`.

@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Engine.Project do
+defmodule Jido.Code.Server.Engine.Project do
   @moduledoc """
   Runtime process representing a started project instance.
 
@@ -8,10 +8,10 @@ defmodule JidoCodeServer.Engine.Project do
 
   use GenServer
 
-  alias JidoCodeServer.Engine.ProjectRegistry
-  alias JidoCodeServer.Project.Naming
-  alias JidoCodeServer.Project.Server
-  alias JidoCodeServer.Project.Supervisor
+  alias Jido.Code.Server.Engine.ProjectRegistry
+  alias Jido.Code.Server.Project.Naming
+  alias Jido.Code.Server.Project.Server
+  alias Jido.Code.Server.Project.Supervisor
 
   @type t :: %{
           project_id: String.t(),

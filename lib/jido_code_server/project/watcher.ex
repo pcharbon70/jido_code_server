@@ -1,14 +1,14 @@
-defmodule JidoCodeServer.Project.Watcher do
+defmodule Jido.Code.Server.Project.Watcher do
   @moduledoc """
   Optional `.jido/*` watcher with debounced asset reload.
   """
 
   use GenServer
 
-  alias JidoCodeServer.Config
-  alias JidoCodeServer.Project.AssetStore
-  alias JidoCodeServer.Project.Layout
-  alias JidoCodeServer.Telemetry
+  alias Jido.Code.Server.Config
+  alias Jido.Code.Server.Project.AssetStore
+  alias Jido.Code.Server.Project.Layout
+  alias Jido.Code.Server.Telemetry
 
   @watched_layout_keys [:skills, :commands, :workflows, :skill_graph]
 

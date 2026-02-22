@@ -1,15 +1,17 @@
-defmodule JidoCodeServer.ProtocolPhase8Test do
+defmodule Jido.Code.Server.ProtocolPhase8Test do
   use ExUnit.Case, async: false
 
-  alias JidoCodeServer.Protocol.A2A.Gateway, as: A2AGateway
-  alias JidoCodeServer.Protocol.MCP.Gateway, as: MCPGateway
-  alias JidoCodeServer.Protocol.MCP.ProjectServer, as: MCPProjectServer
-  alias JidoCodeServer.TestSupport.TempProject
+  alias Jido.Code.Server, as: Runtime
+
+  alias Jido.Code.Server.Protocol.A2A.Gateway, as: A2AGateway
+  alias Jido.Code.Server.Protocol.MCP.Gateway, as: MCPGateway
+  alias Jido.Code.Server.Protocol.MCP.ProjectServer, as: MCPProjectServer
+  alias Jido.Code.Server.TestSupport.TempProject
 
   setup do
     on_exit(fn ->
-      Enum.each(JidoCodeServer.list_projects(), fn %{project_id: project_id} ->
-        _ = JidoCodeServer.stop_project(project_id)
+      Enum.each(Runtime.list_projects(), fn %{project_id: project_id} ->
+        _ = Runtime.stop_project(project_id)
       end)
     end)
 
@@ -26,7 +28,7 @@ defmodule JidoCodeServer.ProtocolPhase8Test do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:ok, project_id} =
-             JidoCodeServer.start_project(root,
+             Runtime.start_project(root,
                project_id: "phase8-mcp",
                allow_tools: ["asset.list"]
              )
@@ -52,17 +54,17 @@ defmodule JidoCodeServer.ProtocolPhase8Test do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:ok, project_id} =
-             JidoCodeServer.start_project(root, project_id: "phase8-mcp-message")
+             Runtime.start_project(root, project_id: "phase8-mcp-message")
 
     assert {:ok, "mcp-c1"} =
-             JidoCodeServer.start_conversation(project_id, conversation_id: "mcp-c1")
+             Runtime.start_conversation(project_id, conversation_id: "mcp-c1")
 
     assert :ok = MCPGateway.send_message(project_id, "mcp-c1", "hello from mcp")
 
     assert {:ok, server_pid} = MCPProjectServer.start_link(project_id: project_id)
     assert :ok = MCPProjectServer.send_message(server_pid, "mcp-c1", "hello from project server")
 
-    assert {:ok, timeline} = JidoCodeServer.get_projection(project_id, "mcp-c1", :timeline)
+    assert {:ok, timeline} = Runtime.get_projection(project_id, "mcp-c1", :timeline)
 
     assert Enum.map(timeline, &Map.get(&1, "content")) == [
              "hello from mcp",
@@ -74,7 +76,7 @@ defmodule JidoCodeServer.ProtocolPhase8Test do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
 
-    assert {:ok, project_id} = JidoCodeServer.start_project(root, project_id: "phase8-a2a")
+    assert {:ok, project_id} = Runtime.start_project(root, project_id: "phase8-a2a")
 
     assert {:ok, task} = A2AGateway.task_create(project_id, "start task")
     conversation_id = task.task_id
@@ -91,7 +93,8 @@ defmodule JidoCodeServer.ProtocolPhase8Test do
 
     assert :ok = A2AGateway.unsubscribe_task(project_id, conversation_id, self())
 
-    assert {:ok, timeline} = JidoCodeServer.get_projection(project_id, conversation_id, :timeline)
+    assert {:ok, timeline} =
+             Runtime.get_projection(project_id, conversation_id, :timeline)
 
     assert Enum.map(timeline, &Map.get(&1, "type")) == [
              "user.message",
@@ -112,13 +115,13 @@ defmodule JidoCodeServer.ProtocolPhase8Test do
     on_exit(fn -> TempProject.cleanup(root_b) end)
 
     assert {:ok, project_a} =
-             JidoCodeServer.start_project(root_a,
+             Runtime.start_project(root_a,
                project_id: "phase8-route-a",
                allow_tools: ["asset.list"]
              )
 
     assert {:ok, project_b} =
-             JidoCodeServer.start_project(root_b,
+             Runtime.start_project(root_b,
                project_id: "phase8-route-b",
                allow_tools: ["asset.search"]
              )

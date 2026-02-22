@@ -1,9 +1,9 @@
-defmodule JidoCodeServer.Conversation.LLM do
+defmodule Jido.Code.Server.Conversation.LLM do
   @moduledoc """
   Conversation-scoped LLM adapter with deterministic and Jido.AI-backed modes.
   """
 
-  alias JidoCodeServer.Types.ToolCall
+  alias Jido.Code.Server.Types.ToolCall
 
   @type completion_result :: %{
           ref: reference(),

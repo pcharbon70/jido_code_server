@@ -1,13 +1,15 @@
-defmodule JidoCodeServer.EngineTest do
+defmodule Jido.Code.Server.EngineTest do
   use ExUnit.Case, async: false
 
-  alias JidoCodeServer.Engine
-  alias JidoCodeServer.TestSupport.TempProject
+  alias Jido.Code.Server, as: Runtime
+
+  alias Jido.Code.Server.Engine
+  alias Jido.Code.Server.TestSupport.TempProject
 
   setup do
     on_exit(fn ->
-      Enum.each(JidoCodeServer.list_projects(), fn %{project_id: project_id} ->
-        _ = JidoCodeServer.stop_project(project_id)
+      Enum.each(Runtime.list_projects(), fn %{project_id: project_id} ->
+        _ = Runtime.stop_project(project_id)
       end)
     end)
 
@@ -18,17 +20,17 @@ defmodule JidoCodeServer.EngineTest do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
 
-    assert {:ok, project_id} = JidoCodeServer.start_project(root)
+    assert {:ok, project_id} = Runtime.start_project(root)
 
     assert {:ok, pid} = Engine.whereis_project(project_id)
     assert is_pid(pid)
 
     assert [%{project_id: ^project_id, root_path: listed_root, data_dir: ".jido", pid: ^pid} | _] =
-             JidoCodeServer.list_projects()
+             Runtime.list_projects()
 
     assert listed_root == Path.expand(root)
 
-    assert :ok = JidoCodeServer.stop_project(project_id)
+    assert :ok = Runtime.stop_project(project_id)
     assert {:error, {:project_not_found, ^project_id}} = Engine.whereis_project(project_id)
   end
 
@@ -37,10 +39,10 @@ defmodule JidoCodeServer.EngineTest do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:ok, "project-alpha"} =
-             JidoCodeServer.start_project(root, project_id: "project-alpha")
+             Runtime.start_project(root, project_id: "project-alpha")
 
     assert {:error, {:already_started, "project-alpha"}} =
-             JidoCodeServer.start_project(root, project_id: "project-alpha")
+             Runtime.start_project(root, project_id: "project-alpha")
   end
 
   test "rejects invalid root paths" do
@@ -50,7 +52,7 @@ defmodule JidoCodeServer.EngineTest do
         "jido_code_server_missing_#{System.unique_integer([:positive])}"
       )
 
-    assert {:error, {:invalid_root_path, _reason}} = JidoCodeServer.start_project(missing_path)
+    assert {:error, {:invalid_root_path, _reason}} = Runtime.start_project(missing_path)
   end
 
   test "rejects invalid data_dir values" do
@@ -58,39 +60,39 @@ defmodule JidoCodeServer.EngineTest do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:error, {:invalid_data_dir, :expected_non_empty_string}} =
-             JidoCodeServer.start_project(root, data_dir: "")
+             Runtime.start_project(root, data_dir: "")
 
     assert {:error, {:invalid_data_dir, :must_be_relative}} =
-             JidoCodeServer.start_project(root, data_dir: "/tmp/jido")
+             Runtime.start_project(root, data_dir: "/tmp/jido")
 
     assert {:error, {:invalid_data_dir, :must_not_traverse}} =
-             JidoCodeServer.start_project(root, data_dir: "../jido")
+             Runtime.start_project(root, data_dir: "../jido")
   end
 
   test "stop_project returns not found error for unknown project" do
     assert {:error, {:project_not_found, "missing-project"}} =
-             JidoCodeServer.stop_project("missing-project")
+             Runtime.stop_project("missing-project")
   end
 
   test "operations reject invalid project id type" do
     assert {:error, {:invalid_project_id, :expected_string}} = Engine.whereis_project(123)
-    assert {:error, {:invalid_project_id, :expected_string}} = JidoCodeServer.stop_project(123)
+    assert {:error, {:invalid_project_id, :expected_string}} = Runtime.stop_project(123)
   end
 
   test "conversation operations fail with project not found when project is unknown" do
     assert {:error, {:project_not_found, "missing-project"}} =
-             JidoCodeServer.start_conversation("missing-project")
+             Runtime.start_conversation("missing-project")
 
     assert {:error, {:project_not_found, "missing-project"}} =
-             JidoCodeServer.stop_conversation("missing-project", "c1")
+             Runtime.stop_conversation("missing-project", "c1")
 
     assert {:error, {:project_not_found, "missing-project"}} =
-             JidoCodeServer.send_event("missing-project", "c1", %{"type" => "user.message"})
+             Runtime.send_event("missing-project", "c1", %{"type" => "user.message"})
 
     assert {:error, {:project_not_found, "missing-project"}} =
-             JidoCodeServer.get_projection("missing-project", "c1", :llm_context)
+             Runtime.get_projection("missing-project", "c1", :llm_context)
 
     assert {:error, {:project_not_found, "missing-project"}} =
-             JidoCodeServer.reload_assets("missing-project")
+             Runtime.reload_assets("missing-project")
   end
 end
