@@ -55,20 +55,18 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     end
   end
 
-  @spec run_async(map(), map(), keyword()) :: :ok
+  @spec run_async(map(), map(), keyword()) :: {:ok, pid()} | {:error, term()}
   def run_async(project_ctx, tool_call, opts \\ []) when is_map(project_ctx) do
     notify = Keyword.get(opts, :notify)
 
-    _ =
-      Task.Supervisor.start_child(project_ctx.task_supervisor, fn ->
-        result = run(project_ctx, tool_call)
+    case normalize_call(tool_call) do
+      {:ok, normalized_call} ->
+        correlated_call = ensure_call_correlation(normalized_call)
+        start_async_task(project_ctx, correlated_call, notify)
 
-        if is_pid(notify) do
-          send(notify, {:tool_result, tool_name(tool_call), result})
-        end
-      end)
-
-    :ok
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp execute_run(project_ctx, call, started_at) do
@@ -185,6 +183,8 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   defp run_asset_tool(project_ctx, type, asset_name, call) do
     case AssetStore.get(project_ctx.asset_store, type, asset_name) do
       {:ok, asset} ->
+        maybe_simulate_delay(call)
+
         {:ok,
          %{
            asset: asset,
@@ -197,6 +197,42 @@ defmodule Jido.Code.Server.Project.ToolRunner do
         {:error, :asset_not_found}
     end
   end
+
+  defp maybe_simulate_delay(call) do
+    case simulate_delay_ms(call) do
+      delay when is_integer(delay) and delay > 0 ->
+        Process.sleep(delay)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp simulate_delay_ms(call) do
+    delay =
+      call.args
+      |> Map.to_list()
+      |> Enum.find_value(fn
+        {"simulate_delay_ms", value} when is_integer(value) -> value
+        {:simulate_delay_ms, value} when is_integer(value) -> value
+        _ -> nil
+      end)
+
+    if is_integer(delay) and delay > 0, do: min(delay, 5_000), else: 0
+  end
+
+  defp start_async_task(project_ctx, correlated_call, notify) do
+    Task.Supervisor.start_child(project_ctx.task_supervisor, fn ->
+      result = run(project_ctx, correlated_call)
+      maybe_notify_async_result(notify, correlated_call, result)
+    end)
+  end
+
+  defp maybe_notify_async_result(notify, correlated_call, result) when is_pid(notify) do
+    send(notify, {:tool_result, self(), correlated_call, result})
+  end
+
+  defp maybe_notify_async_result(_notify, _correlated_call, _result), do: :ok
 
   defp acquire_capacity(project_ctx, call) do
     case ensure_project_capacity(project_ctx) do

@@ -396,6 +396,118 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
     assert event_count(diagnostics, "tool.cancelled") >= 1
   end
 
+  test "async tool requests complete via background bridge and clear pending projection" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+    correlation_id = "corr-phase9-async-complete"
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-async-complete",
+               conversation_orchestration: true,
+               network_egress_policy: :allow
+             )
+
+    assert {:ok, "phase9-async-c1"} =
+             Runtime.start_conversation(project_id, conversation_id: "phase9-async-c1")
+
+    assert :ok =
+             Runtime.send_event(project_id, "phase9-async-c1", %{
+               "type" => "tool.requested",
+               "meta" => %{"correlation_id" => correlation_id},
+               "data" => %{
+                 "name" => "command.run.example_command",
+                 "args" => %{
+                   "path" => ".jido/commands/example_command.md",
+                   "simulate_delay_ms" => 150
+                 },
+                 "meta" => %{"run_mode" => "async"}
+               }
+             })
+
+    assert {:ok, timeline_before} =
+             Runtime.get_projection(project_id, "phase9-async-c1", :timeline)
+
+    refute Enum.any?(timeline_before, fn event ->
+             map_lookup(event, :type) == "tool.completed"
+           end)
+
+    assert_eventually(fn ->
+      {:ok, timeline_after} = Runtime.get_projection(project_id, "phase9-async-c1", :timeline)
+
+      Enum.any?(timeline_after, fn event ->
+        map_lookup(event, :type) == "tool.completed" and
+          map_lookup(event, :meta) |> map_lookup(:correlation_id) == correlation_id
+      end)
+    end)
+
+    assert_eventually(fn ->
+      {:ok, pending_calls} =
+        Runtime.get_projection(project_id, "phase9-async-c1", :pending_tool_calls)
+
+      pending_calls == []
+    end)
+  end
+
+  test "conversation cancel terminates async pending tools and emits tool.cancelled" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+    request_correlation_id = "corr-phase9-async-cancel-request"
+    cancel_correlation_id = "corr-phase9-async-cancel"
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-async-cancel",
+               conversation_orchestration: true,
+               network_egress_policy: :allow
+             )
+
+    assert {:ok, "phase9-async-c2"} =
+             Runtime.start_conversation(project_id, conversation_id: "phase9-async-c2")
+
+    assert :ok =
+             Runtime.send_event(project_id, "phase9-async-c2", %{
+               "type" => "tool.requested",
+               "meta" => %{"correlation_id" => request_correlation_id},
+               "data" => %{
+                 "name" => "command.run.example_command",
+                 "args" => %{
+                   "path" => ".jido/commands/example_command.md",
+                   "simulate_delay_ms" => 500
+                 },
+                 "meta" => %{"run_mode" => "async"}
+               }
+             })
+
+    assert :ok =
+             Runtime.send_event(project_id, "phase9-async-c2", %{
+               "type" => "conversation.cancel",
+               "meta" => %{"correlation_id" => cancel_correlation_id}
+             })
+
+    assert_eventually(fn ->
+      {:ok, timeline} = Runtime.get_projection(project_id, "phase9-async-c2", :timeline)
+
+      Enum.any?(timeline, fn event ->
+        map_lookup(event, :type) == "tool.cancelled" and
+          map_lookup(event, :data) |> map_lookup(:reason) == "conversation_cancelled" and
+          map_lookup(event, :meta) |> map_lookup(:correlation_id) == cancel_correlation_id
+      end)
+    end)
+
+    Process.sleep(600)
+    assert {:ok, timeline} = Runtime.get_projection(project_id, "phase9-async-c2", :timeline)
+
+    refute Enum.any?(timeline, fn event ->
+             map_lookup(event, :type) == "tool.completed" and
+               map_lookup(event, :data) |> map_lookup(:name) == "command.run.example_command" and
+               map_lookup(event, :meta) |> map_lookup(:correlation_id) == request_correlation_id
+           end)
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert event_count(diagnostics, "tool.cancelled") >= 1
+  end
+
   test "sensitive file paths are denied by default and emit security signal" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)

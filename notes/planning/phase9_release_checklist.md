@@ -22,6 +22,7 @@
 - [ ] Repeated timeout escalation emits `security.repeated_timeout_failures`.
 - [ ] Project and conversation concurrency limits both enforce (`tool_max_concurrency`, `tool_max_concurrency_per_conversation`).
 - [ ] `conversation.cancel` emits deterministic `tool.cancelled` events with reason `conversation_cancelled` when pending tool calls exist.
+- [ ] Async tool requests (`meta.run_mode = "async"`) emit completion/failure events via conversation runtime and are cancellable by `conversation.cancel`.
 
 ## Reliability Gates
 

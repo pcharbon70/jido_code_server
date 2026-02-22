@@ -6,6 +6,7 @@ defmodule Jido.Code.Server.Conversation.Server do
   use GenServer
 
   alias Jido.Code.Server.Conversation.Loop
+  alias Jido.Code.Server.Conversation.ToolBridge
   alias Jido.Code.Server.Correlation
   alias Jido.Code.Server.Telemetry
   alias Jido.Code.Server.Types.Event
@@ -59,6 +60,7 @@ defmodule Jido.Code.Server.Conversation.Server do
     project_ctx = %{
       project_id: project_id,
       conversation_id: conversation_id,
+      conversation_server: self(),
       asset_store: Keyword.get(opts, :asset_store),
       policy: Keyword.get(opts, :policy),
       task_supervisor: Keyword.get(opts, :task_supervisor),
@@ -152,6 +154,28 @@ defmodule Jido.Code.Server.Conversation.Server do
     {:reply, response, state}
   end
 
+  @impl true
+  def handle_info({:tool_result, task_pid, call, result}, state)
+      when is_pid(task_pid) and is_map(call) do
+    conversation_id = state.conversation_id || "unknown"
+
+    next_state =
+      case ToolBridge.handle_tool_result(
+             state.project_ctx,
+             conversation_id,
+             task_pid,
+             call,
+             result
+           ) do
+        {:ok, events} ->
+          ingest_runtime_events(state, events)
+      end
+
+    {:noreply, next_state}
+  end
+
+  def handle_info(_message, state), do: {:noreply, state}
+
   defp ingest_event_internal(state, raw_event) do
     with {:ok, parsed_event} <- Event.from_map(raw_event),
          {correlation_id, event} <- ensure_event_correlation(parsed_event),
@@ -186,6 +210,15 @@ defmodule Jido.Code.Server.Conversation.Server do
       {:error, reason} ->
         {:error, reason, state}
     end
+  end
+
+  defp ingest_runtime_events(state, events) when is_list(events) do
+    Enum.reduce(events, state, fn event, acc_state ->
+      case ingest_event_internal(acc_state, event) do
+        {:ok, next_state} -> next_state
+        {:error, _reason, next_state} -> next_state
+      end
+    end)
   end
 
   defp emit_ingest_telemetry(project_id, conversation_id, event, emitted_events, correlation_id) do
