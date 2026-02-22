@@ -20,6 +20,7 @@ defmodule Jido.Code.Server.Conversation.Loop do
           events: [Event.t()],
           raw_timeline: [map()],
           pending_tool_calls: [ToolCall.t()],
+          cancelled_tool_calls: [ToolCall.t()],
           status: :idle | :cancelled,
           projection_cache: map(),
           last_event: Event.t() | nil
@@ -33,6 +34,7 @@ defmodule Jido.Code.Server.Conversation.Loop do
       events: [],
       raw_timeline: [],
       pending_tool_calls: [],
+      cancelled_tool_calls: [],
       status: :idle,
       projection_cache: %{},
       last_event: nil
@@ -43,15 +45,18 @@ defmodule Jido.Code.Server.Conversation.Loop do
 
   @spec ingest(state(), Event.t(), map()) :: state()
   def ingest(state, %Event{} = event, raw_event) when is_map(state) and is_map(raw_event) do
-    pending_tool_calls =
+    {pending_tool_calls, cancelled_tool_calls} =
       case event.type do
         "conversation.cancel" ->
-          []
+          {[], state.pending_tool_calls}
 
         _ ->
-          state.pending_tool_calls
-          |> update_pending_on_requested(event)
-          |> update_pending_on_completion(event)
+          pending_tool_calls =
+            state.pending_tool_calls
+            |> update_pending_on_requested(event)
+            |> update_pending_on_completion(event)
+
+          {pending_tool_calls, []}
       end
 
     status =
@@ -66,6 +71,7 @@ defmodule Jido.Code.Server.Conversation.Loop do
       | events: state.events ++ [event],
         raw_timeline: state.raw_timeline ++ [raw_event],
         pending_tool_calls: pending_tool_calls,
+        cancelled_tool_calls: cancelled_tool_calls,
         status: status,
         last_event: event
     }
@@ -129,7 +135,7 @@ defmodule Jido.Code.Server.Conversation.Loop do
     cond do
       event.type == "conversation.cancel" ->
         cancel_runtime_work(state, project_ctx)
-        []
+        |> attach_correlation(event, correlation_id)
 
       state.status == :cancelled ->
         []
@@ -238,7 +244,20 @@ defmodule Jido.Code.Server.Conversation.Loop do
 
   defp cancel_runtime_work(state, project_ctx) do
     _ = ToolBridge.cancel_pending(project_ctx, state.conversation_id || "unknown")
-    :ok
+
+    Enum.map(state.cancelled_tool_calls, &tool_cancelled_event/1)
+  end
+
+  defp tool_cancelled_event(%ToolCall{} = call) do
+    %{
+      type: "tool.cancelled",
+      data: %{
+        "name" => call.name,
+        "args" => call.args,
+        "meta" => call.meta,
+        "reason" => "conversation_cancelled"
+      }
+    }
   end
 
   defp orchestration_enabled?(project_ctx) do
@@ -314,7 +333,7 @@ defmodule Jido.Code.Server.Conversation.Loop do
   end
 
   defp update_pending_on_completion(calls, %{type: type} = event)
-       when type in ["tool.completed", "tool.failed"] do
+       when type in ["tool.completed", "tool.failed", "tool.cancelled"] do
     case extract_tool_name(event) do
       nil -> calls
       name -> Enum.reject(calls, fn call -> call.name == name end)
