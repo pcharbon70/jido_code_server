@@ -37,6 +37,9 @@ defmodule JidoCodeServer do
   @spec list_tools(project_id()) :: list(map())
   def list_tools(project_id), do: Engine.list_tools(project_id)
 
+  @spec run_tool(project_id(), map()) :: {:ok, map()} | {:error, term()}
+  def run_tool(project_id, tool_call), do: Engine.run_tool(project_id, tool_call)
+
   @spec reload_assets(project_id()) :: :ok | {:error, term()}
   def reload_assets(project_id), do: Engine.reload_assets(project_id)
 

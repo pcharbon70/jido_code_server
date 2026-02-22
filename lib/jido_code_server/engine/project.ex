@@ -62,6 +62,11 @@ defmodule JidoCodeServer.Engine.Project do
     GenServer.call(pid, :list_tools)
   end
 
+  @spec run_tool(pid(), map()) :: {:ok, map()} | {:error, term()}
+  def run_tool(pid, tool_call) when is_pid(pid) and is_map(tool_call) do
+    GenServer.call(pid, {:run_tool, tool_call})
+  end
+
   @spec reload_assets(pid()) :: :ok | {:error, term()}
   def reload_assets(pid) when is_pid(pid) do
     GenServer.call(pid, :reload_assets)
@@ -98,6 +103,14 @@ defmodule JidoCodeServer.Engine.Project do
       root_path: root_path,
       data_dir: data_dir
     ]
+
+    runtime_opts = Keyword.get(opts, :opts, [])
+
+    supervisor_opts =
+      case Keyword.take(runtime_opts, [:allow_tools, :deny_tools]) do
+        [] -> supervisor_opts
+        policy_opts -> Keyword.put(supervisor_opts, :policy, policy_opts)
+      end
 
     supervisor_opts =
       case Keyword.fetch(opts, :watcher) do
@@ -195,6 +208,14 @@ defmodule JidoCodeServer.Engine.Project do
     reply =
       delegate(fn -> Server.list_tools(state.project_server) end)
       |> unwrap_delegate([])
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:run_tool, tool_call}, _from, state) do
+    reply =
+      delegate(fn -> Server.run_tool(state.project_server, tool_call) end)
+      |> unwrap_delegate({:error, :project_unavailable})
 
     {:reply, reply, state}
   end

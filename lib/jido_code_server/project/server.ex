@@ -10,12 +10,16 @@ defmodule JidoCodeServer.Project.Server do
 
   use GenServer
 
+  alias JidoCodeServer.Config
   alias JidoCodeServer.Conversation.Server, as: ConversationServer
   alias JidoCodeServer.Project.AssetStore
   alias JidoCodeServer.Project.ConversationRegistry
   alias JidoCodeServer.Project.ConversationSupervisor
   alias JidoCodeServer.Project.Layout
   alias JidoCodeServer.Project.Naming
+  alias JidoCodeServer.Project.Policy
+  alias JidoCodeServer.Project.ToolCatalog
+  alias JidoCodeServer.Project.ToolRunner
   alias JidoCodeServer.Telemetry
 
   @type conversation_id :: String.t()
@@ -55,6 +59,11 @@ defmodule JidoCodeServer.Project.Server do
     GenServer.call(server, :list_tools)
   end
 
+  @spec run_tool(GenServer.server(), map()) :: {:ok, map()} | {:error, term()}
+  def run_tool(server, tool_call) when is_map(tool_call) do
+    GenServer.call(server, {:run_tool, tool_call})
+  end
+
   @spec reload_assets(GenServer.server()) :: :ok | {:error, term()}
   def reload_assets(server) do
     GenServer.call(server, :reload_assets)
@@ -92,6 +101,8 @@ defmodule JidoCodeServer.Project.Server do
     root_path = Keyword.fetch!(opts, :root_path)
     data_dir = Keyword.fetch!(opts, :data_dir)
     asset_store = Naming.via(project_id, :asset_store)
+    policy = Naming.via(project_id, :policy)
+    task_supervisor = Naming.via(project_id, :task_supervisor)
     conversation_registry = Keyword.fetch!(opts, :conversation_registry)
     conversation_supervisor = Keyword.fetch!(opts, :conversation_supervisor)
 
@@ -111,6 +122,8 @@ defmodule JidoCodeServer.Project.Server do
          data_dir: data_dir,
          layout: layout,
          asset_store: asset_store,
+         policy: policy,
+         task_supervisor: task_supervisor,
          conversation_registry: conversation_registry,
          conversation_supervisor: conversation_supervisor,
          conversations: %{},
@@ -210,7 +223,23 @@ defmodule JidoCodeServer.Project.Server do
   end
 
   def handle_call(:list_tools, _from, state) do
-    {:reply, [], state}
+    available_tools =
+      state
+      |> project_ctx()
+      |> ToolCatalog.all_tools()
+
+    filtered_tools = Policy.filter_tools(state.policy, available_tools)
+
+    {:reply, filtered_tools, state}
+  end
+
+  def handle_call({:run_tool, tool_call}, _from, state) do
+    reply =
+      state
+      |> project_ctx()
+      |> ToolRunner.run(tool_call)
+
+    {:reply, reply, state}
   end
 
   def handle_call(:reload_assets, _from, state) do
@@ -289,5 +318,19 @@ defmodule JidoCodeServer.Project.Server do
           {nil, acc}
       end
     end)
+  end
+
+  defp project_ctx(state) do
+    %{
+      project_id: state.project_id,
+      root_path: state.root_path,
+      data_dir: state.data_dir,
+      layout: state.layout,
+      asset_store: state.asset_store,
+      policy: state.policy,
+      task_supervisor: state.task_supervisor,
+      tool_timeout_ms: Config.tool_timeout_ms(),
+      tool_max_concurrency: Config.tool_max_concurrency()
+    }
   end
 end

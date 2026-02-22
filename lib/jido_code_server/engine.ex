@@ -98,6 +98,11 @@ defmodule JidoCodeServer.Engine do
     end
   end
 
+  @spec run_tool(project_id(), map()) :: {:ok, map()} | {:error, term()}
+  def run_tool(project_id, tool_call) when is_map(tool_call) do
+    with_project(project_id, fn pid -> Project.run_tool(pid, tool_call) end)
+  end
+
   @spec reload_assets(project_id()) :: :ok | {:error, term()}
   def reload_assets(project_id) do
     with_project(project_id, fn pid -> Project.reload_assets(pid) end)
