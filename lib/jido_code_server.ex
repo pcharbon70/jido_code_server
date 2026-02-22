@@ -1,5 +1,42 @@
 defmodule JidoCodeServer do
   @moduledoc """
-  Root namespace for JidoCode server runtime modules.
+  Public facade for runtime lifecycle and conversation operations.
   """
+
+  alias JidoCodeServer.Engine
+
+  @type project_id :: String.t()
+  @type conversation_id :: String.t()
+  @type event :: map()
+
+  @spec start_project(String.t(), keyword()) :: {:ok, project_id()} | {:error, term()}
+  def start_project(root_path, opts \\ []), do: Engine.start_project(root_path, opts)
+
+  @spec stop_project(project_id()) :: :ok | {:error, term()}
+  def stop_project(project_id), do: Engine.stop_project(project_id)
+
+  @spec list_projects() :: list(map())
+  def list_projects, do: Engine.list_projects()
+
+  @spec start_conversation(project_id(), keyword()) :: {:ok, conversation_id()} | {:error, term()}
+  def start_conversation(project_id, opts \\ []), do: Engine.start_conversation(project_id, opts)
+
+  @spec stop_conversation(project_id(), conversation_id()) :: :ok | {:error, term()}
+  def stop_conversation(project_id, conversation_id),
+    do: Engine.stop_conversation(project_id, conversation_id)
+
+  @spec send_event(project_id(), conversation_id(), event()) :: :ok | {:error, term()}
+  def send_event(project_id, conversation_id, event),
+    do: Engine.send_event(project_id, conversation_id, event)
+
+  @spec get_projection(project_id(), conversation_id(), atom() | String.t()) ::
+          {:ok, term()} | {:error, term()}
+  def get_projection(project_id, conversation_id, key),
+    do: Engine.get_projection(project_id, conversation_id, key)
+
+  @spec list_tools(project_id()) :: list(map())
+  def list_tools(project_id), do: Engine.list_tools(project_id)
+
+  @spec reload_assets(project_id()) :: :ok | {:error, term()}
+  def reload_assets(project_id), do: Engine.reload_assets(project_id)
 end
