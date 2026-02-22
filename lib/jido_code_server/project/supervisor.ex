@@ -30,6 +30,7 @@ defmodule JidoCodeServer.Project.Supervisor do
     project_server = Naming.via(project_id, :project_server)
     protocol_supervisor = Naming.via(project_id, :protocol_supervisor)
     policy_opts = Keyword.get(opts, :policy, [])
+    runtime_opts = Keyword.get(opts, :runtime_opts, [])
 
     children = [
       {JidoCodeServer.Project.ConversationRegistry, name: conversation_registry},
@@ -46,7 +47,8 @@ defmodule JidoCodeServer.Project.Supervisor do
          root_path: root_path,
          data_dir: data_dir,
          conversation_registry: conversation_registry,
-         conversation_supervisor: conversation_supervisor
+         conversation_supervisor: conversation_supervisor,
+         runtime_opts: runtime_opts
        ]}
     ]
 
