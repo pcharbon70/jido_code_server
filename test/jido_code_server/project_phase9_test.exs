@@ -283,6 +283,49 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
     assert event_count(diagnostics, "security.sandbox_violation") >= 1
   end
 
+  test "sensitive file paths are denied by default and emit security signal" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-sensitive-path-deny",
+               network_egress_policy: :allow
+             )
+
+    assert {:error, %{status: :error, reason: :sensitive_path_denied}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"path" => ".env"},
+               meta: %{"conversation_id" => "phase9-sensitive-c1"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert event_count(diagnostics, "security.sensitive_path_denied") >= 1
+  end
+
+  test "sensitive path allowlist can explicitly permit denylisted paths" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-sensitive-path-allow",
+               network_egress_policy: :allow,
+               sensitive_path_allowlist: [".env"]
+             )
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"path" => ".env"},
+               meta: %{"conversation_id" => "phase9-sensitive-c2"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert diagnostics.policy.sensitive_path_allowlist == [".env"]
+  end
+
   test "network egress deny-by-default hides network-capable tools and rejects execution" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)

@@ -42,6 +42,14 @@ defmodule Jido.Code.Server.Project.Policy do
         normalize_network_schemes(
           Keyword.get(opts, :network_allowed_schemes, Config.network_allowed_schemes())
         ),
+      sensitive_path_denylist:
+        normalize_path_patterns(
+          Keyword.get(opts, :sensitive_path_denylist, Config.sensitive_path_denylist())
+        ),
+      sensitive_path_allowlist:
+        normalize_path_patterns(
+          Keyword.get(opts, :sensitive_path_allowlist, Config.sensitive_path_allowlist())
+        ),
       recent_decisions: []
     }
 
@@ -76,6 +84,7 @@ defmodule Jido.Code.Server.Project.Policy do
              | :network_denied
              | :network_endpoint_denied
              | :network_protocol_denied
+             | :sensitive_path_denied
              | term()}
   def authorize_tool(server, tool_name, args, ctx)
       when is_binary(tool_name) and is_map(args) and is_map(ctx) do
@@ -90,6 +99,7 @@ defmodule Jido.Code.Server.Project.Policy do
              | :network_denied
              | :network_endpoint_denied
              | :network_protocol_denied
+             | :sensitive_path_denied
              | term()}
   def authorize_tool(server, tool_name, args, meta, ctx)
       when is_binary(tool_name) and is_map(args) and is_map(meta) and is_map(ctx) do
@@ -104,6 +114,7 @@ defmodule Jido.Code.Server.Project.Policy do
              | :network_denied
              | :network_endpoint_denied
              | :network_protocol_denied
+             | :sensitive_path_denied
              | term()}
   def authorize_tool(server, tool_name, args, meta, tool_safety, ctx)
       when is_binary(tool_name) and is_map(args) and is_map(meta) and is_map(tool_safety) and
@@ -167,47 +178,59 @@ defmodule Jido.Code.Server.Project.Policy do
       network_egress_policy: state.network_egress_policy,
       network_allowlist: state.network_allowlist,
       network_allowed_schemes: state.network_allowed_schemes,
+      sensitive_path_denylist: state.sensitive_path_denylist,
+      sensitive_path_allowlist: state.sensitive_path_allowlist,
       recent_decisions: state.recent_decisions
     }
 
     {:reply, diagnostics, state}
   end
 
-  defp validate_arg_paths(nil, _args), do: :ok
+  defp validate_arg_paths(%{root_path: nil}, _args), do: :ok
 
-  defp validate_arg_paths(root_path, args) when is_map(args) do
+  defp validate_arg_paths(state, args) when is_map(state) and is_map(args) do
     args
     |> Map.to_list()
     |> Enum.reduce_while(:ok, fn
       {key, value}, :ok when is_binary(key) ->
-        maybe_validate_path(root_path, key, value)
+        maybe_validate_path(state, key, value)
 
       {key, value}, :ok when is_atom(key) ->
-        maybe_validate_path(root_path, Atom.to_string(key), value)
+        maybe_validate_path(state, Atom.to_string(key), value)
 
       {_key, _value}, :ok ->
         {:cont, :ok}
     end)
   end
 
-  defp maybe_validate_path(root_path, key, value) when is_binary(value) do
+  defp maybe_validate_path(state, key, value) when is_binary(value) do
     if String.contains?(String.downcase(key), "path") do
-      case normalize_path(root_path, value) do
-        {:ok, _resolved} -> {:cont, :ok}
-        {:error, :outside_root} -> {:halt, {:error, :outside_root}}
-        {:error, reason} -> {:halt, {:error, reason}}
+      case validate_path_arg(state, value) do
+        :ok ->
+          {:cont, :ok}
+
+        {:error, reason} ->
+          {:halt, {:error, reason}}
       end
     else
       {:cont, :ok}
     end
   end
 
-  defp maybe_validate_path(_root_path, _key, _value), do: {:cont, :ok}
+  defp maybe_validate_path(_state, _key, _value), do: {:cont, :ok}
+
+  defp validate_path_arg(state, value) do
+    case normalize_path(state.root_path, value) do
+      {:ok, resolved} -> validate_sensitive_path(state, resolved)
+      {:error, :outside_root} -> {:error, :outside_root}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   defp authorize_with_reason(state, tool_name, args, tool_safety) do
     if tool_allowed?(state, tool_name) do
       case network_allowed_with_reason(state, args, tool_safety) do
-        :ok -> validate_arg_paths(state.root_path, args)
+        :ok -> validate_arg_paths(state, args)
         {:error, _reason} = error -> error
       end
     else
@@ -396,6 +419,17 @@ defmodule Jido.Code.Server.Project.Policy do
 
   defp normalize_network_scheme(_scheme), do: nil
 
+  defp normalize_path_patterns(list) when is_list(list) do
+    list
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp normalize_path_patterns(_), do: []
+
   defp tool_set_to_list(nil), do: []
 
   defp tool_set_to_list(set) do
@@ -414,6 +448,50 @@ defmodule Jido.Code.Server.Project.Policy do
       end
 
     not denied and allowed
+  end
+
+  defp validate_sensitive_path(state, resolved_path) do
+    root = state.root_path |> Path.expand() |> String.replace("\\", "/")
+    relative = Path.relative_to(resolved_path, root) |> String.replace("\\", "/")
+
+    if sensitive_path_denied?(
+         relative,
+         state.sensitive_path_denylist,
+         state.sensitive_path_allowlist
+       ) do
+      {:error, :sensitive_path_denied}
+    else
+      :ok
+    end
+  end
+
+  defp sensitive_path_denied?(relative, denylist, allowlist) do
+    denied = Enum.any?(denylist, &path_pattern_match?(&1, relative))
+    allowed = Enum.any?(allowlist, &path_pattern_match?(&1, relative))
+    denied and not allowed
+  end
+
+  defp path_pattern_match?(pattern, relative) do
+    normalized_pattern = String.replace(pattern, "\\", "/")
+    basename = Path.basename(relative)
+
+    if String.contains?(normalized_pattern, "/") do
+      wildcard_match?(relative, normalized_pattern)
+    else
+      wildcard_match?(basename, normalized_pattern)
+    end
+  rescue
+    _error -> false
+  end
+
+  defp wildcard_match?(value, pattern) when is_binary(value) and is_binary(pattern) do
+    regex =
+      pattern
+      |> Regex.escape()
+      |> String.replace("\\*", ".*")
+      |> String.replace("\\?", ".")
+
+    Regex.match?(~r/^#{regex}$/, value)
   end
 
   defp inside_root?(root, path) do
@@ -508,6 +586,10 @@ defmodule Jido.Code.Server.Project.Policy do
 
   defp maybe_emit_security_signal(%{reason: :network_protocol_denied} = decision) do
     Telemetry.emit("security.network_denied", decision)
+  end
+
+  defp maybe_emit_security_signal(%{reason: :sensitive_path_denied} = decision) do
+    Telemetry.emit("security.sensitive_path_denied", decision)
   end
 
   defp maybe_emit_security_signal(_decision), do: :ok

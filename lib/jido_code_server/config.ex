@@ -57,6 +57,27 @@ defmodule Jido.Code.Server.Config do
     |> Enum.uniq()
   end
 
+  @spec sensitive_path_denylist() :: [String.t()]
+  def sensitive_path_denylist do
+    Application.get_env(@app, :sensitive_path_denylist, [
+      ".env",
+      ".env.*",
+      "*.pem",
+      "*.key",
+      "id_rsa",
+      "id_ed25519"
+    ])
+    |> List.wrap()
+    |> Enum.filter(&is_binary/1)
+  end
+
+  @spec sensitive_path_allowlist() :: [String.t()]
+  def sensitive_path_allowlist do
+    Application.get_env(@app, :sensitive_path_allowlist, [])
+    |> List.wrap()
+    |> Enum.filter(&is_binary/1)
+  end
+
   @spec llm_timeout_ms() :: pos_integer()
   def llm_timeout_ms do
     Application.get_env(@app, :llm_timeout_ms, 120_000)
