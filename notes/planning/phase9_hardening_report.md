@@ -11,6 +11,7 @@
   - Correlation ID propagation across ingest, LLM, tool execution, and policy decisions
   - Bounded incident timeline extraction across conversation and telemetry streams
   - Explicit outside-root sandbox exceptions with reason-coded allowlisting and security telemetry
+  - Conversation-scoped tool concurrency quotas
 
 ## Implemented Controls
 
@@ -144,6 +145,19 @@
 - Security telemetry emits:
   - `security.sandbox_exception_used` with `reason_code`
 
+### 12. Conversation-scoped tool concurrency quotas
+
+- Tool runner now enforces two independent capacity controls:
+  - `tool_max_concurrency` (project-wide in-flight limit)
+  - `tool_max_concurrency_per_conversation` (per-conversation in-flight limit; default `4`)
+- Enforcement details:
+  - per-conversation counters are tracked by `{project_id, conversation_id}`
+  - calls without a conversation ID remain governed by project-wide limits only
+- Over-limit calls fail fast with:
+  - `:conversation_max_concurrency_reached`
+- Runtime diagnostics include:
+  - `runtime_opts[:tool_max_concurrency_per_conversation]`
+
 ## Evidence (Automated Tests)
 
 - Added: `test/jido_code_server/project_phase9_test.exs`
@@ -157,6 +171,7 @@
   - sensitive artifact detection signal on risky tool outputs
   - sandbox violation security signal
   - allowlisted outside-root exception signal with reason code
+  - conversation-scoped concurrency quota enforcement
   - sensitive path deny-by-default and explicit allowlist override
   - network deny-by-default and allowlist enforcement
   - protocol deny-by-default with explicit allow override

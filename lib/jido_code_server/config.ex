@@ -94,6 +94,11 @@ defmodule Jido.Code.Server.Config do
     Application.get_env(@app, :tool_max_concurrency, 8)
   end
 
+  @spec tool_max_concurrency_per_conversation() :: non_neg_integer()
+  def tool_max_concurrency_per_conversation do
+    Application.get_env(@app, :tool_max_concurrency_per_conversation, 4)
+  end
+
   @spec strict_asset_loading() :: boolean()
   def strict_asset_loading do
     Application.get_env(@app, :strict_asset_loading, false)

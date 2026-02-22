@@ -12,6 +12,7 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   alias Jido.Code.Server.Types.ToolCall
 
   @timeout_table __MODULE__.Timeouts
+  @concurrency_table __MODULE__.Concurrency
   @schema_atom_keys %{
     "type" => :type,
     "required" => :required,
@@ -86,20 +87,33 @@ defmodule Jido.Code.Server.Project.ToolRunner do
              call.meta,
              Map.get(spec, :safety, %{}) || %{},
              run_ctx
-           ),
-         :ok <- ensure_capacity(project_ctx),
-         :ok <- emit_started(project_ctx, call, spec),
-         {:ok, result} <- execute_within_task(project_ctx, spec, call),
-         :ok <- enforce_result_limits(project_ctx, result) do
-      duration_ms = System.monotonic_time(:millisecond) - started_at
+           ) do
+      case acquire_capacity(project_ctx, call) do
+        {:ok, capacity_token} ->
+          try do
+            with :ok <- emit_started(project_ctx, call, spec),
+                 {:ok, result} <- execute_within_task(project_ctx, spec, call),
+                 :ok <- enforce_result_limits(project_ctx, result) do
+              duration_ms = System.monotonic_time(:millisecond) - started_at
 
-      response =
-        call
-        |> success_response(spec, duration_ms, result)
-        |> maybe_flag_sensitive_result(project_ctx)
+              response =
+                call
+                |> success_response(spec, duration_ms, result)
+                |> maybe_flag_sensitive_result(project_ctx)
 
-      Telemetry.emit("tool.completed", response)
-      {:ok, response}
+              Telemetry.emit("tool.completed", response)
+              {:ok, response}
+            else
+              {:error, reason} ->
+                run_failed(project_ctx, call, started_at, reason)
+            end
+          after
+            release_capacity(capacity_token)
+          end
+
+        {:error, reason} ->
+          run_failed(project_ctx, call, started_at, reason)
+      end
     else
       {:error, reason} ->
         run_failed(project_ctx, call, started_at, reason)
@@ -184,7 +198,17 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     end
   end
 
-  defp ensure_capacity(project_ctx) do
+  defp acquire_capacity(project_ctx, call) do
+    case ensure_project_capacity(project_ctx) do
+      :ok ->
+        acquire_conversation_capacity(project_ctx, call)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp ensure_project_capacity(project_ctx) do
     max_concurrency = Map.get(project_ctx, :tool_max_concurrency, Config.tool_max_concurrency())
     running = length(Task.Supervisor.children(project_ctx.task_supervisor))
 
@@ -192,6 +216,83 @@ defmodule Jido.Code.Server.Project.ToolRunner do
       :ok
     else
       {:error, :max_concurrency_reached}
+    end
+  end
+
+  defp acquire_conversation_capacity(project_ctx, call) do
+    case conversation_capacity_key(project_ctx, call) do
+      nil ->
+        {:ok, :none}
+
+      key ->
+        ensure_concurrency_table()
+        max = conversation_capacity_limit(project_ctx)
+
+        try do
+          in_flight = :ets.update_counter(@concurrency_table, key, {2, 1}, {key, 0})
+
+          if in_flight <= max do
+            {:ok, {:conversation, key}}
+          else
+            _ = :ets.update_counter(@concurrency_table, key, {2, -1}, {key, 0})
+            maybe_cleanup_conversation_key(key)
+            {:error, :conversation_max_concurrency_reached}
+          end
+        rescue
+          _error ->
+            {:error, :conversation_max_concurrency_reached}
+        end
+    end
+  end
+
+  defp release_capacity(:none), do: :ok
+
+  defp release_capacity({:conversation, key}) do
+    ensure_concurrency_table()
+
+    try do
+      _ = :ets.update_counter(@concurrency_table, key, {2, -1}, {key, 0})
+      maybe_cleanup_conversation_key(key)
+    rescue
+      _error -> :ok
+    end
+  end
+
+  defp maybe_cleanup_conversation_key(key) do
+    case :ets.lookup(@concurrency_table, key) do
+      [{^key, count}] when is_integer(count) and count <= 0 ->
+        :ets.delete(@concurrency_table, key)
+
+      _ ->
+        :ok
+    end
+  rescue
+    _error -> :ok
+  end
+
+  defp conversation_capacity_key(project_ctx, call) do
+    case normalize_conversation_id(conversation_id_from_call(call)) do
+      nil ->
+        nil
+
+      conversation_id ->
+        {:conversation, normalize_project_key(project_ctx.project_id), conversation_id}
+    end
+  end
+
+  defp normalize_conversation_id(conversation_id) when is_binary(conversation_id) do
+    trimmed = String.trim(conversation_id)
+    if trimmed == "", do: nil, else: trimmed
+  end
+
+  defp normalize_conversation_id(_conversation_id), do: nil
+
+  defp conversation_capacity_limit(project_ctx) do
+    default = Config.tool_max_concurrency_per_conversation()
+
+    case Map.get(project_ctx, :tool_max_concurrency_per_conversation, default) do
+      value when is_integer(value) and value >= 0 -> value
+      _ -> default
     end
   end
 
@@ -599,6 +700,27 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     rescue
       _error -> 1
     end
+  end
+
+  defp ensure_concurrency_table do
+    case :ets.whereis(@concurrency_table) do
+      :undefined ->
+        :ets.new(@concurrency_table, [
+          :named_table,
+          :public,
+          :set,
+          read_concurrency: true,
+          write_concurrency: true
+        ])
+
+        :ok
+
+      _ ->
+        :ok
+    end
+  rescue
+    ArgumentError ->
+      :ok
   end
 
   defp ensure_timeout_table do

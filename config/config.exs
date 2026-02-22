@@ -12,4 +12,5 @@ config :jido_code_server,
   outside_root_allowlist: [],
   llm_timeout_ms: 120_000,
   tool_max_concurrency: 8,
+  tool_max_concurrency_per_conversation: 4,
   watcher_debounce_ms: 250

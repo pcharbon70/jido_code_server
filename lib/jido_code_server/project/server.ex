@@ -201,6 +201,12 @@ defmodule Jido.Code.Server.Project.Server do
           tool_timeout_ms: runtime_opt(state, :tool_timeout_ms, Config.tool_timeout_ms()),
           tool_max_concurrency:
             runtime_opt(state, :tool_max_concurrency, Config.tool_max_concurrency()),
+          tool_max_concurrency_per_conversation:
+            runtime_opt(
+              state,
+              :tool_max_concurrency_per_conversation,
+              Config.tool_max_concurrency_per_conversation()
+            ),
           tool_timeout_alert_threshold:
             runtime_opt(
               state,
@@ -459,6 +465,12 @@ defmodule Jido.Code.Server.Project.Server do
       tool_timeout_ms: runtime_opt(state, :tool_timeout_ms, Config.tool_timeout_ms()),
       tool_max_concurrency:
         runtime_opt(state, :tool_max_concurrency, Config.tool_max_concurrency()),
+      tool_max_concurrency_per_conversation:
+        runtime_opt(
+          state,
+          :tool_max_concurrency_per_conversation,
+          Config.tool_max_concurrency_per_conversation()
+        ),
       tool_timeout_alert_threshold:
         runtime_opt(
           state,
@@ -554,6 +566,7 @@ defmodule Jido.Code.Server.Project.Server do
           :watcher_debounce_ms,
           :tool_timeout_ms,
           :tool_max_concurrency,
+          :tool_max_concurrency_per_conversation,
           :tool_timeout_alert_threshold,
           :tool_max_output_bytes,
           :tool_max_artifact_bytes,

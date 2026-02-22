@@ -20,6 +20,7 @@
 - [ ] High-risk network protocols are deny-by-default unless explicitly allowlisted via `network_allowed_schemes`.
 - [ ] Telemetry redaction masks secret/token patterns in recent errors.
 - [ ] Repeated timeout escalation emits `security.repeated_timeout_failures`.
+- [ ] Project and conversation concurrency limits both enforce (`tool_max_concurrency`, `tool_max_concurrency_per_conversation`).
 
 ## Reliability Gates
 

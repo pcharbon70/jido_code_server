@@ -64,6 +64,8 @@ defmodule Jido.Code.Server.Conversation.Server do
       task_supervisor: Keyword.get(opts, :task_supervisor),
       tool_timeout_ms: Keyword.get(opts, :tool_timeout_ms),
       tool_max_concurrency: Keyword.get(opts, :tool_max_concurrency),
+      tool_max_concurrency_per_conversation:
+        Keyword.get(opts, :tool_max_concurrency_per_conversation),
       tool_timeout_alert_threshold: Keyword.get(opts, :tool_timeout_alert_threshold),
       tool_max_output_bytes: Keyword.get(opts, :tool_max_output_bytes),
       tool_max_artifact_bytes: Keyword.get(opts, :tool_max_artifact_bytes),
