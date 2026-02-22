@@ -46,7 +46,7 @@
 
 ## Incident Response Playbook
 
-1. Identify affected `project_id` and `conversation_id` from telemetry payload.
+1. Identify affected `project_id`, `conversation_id`, and `correlation_id` from telemetry payload.
 2. Pull bounded timeline:
    - conversation projection: `Jido.Code.Server.get_projection(project_id, conversation_id, :timeline)`
    - project diagnostics: `Jido.Code.Server.diagnostics(project_id)`

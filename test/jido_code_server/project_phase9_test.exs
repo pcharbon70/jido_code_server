@@ -55,6 +55,7 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
   test "policy decisions are audited and emitted in telemetry" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
+    correlation_id = "corr-phase9-policy-c1"
 
     assert {:ok, project_id} =
              Runtime.start_project(root,
@@ -62,19 +63,26 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
                allow_tools: ["asset.list"]
              )
 
-    assert {:ok, %{status: :ok}} =
+    assert {:ok, ok_result} =
              Runtime.run_tool(project_id, %{
                name: "asset.list",
                args: %{"type" => "skill"},
-               meta: %{"conversation_id" => "phase9-c1"}
+               meta: %{"conversation_id" => "phase9-c1", "correlation_id" => correlation_id}
              })
 
-    assert {:error, %{status: :error, reason: :denied}} =
+    assert ok_result.status == :ok
+    assert ok_result.correlation_id == correlation_id
+
+    assert {:error, denied_result} =
              Runtime.run_tool(project_id, %{
                name: "asset.search",
                args: %{"type" => "skill", "query" => "example"},
-               meta: %{"conversation_id" => "phase9-c1"}
+               meta: %{"conversation_id" => "phase9-c1", "correlation_id" => correlation_id}
              })
+
+    assert denied_result.status == :error
+    assert denied_result.reason == :denied
+    assert denied_result.correlation_id == correlation_id
 
     diagnostics = Runtime.diagnostics(project_id)
 
@@ -83,15 +91,111 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
 
     assert Enum.any?(diagnostics.policy.recent_decisions, fn decision ->
              decision.conversation_id == "phase9-c1" and
+               decision.correlation_id == correlation_id and
                decision.tool_name == "asset.list" and
                decision.reason == :allowed
            end)
 
     assert Enum.any?(diagnostics.policy.recent_decisions, fn decision ->
              decision.conversation_id == "phase9-c1" and
+               decision.correlation_id == correlation_id and
                decision.tool_name == "asset.search" and
                decision.reason == :denied
            end)
+  end
+
+  test "conversation runtime propagates provided correlation id across llm, tool, and policy paths" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+    correlation_id = "corr-phase9-conversation-tool"
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-correlation-tool",
+               conversation_orchestration: true,
+               llm_adapter: :deterministic
+             )
+
+    assert {:ok, "phase9-corr-c1"} =
+             Runtime.start_conversation(project_id, conversation_id: "phase9-corr-c1")
+
+    assert :ok =
+             Runtime.send_event(project_id, "phase9-corr-c1", %{
+               "type" => "user.message",
+               "content" => "please list skills",
+               "meta" => %{"correlation_id" => correlation_id}
+             })
+
+    assert {:ok, timeline} = Runtime.get_projection(project_id, "phase9-corr-c1", :timeline)
+
+    correlation_ids =
+      timeline
+      |> Enum.map(fn event ->
+        event
+        |> map_lookup(:meta)
+        |> map_lookup(:correlation_id)
+      end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    assert correlation_ids == [correlation_id]
+
+    assert Enum.any?(timeline, fn event -> map_lookup(event, :type) == "tool.requested" end)
+    assert Enum.any?(timeline, fn event -> map_lookup(event, :type) == "tool.completed" end)
+
+    tool_completed =
+      Enum.find(timeline, fn event ->
+        map_lookup(event, :type) == "tool.completed"
+      end)
+
+    result = map_lookup(tool_completed, :data) |> map_lookup(:result)
+    assert map_lookup(result, :correlation_id) == correlation_id
+
+    diagnostics = Runtime.diagnostics(project_id)
+
+    assert Enum.any?(diagnostics.policy.recent_decisions, fn decision ->
+             decision.conversation_id == "phase9-corr-c1" and
+               decision.correlation_id == correlation_id and
+               decision.tool_name == "asset.list" and
+               decision.reason == :allowed
+           end)
+  end
+
+  test "conversation runtime generates and reuses correlation id when ingest event omits one" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-correlation-generate",
+               conversation_orchestration: true,
+               llm_adapter: :deterministic
+             )
+
+    assert {:ok, "phase9-corr-c2"} =
+             Runtime.start_conversation(project_id, conversation_id: "phase9-corr-c2")
+
+    assert :ok =
+             Runtime.send_event(project_id, "phase9-corr-c2", %{
+               "type" => "user.message",
+               "content" => "hello"
+             })
+
+    assert {:ok, timeline} = Runtime.get_projection(project_id, "phase9-corr-c2", :timeline)
+
+    correlation_ids =
+      timeline
+      |> Enum.map(fn event ->
+        event
+        |> map_lookup(:meta)
+        |> map_lookup(:correlation_id)
+      end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    assert length(correlation_ids) == 1
+    assert [generated_correlation_id] = correlation_ids
+    assert String.starts_with?(generated_correlation_id, "corr-")
   end
 
   test "sandbox violations emit security telemetry signals" do

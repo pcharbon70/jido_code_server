@@ -6,6 +6,7 @@ defmodule Jido.Code.Server.Conversation.Server do
   use GenServer
 
   alias Jido.Code.Server.Conversation.Loop
+  alias Jido.Code.Server.Correlation
   alias Jido.Code.Server.Telemetry
   alias Jido.Code.Server.Types.Event
 
@@ -146,17 +147,23 @@ defmodule Jido.Code.Server.Conversation.Server do
   end
 
   defp ingest_event_internal(state, raw_event) do
-    with {:ok, event} <- Event.from_map(raw_event),
-         updated_conversation <- Loop.ingest(state.conversation, event, raw_event),
+    with {:ok, parsed_event} <- Event.from_map(raw_event),
+         {correlation_id, event} <- ensure_event_correlation(parsed_event),
+         canonical_incoming <- incoming_raw_event(raw_event, event),
+         updated_conversation <- Loop.ingest(state.conversation, event, canonical_incoming),
          {:ok, next_conversation, emitted_events} <-
-           Loop.after_ingest(updated_conversation, state.project_ctx) do
+           Loop.after_ingest(
+             updated_conversation,
+             Map.put(state.project_ctx, :correlation_id, correlation_id)
+           ) do
       next_state = %{state | conversation: next_conversation}
 
       emit_ingest_telemetry(
         next_state.project_id,
         next_state.conversation_id,
         event,
-        emitted_events
+        emitted_events,
+        correlation_id
       )
 
       notify_subscribers(
@@ -164,7 +171,8 @@ defmodule Jido.Code.Server.Conversation.Server do
         next_state.project_id,
         next_state.conversation_id,
         event,
-        emitted_events
+        emitted_events,
+        correlation_id
       )
 
       {:ok, next_state}
@@ -174,24 +182,43 @@ defmodule Jido.Code.Server.Conversation.Server do
     end
   end
 
-  defp emit_ingest_telemetry(project_id, conversation_id, event, emitted_events) do
+  defp emit_ingest_telemetry(project_id, conversation_id, event, emitted_events, correlation_id) do
     Telemetry.emit("conversation.event_ingested", %{
       project_id: project_id,
       conversation_id: conversation_id,
       event_type: event.type,
-      emitted_count: length(emitted_events)
+      emitted_count: length(emitted_events),
+      correlation_id: correlation_id
     })
 
     emit_runtime_event_telemetry(project_id, conversation_id, event, :incoming)
   end
 
-  defp notify_subscribers(subscribers, project_id, conversation_id, event, emitted_events) do
+  defp notify_subscribers(
+         subscribers,
+         project_id,
+         conversation_id,
+         event,
+         emitted_events,
+         correlation_id
+       ) do
     send_event(subscribers, conversation_id, event)
-    Enum.each(emitted_events, &notify_emitted_event(subscribers, project_id, conversation_id, &1))
+
+    Enum.each(emitted_events, fn emitted ->
+      notify_emitted_event(subscribers, project_id, conversation_id, emitted, correlation_id)
+    end)
   end
 
-  defp notify_emitted_event(subscribers, project_id, conversation_id, emitted) do
-    case Event.from_map(emitted) do
+  defp notify_emitted_event(
+         subscribers,
+         project_id,
+         conversation_id,
+         emitted,
+         fallback_correlation_id
+       ) do
+    emitted_with_correlation = ensure_emitted_event_correlation(emitted, fallback_correlation_id)
+
+    case Event.from_map(emitted_with_correlation) do
       {:ok, normalized} ->
         emit_runtime_event_telemetry(project_id, conversation_id, normalized, :emitted)
         send_event(subscribers, conversation_id, normalized)
@@ -219,7 +246,8 @@ defmodule Jido.Code.Server.Conversation.Server do
       project_id: project_id,
       conversation_id: conversation_id,
       event_source: source,
-      event_type: event.type
+      event_type: event.type,
+      correlation_id: correlation_id_from_event(event)
     }
 
     cond do
@@ -237,6 +265,75 @@ defmodule Jido.Code.Server.Conversation.Server do
 
       true ->
         :ok
+    end
+  end
+
+  defp ensure_event_correlation(%Event{} = event) do
+    {correlation_id, meta} = Correlation.ensure(event.meta)
+    {correlation_id, %{event | meta: meta}}
+  end
+
+  defp incoming_raw_event(raw_event, %Event{} = event) when is_map(raw_event) do
+    raw_event
+    |> ensure_raw_event_field(:type, "type", event.type)
+    |> ensure_raw_event_field(:at, "at", event.at)
+    |> put_event_meta(event.meta)
+  end
+
+  defp ensure_emitted_event_correlation(raw_event, fallback_correlation_id)
+       when is_map(raw_event) do
+    meta = raw_event[:meta] || raw_event["meta"] || %{}
+
+    correlation_id =
+      case Correlation.fetch(meta) do
+        {:ok, existing} ->
+          existing
+
+        :error when is_binary(fallback_correlation_id) and fallback_correlation_id != "" ->
+          fallback_correlation_id
+
+        :error ->
+          Correlation.generate()
+      end
+
+    put_event_meta(raw_event, Correlation.put(meta, correlation_id))
+  end
+
+  defp ensure_emitted_event_correlation(raw_event, _fallback_correlation_id), do: raw_event
+
+  defp put_event_meta(raw_event, meta) do
+    cond do
+      Map.has_key?(raw_event, :meta) ->
+        Map.put(raw_event, :meta, meta)
+
+      Map.has_key?(raw_event, "meta") ->
+        Map.put(raw_event, "meta", meta)
+
+      true ->
+        Map.put(raw_event, "meta", meta)
+    end
+  end
+
+  defp ensure_raw_event_field(raw_event, atom_key, string_key, value) do
+    cond do
+      Map.has_key?(raw_event, atom_key) ->
+        raw_event
+
+      Map.has_key?(raw_event, string_key) ->
+        raw_event
+
+      Map.has_key?(raw_event, :data) or Map.has_key?(raw_event, "data") ->
+        Map.put(raw_event, string_key, value)
+
+      true ->
+        raw_event
+    end
+  end
+
+  defp correlation_id_from_event(%Event{meta: meta}) when is_map(meta) do
+    case Correlation.fetch(meta) do
+      {:ok, correlation_id} -> correlation_id
+      :error -> nil
     end
   end
 
