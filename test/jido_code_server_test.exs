@@ -15,6 +15,8 @@ defmodule JidoCodeServerTest do
     assert JidoCodeServer.Config.tool_timeout_alert_threshold() == 3
     assert JidoCodeServer.Config.tool_max_output_bytes() == 262_144
     assert JidoCodeServer.Config.tool_max_artifact_bytes() == 131_072
+    assert JidoCodeServer.Config.network_egress_policy() == :deny
+    assert JidoCodeServer.Config.network_allowlist() == []
     assert JidoCodeServer.Config.llm_timeout_ms() == 120_000
     assert JidoCodeServer.Config.tool_max_concurrency() == 8
     assert JidoCodeServer.Config.watcher_debounce_ms() == 250

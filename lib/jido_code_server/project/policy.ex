@@ -34,6 +34,8 @@ defmodule JidoCodeServer.Project.Policy do
       root_path: Keyword.get(opts, :root_path),
       allow_tools: allow_tools,
       deny_tools: deny_tools,
+      network_egress_policy: normalize_network_policy(Keyword.get(opts, :network_egress_policy)),
+      network_allowlist: normalize_network_allowlist(Keyword.get(opts, :network_allowlist, [])),
       recent_decisions: []
     }
 
@@ -61,17 +63,31 @@ defmodule JidoCodeServer.Project.Policy do
   end
 
   @spec authorize_tool(GenServer.server(), String.t(), map(), map()) ::
-          :ok | {:error, :denied | :outside_root | term()}
+          :ok
+          | {:error,
+             :denied | :outside_root | :network_denied | :network_endpoint_denied | term()}
   def authorize_tool(server, tool_name, args, ctx)
       when is_binary(tool_name) and is_map(args) and is_map(ctx) do
     authorize_tool(server, tool_name, args, %{}, ctx)
   end
 
   @spec authorize_tool(GenServer.server(), String.t(), map(), map(), map()) ::
-          :ok | {:error, :denied | :outside_root | term()}
+          :ok
+          | {:error,
+             :denied | :outside_root | :network_denied | :network_endpoint_denied | term()}
   def authorize_tool(server, tool_name, args, meta, ctx)
       when is_binary(tool_name) and is_map(args) and is_map(meta) and is_map(ctx) do
-    GenServer.call(server, {:authorize_tool, tool_name, args, meta, ctx})
+    authorize_tool(server, tool_name, args, meta, %{}, ctx)
+  end
+
+  @spec authorize_tool(GenServer.server(), String.t(), map(), map(), map(), map()) ::
+          :ok
+          | {:error,
+             :denied | :outside_root | :network_denied | :network_endpoint_denied | term()}
+  def authorize_tool(server, tool_name, args, meta, tool_safety, ctx)
+      when is_binary(tool_name) and is_map(args) and is_map(meta) and is_map(tool_safety) and
+             is_map(ctx) do
+    GenServer.call(server, {:authorize_tool, tool_name, args, meta, tool_safety, ctx})
   end
 
   @spec filter_tools(GenServer.server(), list(map())) :: list(map())
@@ -85,9 +101,9 @@ defmodule JidoCodeServer.Project.Policy do
   end
 
   @impl true
-  def handle_call({:authorize_tool, tool_name, args, meta, ctx}, _from, state) do
+  def handle_call({:authorize_tool, tool_name, args, meta, tool_safety, ctx}, _from, state) do
     {reply, reason} =
-      case authorize_with_reason(state, tool_name, args) do
+      case authorize_with_reason(state, tool_name, args, tool_safety) do
         :ok ->
           {:ok, :allowed}
 
@@ -112,7 +128,9 @@ defmodule JidoCodeServer.Project.Policy do
     filtered =
       Enum.filter(tool_specs, fn spec ->
         spec_name = Map.get(spec, :name) || Map.get(spec, "name")
-        is_binary(spec_name) and tool_allowed?(state, spec_name)
+
+        is_binary(spec_name) and tool_allowed?(state, spec_name) and
+          tool_visible_under_network_policy?(state, spec)
       end)
 
     {:reply, filtered, state}
@@ -124,6 +142,8 @@ defmodule JidoCodeServer.Project.Policy do
       root_path: state.root_path,
       allow_tools: tool_set_to_list(state.allow_tools),
       deny_tools: tool_set_to_list(state.deny_tools),
+      network_egress_policy: state.network_egress_policy,
+      network_allowlist: state.network_allowlist,
       recent_decisions: state.recent_decisions
     }
 
@@ -161,12 +181,109 @@ defmodule JidoCodeServer.Project.Policy do
 
   defp maybe_validate_path(_root_path, _key, _value), do: {:cont, :ok}
 
-  defp authorize_with_reason(state, tool_name, args) do
+  defp authorize_with_reason(state, tool_name, args, tool_safety) do
     if tool_allowed?(state, tool_name) do
-      validate_arg_paths(state.root_path, args)
+      case network_allowed_with_reason(state, args, tool_safety) do
+        :ok -> validate_arg_paths(state.root_path, args)
+        {:error, _reason} = error -> error
+      end
     else
       {:error, :denied}
     end
+  end
+
+  defp network_allowed_with_reason(state, args, tool_safety) do
+    if network_access_required?(tool_safety) do
+      case state.network_egress_policy do
+        :allow ->
+          validate_network_allowlist(state.network_allowlist, args)
+
+        _deny ->
+          {:error, :network_denied}
+      end
+    else
+      :ok
+    end
+  end
+
+  defp validate_network_allowlist([], _args), do: :ok
+
+  defp validate_network_allowlist(allowlist, args) do
+    args
+    |> extract_network_targets()
+    |> Enum.reduce_while(:ok, fn target, :ok ->
+      if allowed_network_target?(allowlist, target) do
+        {:cont, :ok}
+      else
+        {:halt, {:error, :network_endpoint_denied}}
+      end
+    end)
+  end
+
+  defp extract_network_targets(args) when is_map(args) do
+    args
+    |> Map.to_list()
+    |> Enum.reduce([], fn
+      {key, value}, acc when is_binary(value) and (is_binary(key) or is_atom(key)) ->
+        normalized_key = key |> to_string() |> String.downcase()
+
+        if network_target_key?(normalized_key) do
+          [normalize_network_target(value) | acc]
+        else
+          acc
+        end
+
+      {_key, _value}, acc ->
+        acc
+    end)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp network_target_key?(key) do
+    String.contains?(key, "url") or
+      String.contains?(key, "uri") or
+      String.contains?(key, "host") or
+      String.contains?(key, "domain") or
+      String.contains?(key, "endpoint")
+  end
+
+  defp normalize_network_target(value) when is_binary(value) do
+    trimmed = String.trim(value)
+
+    if trimmed == "" do
+      nil
+    else
+      uri = URI.parse(trimmed)
+
+      if is_binary(uri.host) and uri.host != "" do
+        String.downcase(uri.host)
+      else
+        String.downcase(trimmed)
+      end
+    end
+  end
+
+  defp allowed_network_target?(allowlist, target) do
+    Enum.any?(allowlist, fn entry ->
+      target == entry or String.ends_with?(target, "." <> entry)
+    end)
+  end
+
+  defp tool_visible_under_network_policy?(state, tool_spec) do
+    if network_access_required?(extract_tool_safety(tool_spec)) do
+      state.network_egress_policy == :allow
+    else
+      true
+    end
+  end
+
+  defp extract_tool_safety(tool_spec) when is_map(tool_spec) do
+    Map.get(tool_spec, :safety) || Map.get(tool_spec, "safety") || %{}
+  end
+
+  defp network_access_required?(safety) when is_map(safety) do
+    Map.get(safety, :network_capable) == true or
+      Map.get(safety, "network_capable") == true
   end
 
   defp normalize_tool_set(nil), do: nil
@@ -180,6 +297,23 @@ defmodule JidoCodeServer.Project.Policy do
   end
 
   defp normalize_tool_set(_other), do: MapSet.new()
+
+  defp normalize_network_policy(:allow), do: :allow
+  defp normalize_network_policy("allow"), do: :allow
+  defp normalize_network_policy(_), do: :deny
+
+  defp normalize_network_allowlist(list) when is_list(list) do
+    list
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.map(&normalize_network_target/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp normalize_network_allowlist(_), do: []
 
   defp tool_set_to_list(nil), do: []
 
@@ -281,6 +415,14 @@ defmodule JidoCodeServer.Project.Policy do
 
   defp maybe_emit_security_signal(%{reason: :outside_root} = decision) do
     Telemetry.emit("security.sandbox_violation", decision)
+  end
+
+  defp maybe_emit_security_signal(%{reason: :network_denied} = decision) do
+    Telemetry.emit("security.network_denied", decision)
+  end
+
+  defp maybe_emit_security_signal(%{reason: :network_endpoint_denied} = decision) do
+    Telemetry.emit("security.network_denied", decision)
   end
 
   defp maybe_emit_security_signal(_decision), do: :ok

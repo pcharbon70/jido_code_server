@@ -66,6 +66,16 @@
   - known token patterns (OpenAI-style keys, GitHub PATs, AWS access keys, Slack token patterns, Bearer values)
 - Recent error diagnostics now store redacted content only.
 
+### 6. Network egress policy controls
+
+- Tool metadata now marks network-capable tools (`command.run.*`, `workflow.run.*`) in `ToolCatalog`.
+- Policy enforces network egress controls:
+  - default deny (`network_egress_policy: :deny`)
+  - explicit enable (`:allow`)
+  - optional `network_allowlist` endpoint/domain filtering when enabled
+- Policy telemetry now emits security signal on denied network attempts:
+  - `security.network_denied`
+
 ## Evidence (Automated Tests)
 
 - Added: `test/jido_code_server/project_phase9_test.exs`
@@ -74,11 +84,12 @@
   - output cap enforcement
   - policy audit + telemetry events
   - sandbox violation security signal
+  - network deny-by-default and allowlist enforcement
   - secret redaction behavior
   - repeated timeout escalation signal
 
 ## Residual Constraints
 
 - Tool timeout handling currently terminates the task process; child OS process group termination is not yet implemented.
-- Network egress policy enforcement is not yet implemented in this phase slice.
+- Network allowlist enforcement depends on tool argument metadata (`url`/`host`/`domain`/`endpoint`) and is advisory for opaque command/workflow payloads.
 - External benchmark harness beyond test-suite load scenarios remains pending for full operational sign-off.

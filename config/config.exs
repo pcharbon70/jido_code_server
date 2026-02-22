@@ -7,6 +7,8 @@ config :jido_code_server,
   tool_timeout_alert_threshold: 3,
   tool_max_output_bytes: 262_144,
   tool_max_artifact_bytes: 131_072,
+  network_egress_policy: :deny,
+  network_allowlist: [],
   llm_timeout_ms: 120_000,
   tool_max_concurrency: 8,
   watcher_debounce_ms: 250

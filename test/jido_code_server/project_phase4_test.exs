@@ -21,7 +21,11 @@ defmodule JidoCodeServer.ProjectPhase4Test do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
 
-    assert {:ok, project_id} = JidoCodeServer.start_project(root, project_id: "phase4-tools")
+    assert {:ok, project_id} =
+             JidoCodeServer.start_project(root,
+               project_id: "phase4-tools",
+               network_egress_policy: :allow
+             )
 
     tool_names =
       project_id
@@ -40,7 +44,11 @@ defmodule JidoCodeServer.ProjectPhase4Test do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
 
-    assert {:ok, project_id} = JidoCodeServer.start_project(root, project_id: "phase4-runner")
+    assert {:ok, project_id} =
+             JidoCodeServer.start_project(root,
+               project_id: "phase4-runner",
+               network_egress_policy: :allow
+             )
 
     assert {:ok, %{status: :ok, tool: "asset.list", result: %{items: skills}}} =
              JidoCodeServer.run_tool(project_id, %{

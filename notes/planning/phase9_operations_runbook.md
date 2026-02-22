@@ -34,6 +34,8 @@
   - expected for unauthorized calls; alert only on sudden volume spikes (>3x baseline).
 - `security.sandbox_violation`:
   - page immediately; indicates outside-root path attempt.
+- `security.network_denied`:
+  - warning by default; page if repeated and unexpected for a project with enabled egress policy.
 
 ### Asset lifecycle
 
@@ -78,4 +80,3 @@
 - Same-day escalation:
   - persistent watcher reload failures
   - repeated loader parse failures with degraded asset availability
-

@@ -96,7 +96,11 @@ defmodule JidoCodeServer.ProjectPhase9Test do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
 
-    assert {:ok, project_id} = JidoCodeServer.start_project(root, project_id: "phase9-sandbox")
+    assert {:ok, project_id} =
+             JidoCodeServer.start_project(root,
+               project_id: "phase9-sandbox",
+               network_egress_policy: :allow
+             )
 
     assert {:error, %{status: :error, reason: :outside_root}} =
              JidoCodeServer.run_tool(project_id, %{
@@ -107,6 +111,92 @@ defmodule JidoCodeServer.ProjectPhase9Test do
 
     diagnostics = JidoCodeServer.diagnostics(project_id)
     assert event_count(diagnostics, "security.sandbox_violation") >= 1
+  end
+
+  test "network egress deny-by-default hides network-capable tools and rejects execution" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             JidoCodeServer.start_project(root, project_id: "phase9-network-deny")
+
+    tool_names =
+      project_id
+      |> JidoCodeServer.list_tools()
+      |> Enum.map(& &1.name)
+
+    refute "command.run.example_command" in tool_names
+    refute "workflow.run.example_workflow" in tool_names
+
+    assert {:error, %{status: :error, reason: :network_denied}} =
+             JidoCodeServer.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"path" => ".jido/commands/example_command.md"},
+               meta: %{"conversation_id" => "phase9-network-c1"}
+             })
+
+    diagnostics = JidoCodeServer.diagnostics(project_id)
+    assert event_count(diagnostics, "security.network_denied") >= 1
+  end
+
+  test "network egress allow exposes network-capable tools and permits execution" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             JidoCodeServer.start_project(root,
+               project_id: "phase9-network-allow",
+               network_egress_policy: :allow
+             )
+
+    tool_names =
+      project_id
+      |> JidoCodeServer.list_tools()
+      |> Enum.map(& &1.name)
+
+    assert "command.run.example_command" in tool_names
+    assert "workflow.run.example_workflow" in tool_names
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
+             JidoCodeServer.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"path" => ".jido/commands/example_command.md"}
+             })
+  end
+
+  test "network allowlist blocks disallowed endpoint targets" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             JidoCodeServer.start_project(root,
+               project_id: "phase9-network-allowlist",
+               network_egress_policy: :allow,
+               network_allowlist: ["example.com"]
+             )
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
+             JidoCodeServer.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{
+                 "path" => ".jido/commands/example_command.md",
+                 "url" => "https://api.example.com/v1/status"
+               },
+               meta: %{"conversation_id" => "phase9-network-c2"}
+             })
+
+    assert {:error, %{status: :error, reason: :network_endpoint_denied}} =
+             JidoCodeServer.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{
+                 "path" => ".jido/commands/example_command.md",
+                 "url" => "https://evil.test/payload"
+               },
+               meta: %{"conversation_id" => "phase9-network-c2"}
+             })
+
+    diagnostics = JidoCodeServer.diagnostics(project_id)
+    assert event_count(diagnostics, "security.network_denied") >= 1
   end
 
   test "telemetry redacts common secret patterns before persistence" do
