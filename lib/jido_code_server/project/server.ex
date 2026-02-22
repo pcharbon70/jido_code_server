@@ -48,6 +48,18 @@ defmodule JidoCodeServer.Project.Server do
     GenServer.call(server, {:send_event, conversation_id, event})
   end
 
+  @spec subscribe_conversation(GenServer.server(), conversation_id(), pid()) ::
+          :ok | {:error, term()}
+  def subscribe_conversation(server, conversation_id, pid \\ self()) when is_pid(pid) do
+    GenServer.call(server, {:subscribe_conversation, conversation_id, pid})
+  end
+
+  @spec unsubscribe_conversation(GenServer.server(), conversation_id(), pid()) ::
+          :ok | {:error, term()}
+  def unsubscribe_conversation(server, conversation_id, pid \\ self()) when is_pid(pid) do
+    GenServer.call(server, {:unsubscribe_conversation, conversation_id, pid})
+  end
+
   @spec get_projection(GenServer.server(), conversation_id(), atom() | String.t()) ::
           {:ok, term()} | {:error, term()}
   def get_projection(server, conversation_id, key) do
@@ -164,7 +176,11 @@ defmodule JidoCodeServer.Project.Server do
         conversation_opts = [
           project_id: state.project_id,
           conversation_id: conversation_id,
-          asset_store: state.asset_store
+          asset_store: state.asset_store,
+          policy: state.policy,
+          task_supervisor: state.task_supervisor,
+          tool_timeout_ms: Config.tool_timeout_ms(),
+          tool_max_concurrency: Config.tool_max_concurrency()
         ]
 
         case ConversationSupervisor.start_conversation(
@@ -204,7 +220,31 @@ defmodule JidoCodeServer.Project.Server do
   def handle_call({:send_event, conversation_id, event}, _from, state) do
     case fetch_conversation_pid(state, conversation_id) do
       {:ok, pid} ->
-        :ok = ConversationServer.ingest_event(pid, event)
+        case ConversationServer.ingest_event_sync(pid, event) do
+          :ok -> {:reply, :ok, state}
+          {:error, reason} -> {:reply, {:error, reason}, state}
+        end
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:subscribe_conversation, conversation_id, pid}, _from, state) do
+    case fetch_conversation_pid(state, conversation_id) do
+      {:ok, conversation_pid} ->
+        :ok = ConversationServer.subscribe(conversation_pid, pid)
+        {:reply, :ok, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:unsubscribe_conversation, conversation_id, pid}, _from, state) do
+    case fetch_conversation_pid(state, conversation_id) do
+      {:ok, conversation_pid} ->
+        :ok = ConversationServer.unsubscribe(conversation_pid, pid)
         {:reply, :ok, state}
 
       {:error, reason} ->

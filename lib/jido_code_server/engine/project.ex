@@ -52,6 +52,18 @@ defmodule JidoCodeServer.Engine.Project do
     GenServer.call(pid, {:send_event, conversation_id, event})
   end
 
+  @spec subscribe_conversation(pid(), String.t(), pid()) :: :ok | {:error, term()}
+  def subscribe_conversation(pid, conversation_id, subscriber_pid \\ self())
+      when is_pid(pid) and is_binary(conversation_id) and is_pid(subscriber_pid) do
+    GenServer.call(pid, {:subscribe_conversation, conversation_id, subscriber_pid})
+  end
+
+  @spec unsubscribe_conversation(pid(), String.t(), pid()) :: :ok | {:error, term()}
+  def unsubscribe_conversation(pid, conversation_id, subscriber_pid \\ self())
+      when is_pid(pid) and is_binary(conversation_id) and is_pid(subscriber_pid) do
+    GenServer.call(pid, {:unsubscribe_conversation, conversation_id, subscriber_pid})
+  end
+
   @spec get_projection(pid(), String.t(), atom() | String.t()) :: {:ok, term()} | {:error, term()}
   def get_projection(pid, conversation_id, key) when is_pid(pid) and is_binary(conversation_id) do
     GenServer.call(pid, {:get_projection, conversation_id, key})
@@ -188,6 +200,26 @@ defmodule JidoCodeServer.Engine.Project do
     reply =
       delegate(fn ->
         Server.send_event(state.project_server, conversation_id, event)
+      end)
+      |> unwrap_delegate()
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:subscribe_conversation, conversation_id, subscriber_pid}, _from, state) do
+    reply =
+      delegate(fn ->
+        Server.subscribe_conversation(state.project_server, conversation_id, subscriber_pid)
+      end)
+      |> unwrap_delegate()
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:unsubscribe_conversation, conversation_id, subscriber_pid}, _from, state) do
+    reply =
+      delegate(fn ->
+        Server.unsubscribe_conversation(state.project_server, conversation_id, subscriber_pid)
       end)
       |> unwrap_delegate()
 

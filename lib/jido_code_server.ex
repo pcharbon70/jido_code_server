@@ -29,6 +29,15 @@ defmodule JidoCodeServer do
   def send_event(project_id, conversation_id, event),
     do: Engine.send_event(project_id, conversation_id, event)
 
+  @spec subscribe_conversation(project_id(), conversation_id(), pid()) :: :ok | {:error, term()}
+  def subscribe_conversation(project_id, conversation_id, subscriber_pid \\ self()),
+    do: Engine.subscribe_conversation(project_id, conversation_id, subscriber_pid)
+
+  @spec unsubscribe_conversation(project_id(), conversation_id(), pid()) ::
+          :ok | {:error, term()}
+  def unsubscribe_conversation(project_id, conversation_id, subscriber_pid \\ self()),
+    do: Engine.unsubscribe_conversation(project_id, conversation_id, subscriber_pid)
+
   @spec get_projection(project_id(), conversation_id(), atom() | String.t()) ::
           {:ok, term()} | {:error, term()}
   def get_projection(project_id, conversation_id, key),

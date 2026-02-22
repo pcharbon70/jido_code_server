@@ -84,6 +84,23 @@ defmodule JidoCodeServer.Engine do
     with_project(project_id, fn pid -> Project.send_event(pid, conversation_id, event) end)
   end
 
+  @spec subscribe_conversation(project_id(), conversation_id(), pid()) :: :ok | {:error, term()}
+  def subscribe_conversation(project_id, conversation_id, subscriber_pid \\ self())
+      when is_pid(subscriber_pid) do
+    with_project(project_id, fn pid ->
+      Project.subscribe_conversation(pid, conversation_id, subscriber_pid)
+    end)
+  end
+
+  @spec unsubscribe_conversation(project_id(), conversation_id(), pid()) ::
+          :ok | {:error, term()}
+  def unsubscribe_conversation(project_id, conversation_id, subscriber_pid \\ self())
+      when is_pid(subscriber_pid) do
+    with_project(project_id, fn pid ->
+      Project.unsubscribe_conversation(pid, conversation_id, subscriber_pid)
+    end)
+  end
+
   @spec get_projection(project_id(), conversation_id(), atom() | String.t()) ::
           {:ok, term()} | {:error, term()}
   def get_projection(project_id, conversation_id, key) do
