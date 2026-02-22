@@ -6,18 +6,35 @@ defmodule JidoCodeServer.Telemetry do
   @table __MODULE__
   @prefix [:jido_code_server]
   @max_recent_errors 25
+  @redacted "[REDACTED]"
+  @sensitive_key_fragments [
+    "token",
+    "secret",
+    "password",
+    "api_key",
+    "apikey",
+    "authorization",
+    "credential",
+    "private_key",
+    "access_key"
+  ]
   @known_segments %{
     "project" => :project,
     "conversation" => :conversation,
     "tool" => :tool,
     "llm" => :llm,
+    "policy" => :policy,
+    "security" => :security,
     "assets" => :assets,
     "started" => :started,
     "stopped" => :stopped,
     "loaded" => :loaded,
     "reloaded" => :reloaded,
+    "allowed" => :allowed,
+    "denied" => :denied,
     "failed" => :failed,
     "completed" => :completed,
+    "timeout" => :timeout,
     "delta" => :delta,
     "event_ingested" => :event_ingested,
     "watcher_started" => :watcher_started,
@@ -29,15 +46,16 @@ defmodule JidoCodeServer.Telemetry do
   @spec emit(String.t(), map()) :: :ok
   def emit(name, payload) when is_binary(name) and is_map(payload) do
     ensure_table()
+    sanitized_payload = sanitize_payload(payload)
 
     metadata =
-      payload
+      sanitized_payload
       |> Map.put_new(:event_name, name)
       |> Map.put_new(:emitted_at, DateTime.utc_now())
 
-    :telemetry.execute(event_name(name), measurements(payload), metadata)
-    increment_counter(normalize_project_id(payload), name)
-    maybe_track_error(normalize_project_id(payload), name, payload)
+    :telemetry.execute(event_name(name), measurements(sanitized_payload), metadata)
+    increment_counter(normalize_project_id(sanitized_payload), name)
+    maybe_track_error(normalize_project_id(sanitized_payload), name, sanitized_payload)
     :ok
   rescue
     _error ->
@@ -80,6 +98,9 @@ defmodule JidoCodeServer.Telemetry do
       :undefined -> :ok
       _ -> :ets.delete_all_objects(@table)
     end
+  rescue
+    _error ->
+      :ok
   end
 
   defp measurements(payload) do
@@ -178,5 +199,84 @@ defmodule JidoCodeServer.Telemetry do
   rescue
     ArgumentError ->
       :ok
+  end
+
+  defp sanitize_payload(payload) when is_map(payload) do
+    sanitize_value(payload)
+  end
+
+  defp sanitize_value(value) when is_binary(value), do: redact_string(value)
+
+  defp sanitize_value(value) when is_list(value) do
+    Enum.map(value, &sanitize_value/1)
+  end
+
+  defp sanitize_value(value) when is_tuple(value) do
+    value
+    |> Tuple.to_list()
+    |> Enum.map(&sanitize_value/1)
+    |> List.to_tuple()
+  end
+
+  defp sanitize_value(%_{} = struct), do: struct
+
+  defp sanitize_value(value) when is_map(value) do
+    Enum.reduce(value, %{}, fn {key, nested}, acc ->
+      sanitized =
+        if sensitive_key?(key) do
+          @redacted
+        else
+          sanitize_value(nested)
+        end
+
+      Map.put(acc, key, sanitized)
+    end)
+  end
+
+  defp sanitize_value(other), do: other
+
+  defp sensitive_key?(key) when is_atom(key), do: sensitive_key?(Atom.to_string(key))
+
+  defp sensitive_key?(key) when is_binary(key) do
+    normalized =
+      key
+      |> String.downcase()
+      |> String.replace(~r/[^a-z0-9]+/, "_")
+
+    Enum.any?(@sensitive_key_fragments, &String.contains?(normalized, &1))
+  end
+
+  defp sensitive_key?(_), do: false
+
+  defp redact_string(value) do
+    value
+    |> redact_bearer_tokens()
+    |> redact_key_value_tokens()
+    |> redact_provider_tokens()
+  end
+
+  defp redact_bearer_tokens(value) do
+    Regex.replace(
+      ~r/\b(Bearer)\s+[A-Za-z0-9\-\._~\+\/]+=*/i,
+      value,
+      "\\1 #{@redacted}"
+    )
+  end
+
+  defp redact_key_value_tokens(value) do
+    Regex.replace(
+      ~r/((?:api[_-]?key|token|secret|password|authorization)\s*[:=]\s*)([^\s,;]+)/i,
+      value,
+      "\\1#{@redacted}"
+    )
+  end
+
+  defp redact_provider_tokens(value) do
+    value
+    |> then(&Regex.replace(~r/\bghp_[A-Za-z0-9]{20,}\b/, &1, @redacted))
+    |> then(&Regex.replace(~r/\bgithub_pat_[A-Za-z0-9_]{20,}\b/, &1, @redacted))
+    |> then(&Regex.replace(~r/\bsk-[A-Za-z0-9]{16,}\b/, &1, @redacted))
+    |> then(&Regex.replace(~r/\bAKIA[0-9A-Z]{16}\b/, &1, @redacted))
+    |> then(&Regex.replace(~r/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/, &1, @redacted))
   end
 end

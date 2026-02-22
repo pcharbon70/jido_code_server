@@ -5,6 +5,10 @@ defmodule JidoCodeServer.Project.Policy do
 
   use GenServer
 
+  alias JidoCodeServer.Telemetry
+
+  @max_decisions 200
+
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     case Keyword.get(opts, :name) do
@@ -29,7 +33,8 @@ defmodule JidoCodeServer.Project.Policy do
       project_id: Keyword.get(opts, :project_id),
       root_path: Keyword.get(opts, :root_path),
       allow_tools: allow_tools,
-      deny_tools: deny_tools
+      deny_tools: deny_tools,
+      recent_decisions: []
     }
 
     {:ok, state}
@@ -59,7 +64,14 @@ defmodule JidoCodeServer.Project.Policy do
           :ok | {:error, :denied | :outside_root | term()}
   def authorize_tool(server, tool_name, args, ctx)
       when is_binary(tool_name) and is_map(args) and is_map(ctx) do
-    GenServer.call(server, {:authorize_tool, tool_name, args, ctx})
+    authorize_tool(server, tool_name, args, %{}, ctx)
+  end
+
+  @spec authorize_tool(GenServer.server(), String.t(), map(), map(), map()) ::
+          :ok | {:error, :denied | :outside_root | term()}
+  def authorize_tool(server, tool_name, args, meta, ctx)
+      when is_binary(tool_name) and is_map(args) and is_map(meta) and is_map(ctx) do
+    GenServer.call(server, {:authorize_tool, tool_name, args, meta, ctx})
   end
 
   @spec filter_tools(GenServer.server(), list(map())) :: list(map())
@@ -73,17 +85,27 @@ defmodule JidoCodeServer.Project.Policy do
   end
 
   @impl true
-  def handle_call({:authorize_tool, tool_name, args, _ctx}, _from, state) do
-    reply =
-      case tool_allowed?(state, tool_name) do
-        true ->
-          validate_arg_paths(state.root_path, args)
+  def handle_call({:authorize_tool, tool_name, args, meta, ctx}, _from, state) do
+    {reply, reason} =
+      case authorize_with_reason(state, tool_name, args) do
+        :ok ->
+          {:ok, :allowed}
 
-        false ->
-          {:error, :denied}
+        {:error, denied_reason} ->
+          {{:error, denied_reason}, denied_reason}
       end
 
-    {:reply, reply, state}
+    decision = %{
+      project_id: state.project_id || Map.get(ctx, :project_id),
+      conversation_id: extract_conversation_id(meta, ctx),
+      tool_name: tool_name,
+      reason: reason,
+      decision: if(reply == :ok, do: :allow, else: :deny),
+      at: DateTime.utc_now()
+    }
+
+    emit_policy_decision(decision)
+    {:reply, reply, store_decision(state, decision)}
   end
 
   def handle_call({:filter_tools, tool_specs}, _from, state) do
@@ -101,7 +123,8 @@ defmodule JidoCodeServer.Project.Policy do
       project_id: state.project_id,
       root_path: state.root_path,
       allow_tools: tool_set_to_list(state.allow_tools),
-      deny_tools: tool_set_to_list(state.deny_tools)
+      deny_tools: tool_set_to_list(state.deny_tools),
+      recent_decisions: state.recent_decisions
     }
 
     {:reply, diagnostics, state}
@@ -137,6 +160,14 @@ defmodule JidoCodeServer.Project.Policy do
   end
 
   defp maybe_validate_path(_root_path, _key, _value), do: {:cont, :ok}
+
+  defp authorize_with_reason(state, tool_name, args) do
+    if tool_allowed?(state, tool_name) do
+      validate_arg_paths(state.root_path, args)
+    else
+      {:error, :denied}
+    end
+  end
 
   defp normalize_tool_set(nil), do: nil
 
@@ -227,5 +258,37 @@ defmodule JidoCodeServer.Project.Policy do
       :absolute -> Path.expand(target)
       _ -> Path.expand(target, Path.dirname(path))
     end
+  end
+
+  defp store_decision(state, decision) do
+    recent_decisions =
+      [decision | state.recent_decisions]
+      |> Enum.take(@max_decisions)
+
+    %{state | recent_decisions: recent_decisions}
+  end
+
+  defp emit_policy_decision(decision) do
+    case decision.decision do
+      :allow ->
+        Telemetry.emit("policy.allowed", decision)
+
+      :deny ->
+        Telemetry.emit("policy.denied", decision)
+        maybe_emit_security_signal(decision)
+    end
+  end
+
+  defp maybe_emit_security_signal(%{reason: :outside_root} = decision) do
+    Telemetry.emit("security.sandbox_violation", decision)
+  end
+
+  defp maybe_emit_security_signal(_decision), do: :ok
+
+  defp extract_conversation_id(meta, ctx) do
+    Map.get(meta, :conversation_id) ||
+      Map.get(meta, "conversation_id") ||
+      Map.get(ctx, :conversation_id) ||
+      Map.get(ctx, "conversation_id")
   end
 end
