@@ -13,6 +13,7 @@
 - [ ] Correlation IDs propagate across ingest, LLM lifecycle, tool execution, and policy decisions.
 - [ ] Sandbox escape attempts emit `security.sandbox_violation`.
 - [ ] Sensitive file paths are denylisted by default and emit `security.sensitive_path_denied` when blocked.
+- [ ] Tool results with sensitive artifacts are flagged and emit `security.sensitive_artifact_detected`.
 - [ ] Network-capable tools are deny-by-default and emit `security.network_denied` when blocked.
 - [ ] `network_allowlist` filtering is validated for allowlisted and non-allowlisted endpoints.
 - [ ] High-risk network protocols are deny-by-default unless explicitly allowlisted via `network_allowed_schemes`.

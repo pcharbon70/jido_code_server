@@ -326,6 +326,36 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
     assert diagnostics.policy.sensitive_path_allowlist == [".env"]
   end
 
+  test "tool runner flags sensitive artifacts in result payloads and emits security signal" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-sensitive-artifact",
+               network_egress_policy: :allow,
+               sensitive_path_allowlist: [".env"]
+             )
+
+    assert {:ok, result} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{
+                 "path" => ".env",
+                 "api_key" => "sk-ABCDEF1234567890ABCDEF1234567890"
+               },
+               meta: %{"conversation_id" => "phase9-sensitive-c3"}
+             })
+
+    assert result.status == :ok
+    assert "sensitive_artifact_detected" in List.wrap(result.risk_flags)
+    assert result.sensitivity_findings_count >= 1
+    assert "sensitive_key" in List.wrap(result.sensitivity_finding_kinds)
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert event_count(diagnostics, "security.sensitive_artifact_detected") >= 1
+  end
+
   test "network egress deny-by-default hides network-capable tools and rejects execution" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
