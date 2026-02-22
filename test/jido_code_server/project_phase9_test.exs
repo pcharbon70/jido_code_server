@@ -1,6 +1,7 @@
 defmodule JidoCodeServer.ProjectPhase9Test do
   use ExUnit.Case, async: false
 
+  alias JidoCodeServer.Engine.ProjectRegistry
   alias JidoCodeServer.Project.AssetStore
   alias JidoCodeServer.Project.Layout
   alias JidoCodeServer.Project.Policy
@@ -142,6 +143,179 @@ defmodule JidoCodeServer.ProjectPhase9Test do
     assert event_count(diagnostics, "security.repeated_timeout_failures") >= 1
   end
 
+  test "project runtime options tune tool guardrails" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             JidoCodeServer.start_project(root,
+               project_id: "phase9-runtime-opts",
+               tool_max_output_bytes: 64
+             )
+
+    assert {:error, %{status: :error, reason: {:output_too_large, _size, 64}}} =
+             JidoCodeServer.run_tool(project_id, %{name: "asset.list", args: %{"type" => "skill"}})
+
+    diagnostics = JidoCodeServer.diagnostics(project_id)
+
+    assert diagnostics.runtime_opts[:tool_max_output_bytes] == 64
+  end
+
+  test "asset reload captures loader parse failures without crashing project runtime" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} = JidoCodeServer.start_project(root, project_id: "phase9-loader")
+
+    invalid_skill = Path.join(root, ".jido/skills/broken.md")
+    File.write!(invalid_skill, <<255, 0, 255>>)
+
+    assert :ok = JidoCodeServer.reload_assets(project_id)
+
+    diagnostics = JidoCodeServer.assets_diagnostics(project_id)
+    assert diagnostics.loaded?
+    assert diagnostics.errors != []
+    assert Enum.any?(diagnostics.errors, &(&1.reason == :invalid_utf8))
+
+    assert {:ok, %{status: :ok}} =
+             JidoCodeServer.run_tool(project_id, %{name: "asset.list", args: %{"type" => "skill"}})
+  end
+
+  test "invalid llm adapter emits llm.failed while conversation remains available" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             JidoCodeServer.start_project(root,
+               project_id: "phase9-llm-failure",
+               conversation_orchestration: true,
+               llm_adapter: :missing_adapter
+             )
+
+    assert {:ok, "phase9-llm-c1"} =
+             JidoCodeServer.start_conversation(project_id, conversation_id: "phase9-llm-c1")
+
+    assert :ok =
+             JidoCodeServer.send_event(project_id, "phase9-llm-c1", %{
+               "type" => "user.message",
+               "content" => "hello"
+             })
+
+    assert :ok =
+             JidoCodeServer.send_event(project_id, "phase9-llm-c1", %{
+               "type" => "user.message",
+               "content" => "still there?"
+             })
+
+    assert {:ok, timeline} = JidoCodeServer.get_projection(project_id, "phase9-llm-c1", :timeline)
+
+    failed_count =
+      timeline
+      |> Enum.count(&(map_lookup(&1, :type) == "llm.failed"))
+
+    assert failed_count >= 2
+
+    diagnostics = JidoCodeServer.conversation_diagnostics(project_id, "phase9-llm-c1")
+    assert diagnostics.status == :idle
+  end
+
+  test "watcher storm is debounced under bursty file events" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             JidoCodeServer.start_project(root,
+               project_id: "phase9-watcher-storm",
+               watcher: true,
+               watcher_debounce_ms: 30
+             )
+
+    new_skill_path = Path.join(root, ".jido/skills/storm_skill.md")
+    File.write!(new_skill_path, "# Storm Skill\n")
+
+    [{watcher_pid, _}] = Registry.lookup(ProjectRegistry, {project_id, :watcher})
+
+    Enum.each(1..40, fn _ ->
+      send(watcher_pid, {:file_event, self(), {new_skill_path, [:modified]}})
+    end)
+
+    assert_eventually(fn ->
+      JidoCodeServer.list_assets(project_id, :skill)
+      |> Enum.any?(&(&1.name == "storm_skill"))
+    end)
+
+    diagnostics = JidoCodeServer.diagnostics(project_id)
+    completed_count = event_count(diagnostics, "project.watcher_reload_completed")
+
+    assert completed_count >= 1
+    assert completed_count <= 5
+  end
+
+  test "concurrent multi-project conversations remain isolated under load" do
+    roots = Enum.map(1..3, fn _ -> TempProject.create!(with_seed_files: true) end)
+    Enum.each(roots, fn root -> on_exit(fn -> TempProject.cleanup(root) end) end)
+
+    project_ids =
+      roots
+      |> Enum.with_index(1)
+      |> Enum.map(fn {root, index} ->
+        project_id = "phase9-load-#{index}"
+
+        assert {:ok, ^project_id} =
+                 JidoCodeServer.start_project(root,
+                   project_id: project_id,
+                   conversation_orchestration: true,
+                   llm_adapter: :deterministic
+                 )
+
+        project_id
+      end)
+
+    conversation_pairs =
+      for project_id <- project_ids, index <- 1..4 do
+        conversation_id = "#{project_id}-c#{index}"
+
+        assert {:ok, ^conversation_id} =
+                 JidoCodeServer.start_conversation(project_id, conversation_id: conversation_id)
+
+        {project_id, conversation_id}
+      end
+
+    results =
+      conversation_pairs
+      |> Task.async_stream(
+        fn {project_id, conversation_id} ->
+          message = "load-message #{project_id}/#{conversation_id}"
+
+          :ok =
+            JidoCodeServer.send_event(project_id, conversation_id, %{
+              "type" => "user.message",
+              "content" => message
+            })
+
+          {project_id, conversation_id, message}
+        end,
+        max_concurrency: 12,
+        timeout: 10_000
+      )
+      |> Enum.to_list()
+
+    assert Enum.all?(results, &match?({:ok, _}, &1))
+
+    Enum.each(results, fn {:ok, {project_id, conversation_id, message}} ->
+      assert {:ok, timeline} =
+               JidoCodeServer.get_projection(project_id, conversation_id, :timeline)
+
+      user_messages =
+        timeline
+        |> Enum.filter(&(map_lookup(&1, :type) == "user.message"))
+        |> Enum.map(&map_lookup(&1, :content))
+
+      assert user_messages == [message]
+      assert Enum.any?(timeline, &(map_lookup(&1, :type) == "assistant.message"))
+    end)
+  end
+
   defp direct_project_ctx(root, opts) do
     layout = Layout.paths(root, ".jido")
     project_id = Keyword.fetch!(opts, :project_id)
@@ -192,6 +366,27 @@ defmodule JidoCodeServer.ProjectPhase9Test do
     diagnostics.telemetry.event_counts
     |> Map.get(event_name, 0)
   end
+
+  defp assert_eventually(fun, attempts \\ 40)
+
+  defp assert_eventually(fun, attempts) when attempts > 0 do
+    if fun.() do
+      assert true
+    else
+      Process.sleep(25)
+      assert_eventually(fun, attempts - 1)
+    end
+  end
+
+  defp assert_eventually(_fun, 0) do
+    flunk("condition did not become true in time")
+  end
+
+  defp map_lookup(map, key) when is_map(map) do
+    Map.get(map, key) || Map.get(map, Atom.to_string(key))
+  end
+
+  defp map_lookup(_map, _key), do: nil
 
   defp emit_redaction_probe(attempts \\ 3)
 
