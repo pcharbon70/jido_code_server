@@ -20,6 +20,21 @@ defmodule JidoCodeServer.Config do
     Application.get_env(@app, :tool_timeout_ms, 30_000)
   end
 
+  @spec tool_timeout_alert_threshold() :: pos_integer()
+  def tool_timeout_alert_threshold do
+    Application.get_env(@app, :tool_timeout_alert_threshold, 3)
+  end
+
+  @spec tool_max_output_bytes() :: pos_integer()
+  def tool_max_output_bytes do
+    Application.get_env(@app, :tool_max_output_bytes, 262_144)
+  end
+
+  @spec tool_max_artifact_bytes() :: pos_integer()
+  def tool_max_artifact_bytes do
+    Application.get_env(@app, :tool_max_artifact_bytes, 131_072)
+  end
+
   @spec llm_timeout_ms() :: pos_integer()
   def llm_timeout_ms do
     Application.get_env(@app, :llm_timeout_ms, 120_000)
