@@ -34,4 +34,9 @@ defmodule JidoCodeServer.Config do
   def strict_asset_loading do
     Application.get_env(@app, :strict_asset_loading, false)
   end
+
+  @spec watcher_debounce_ms() :: pos_integer()
+  def watcher_debounce_ms do
+    Application.get_env(@app, :watcher_debounce_ms, 250)
+  end
 end

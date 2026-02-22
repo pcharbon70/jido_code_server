@@ -102,6 +102,17 @@ defmodule JidoCodeServer.Project.Server do
     GenServer.call(server, :assets_diagnostics)
   end
 
+  @spec conversation_diagnostics(GenServer.server(), conversation_id()) ::
+          map() | {:error, term()}
+  def conversation_diagnostics(server, conversation_id) do
+    GenServer.call(server, {:conversation_diagnostics, conversation_id})
+  end
+
+  @spec diagnostics(GenServer.server()) :: map()
+  def diagnostics(server) do
+    GenServer.call(server, :diagnostics)
+  end
+
   @spec summary(GenServer.server()) :: map()
   def summary(server) do
     GenServer.call(server, :summary)
@@ -203,6 +214,11 @@ defmodule JidoCodeServer.Project.Server do
             conversations =
               Map.put(state.conversations, conversation_id, %{pid: pid, monitor_ref: monitor_ref})
 
+            Telemetry.emit("conversation.started", %{
+              project_id: state.project_id,
+              conversation_id: conversation_id
+            })
+
             {:reply, {:ok, conversation_id}, %{state | conversations: conversations}}
 
           {:error, reason} ->
@@ -217,6 +233,11 @@ defmodule JidoCodeServer.Project.Server do
         _ = ConversationSupervisor.stop_conversation(state.conversation_supervisor, pid)
         :ok = ConversationRegistry.delete(state.conversation_registry, conversation_id)
         Process.demonitor(monitor_ref, [:flush])
+
+        Telemetry.emit("conversation.stopped", %{
+          project_id: state.project_id,
+          conversation_id: conversation_id
+        })
 
         conversations = Map.delete(state.conversations, conversation_id)
         {:reply, :ok, %{state | conversations: conversations}}
@@ -311,6 +332,24 @@ defmodule JidoCodeServer.Project.Server do
     {:reply, AssetStore.diagnostics(state.asset_store), state}
   end
 
+  def handle_call({:conversation_diagnostics, conversation_id}, _from, state) do
+    reply =
+      case fetch_conversation_pid(state, conversation_id) do
+        {:ok, pid} ->
+          ConversationServer.diagnostics(pid)
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call(:diagnostics, _from, state) do
+    diagnostics = diagnostics_snapshot(state)
+    {:reply, diagnostics, state}
+  end
+
   def handle_call(:summary, _from, state) do
     diagnostics = AssetStore.diagnostics(state.asset_store)
 
@@ -331,6 +370,12 @@ defmodule JidoCodeServer.Project.Server do
     {conversation_id, conversations} = pop_by_monitor_ref(state.conversations, ref, pid)
 
     if conversation_id do
+      Telemetry.emit("conversation.stopped", %{
+        project_id: state.project_id,
+        conversation_id: conversation_id,
+        reason: :process_down
+      })
+
       :ok = ConversationRegistry.delete(state.conversation_registry, conversation_id)
       {:noreply, %{state | conversations: conversations}}
     else
@@ -388,4 +433,42 @@ defmodule JidoCodeServer.Project.Server do
   end
 
   defp conversation_orchestration_enabled?(_runtime_opts), do: false
+
+  defp diagnostics_snapshot(state) do
+    assets = AssetStore.diagnostics(state.asset_store)
+    policy = Policy.diagnostics(state.policy)
+    telemetry = Telemetry.snapshot(state.project_id)
+    conversation_snapshots = conversation_snapshots(state)
+
+    %{
+      project_id: state.project_id,
+      root_path: state.root_path,
+      data_dir: state.data_dir,
+      watcher_enabled: Keyword.get(state.opts, :watcher, false) == true,
+      runtime_opts:
+        Keyword.take(state.runtime_opts, [:conversation_orchestration, :llm_adapter, :watcher]),
+      health: %{
+        status: if(telemetry.recent_errors == [], do: :ok, else: :degraded),
+        conversation_count: map_size(state.conversations),
+        error_count: length(telemetry.recent_errors)
+      },
+      assets: assets,
+      policy: policy,
+      telemetry: telemetry,
+      conversations: conversation_snapshots
+    }
+  end
+
+  defp conversation_snapshots(state) do
+    state.conversations
+    |> Enum.map(fn {conversation_id, %{pid: pid}} ->
+      if Process.alive?(pid) do
+        diag = ConversationServer.diagnostics(pid)
+        Map.put(diag, :conversation_id, conversation_id)
+      else
+        %{conversation_id: conversation_id, status: :stopped, pid: pid}
+      end
+    end)
+    |> Enum.sort_by(& &1.conversation_id)
+  end
 end

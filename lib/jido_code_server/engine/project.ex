@@ -104,6 +104,17 @@ defmodule JidoCodeServer.Engine.Project do
     GenServer.call(pid, :assets_diagnostics)
   end
 
+  @spec conversation_diagnostics(pid(), String.t()) :: map() | {:error, term()}
+  def conversation_diagnostics(pid, conversation_id)
+      when is_pid(pid) and is_binary(conversation_id) do
+    GenServer.call(pid, {:conversation_diagnostics, conversation_id})
+  end
+
+  @spec diagnostics(pid()) :: map()
+  def diagnostics(pid) when is_pid(pid) do
+    GenServer.call(pid, :diagnostics)
+  end
+
   @impl true
   def init(opts) do
     project_id = Keyword.fetch!(opts, :project_id)
@@ -126,9 +137,14 @@ defmodule JidoCodeServer.Engine.Project do
       end
 
     supervisor_opts =
-      case Keyword.fetch(opts, :watcher) do
-        {:ok, watcher} -> Keyword.put(supervisor_opts, :watcher, watcher)
-        :error -> supervisor_opts
+      if Keyword.get(runtime_opts, :watcher, false) do
+        watcher_opts = Keyword.take(runtime_opts, [:watcher_debounce_ms])
+
+        supervisor_opts
+        |> Keyword.put(:watcher, true)
+        |> Keyword.put(:watcher_opts, watcher_opts)
+      else
+        supervisor_opts
       end
 
     case Supervisor.start_link(supervisor_opts) do
@@ -288,6 +304,22 @@ defmodule JidoCodeServer.Engine.Project do
   def handle_call(:assets_diagnostics, _from, state) do
     reply =
       delegate(fn -> Server.assets_diagnostics(state.project_server) end)
+      |> unwrap_delegate(%{})
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:conversation_diagnostics, conversation_id}, _from, state) do
+    reply =
+      delegate(fn -> Server.conversation_diagnostics(state.project_server, conversation_id) end)
+      |> unwrap_delegate({:error, :project_unavailable})
+
+    {:reply, reply, state}
+  end
+
+  def handle_call(:diagnostics, _from, state) do
+    reply =
+      delegate(fn -> Server.diagnostics(state.project_server) end)
       |> unwrap_delegate(%{})
 
     {:reply, reply, state}

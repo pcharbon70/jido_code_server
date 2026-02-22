@@ -6,6 +6,7 @@ defmodule JidoCodeServer.Conversation.Server do
   use GenServer
 
   alias JidoCodeServer.Conversation.Loop
+  alias JidoCodeServer.Telemetry
   alias JidoCodeServer.Types.Event
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -20,6 +21,11 @@ defmodule JidoCodeServer.Conversation.Server do
           {:ok, term()} | {:error, term()}
   def get_projection(server, key) do
     GenServer.call(server, {:get_projection, key})
+  end
+
+  @spec diagnostics(GenServer.server()) :: map()
+  def diagnostics(server) do
+    GenServer.call(server, :diagnostics)
   end
 
   @spec ingest_event(GenServer.server(), map()) :: :ok
@@ -111,6 +117,29 @@ defmodule JidoCodeServer.Conversation.Server do
     end
   end
 
+  def handle_call(:diagnostics, _from, state) do
+    diagnostics = Map.get(state.conversation.projection_cache, :diagnostics, %{})
+
+    response = %{
+      project_id: state.project_id,
+      conversation_id: state.conversation_id,
+      status: state.conversation.status,
+      subscriber_count: MapSet.size(state.subscribers),
+      event_count: Map.get(diagnostics, :event_count, length(state.conversation.events)),
+      pending_tool_call_count:
+        Map.get(
+          diagnostics,
+          :pending_tool_call_count,
+          length(state.conversation.pending_tool_calls)
+        ),
+      last_event_type: Map.get(diagnostics, :last_event_type),
+      last_event_at: state.conversation.last_event && state.conversation.last_event.at,
+      projections: state.conversation.projection_cache |> Map.keys() |> Enum.sort()
+    }
+
+    {:reply, response, state}
+  end
+
   defp ingest_event_internal(state, raw_event) do
     with {:ok, event} <- Event.from_map(raw_event),
          updated_conversation <- Loop.ingest(state.conversation, event, raw_event),
@@ -118,8 +147,16 @@ defmodule JidoCodeServer.Conversation.Server do
            Loop.after_ingest(updated_conversation, state.project_ctx) do
       next_state = %{state | conversation: next_conversation}
 
+      emit_ingest_telemetry(
+        next_state.project_id,
+        next_state.conversation_id,
+        event,
+        emitted_events
+      )
+
       notify_subscribers(
         next_state.subscribers,
+        next_state.project_id,
         next_state.conversation_id,
         event,
         emitted_events
@@ -132,14 +169,26 @@ defmodule JidoCodeServer.Conversation.Server do
     end
   end
 
-  defp notify_subscribers(subscribers, conversation_id, event, emitted_events) do
-    send_event(subscribers, conversation_id, event)
-    Enum.each(emitted_events, &notify_emitted_event(subscribers, conversation_id, &1))
+  defp emit_ingest_telemetry(project_id, conversation_id, event, emitted_events) do
+    Telemetry.emit("conversation.event_ingested", %{
+      project_id: project_id,
+      conversation_id: conversation_id,
+      event_type: event.type,
+      emitted_count: length(emitted_events)
+    })
+
+    emit_runtime_event_telemetry(project_id, conversation_id, event, :incoming)
   end
 
-  defp notify_emitted_event(subscribers, conversation_id, emitted) do
+  defp notify_subscribers(subscribers, project_id, conversation_id, event, emitted_events) do
+    send_event(subscribers, conversation_id, event)
+    Enum.each(emitted_events, &notify_emitted_event(subscribers, project_id, conversation_id, &1))
+  end
+
+  defp notify_emitted_event(subscribers, project_id, conversation_id, emitted) do
     case Event.from_map(emitted) do
       {:ok, normalized} ->
+        emit_runtime_event_telemetry(project_id, conversation_id, normalized, :emitted)
         send_event(subscribers, conversation_id, normalized)
         maybe_send_delta(subscribers, conversation_id, normalized)
 
@@ -157,6 +206,32 @@ defmodule JidoCodeServer.Conversation.Server do
     if event.type in ["assistant.delta", "conversation.delta"] do
       payload = Event.to_map(event)
       Enum.each(subscribers, &send(&1, {:conversation_delta, conversation_id, payload}))
+    end
+  end
+
+  defp emit_runtime_event_telemetry(project_id, conversation_id, event, source) do
+    base_payload = %{
+      project_id: project_id,
+      conversation_id: conversation_id,
+      event_source: source,
+      event_type: event.type
+    }
+
+    cond do
+      event.type == "assistant.delta" ->
+        Telemetry.emit("llm.delta", base_payload)
+
+      String.starts_with?(event.type, "llm.") ->
+        Telemetry.emit(event.type, base_payload)
+
+      String.starts_with?(event.type, "tool.") ->
+        Telemetry.emit(
+          event.type,
+          Map.put(base_payload, :reason, event.data[:reason] || event.data["reason"])
+        )
+
+      true ->
+        :ok
     end
   end
 

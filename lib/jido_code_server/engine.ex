@@ -152,6 +152,19 @@ defmodule JidoCodeServer.Engine do
     with_project(project_id, fn pid -> Project.assets_diagnostics(pid) end)
   end
 
+  @spec conversation_diagnostics(project_id(), conversation_id()) ::
+          map() | {:error, term()}
+  def conversation_diagnostics(project_id, conversation_id) do
+    with_project(project_id, fn pid ->
+      Project.conversation_diagnostics(pid, conversation_id)
+    end)
+  end
+
+  @spec diagnostics(project_id()) :: map() | {:error, term()}
+  def diagnostics(project_id) do
+    with_project(project_id, fn pid -> Project.diagnostics(pid) end)
+  end
+
   defp resolve_project_id(opts) do
     case Keyword.get(opts, :project_id) do
       nil ->

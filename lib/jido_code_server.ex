@@ -64,4 +64,11 @@ defmodule JidoCodeServer do
 
   @spec assets_diagnostics(project_id()) :: map() | {:error, term()}
   def assets_diagnostics(project_id), do: Engine.assets_diagnostics(project_id)
+
+  @spec conversation_diagnostics(project_id(), conversation_id()) :: map() | {:error, term()}
+  def conversation_diagnostics(project_id, conversation_id),
+    do: Engine.conversation_diagnostics(project_id, conversation_id)
+
+  @spec diagnostics(project_id()) :: map() | {:error, term()}
+  def diagnostics(project_id), do: Engine.diagnostics(project_id)
 end
