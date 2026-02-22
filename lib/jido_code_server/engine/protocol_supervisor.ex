@@ -1,6 +1,6 @@
 defmodule JidoCodeServer.Engine.ProtocolSupervisor do
   @moduledoc """
-  Placeholder supervisor for global protocol listeners.
+  Supervisor for global protocol adapter listeners.
   """
 
   use Supervisor
@@ -11,7 +11,17 @@ defmodule JidoCodeServer.Engine.ProtocolSupervisor do
   end
 
   @impl true
-  def init(_opts) do
-    Supervisor.init([], strategy: :one_for_one)
+  def init(opts) do
+    children =
+      if Keyword.get(opts, :enabled, true) do
+        [
+          {JidoCodeServer.Protocol.MCP.Gateway, [name: JidoCodeServer.Protocol.MCP.Gateway]},
+          {JidoCodeServer.Protocol.A2A.Gateway, [name: JidoCodeServer.Protocol.A2A.Gateway]}
+        ]
+      else
+        []
+      end
+
+    Supervisor.init(children, strategy: :one_for_one)
   end
 end
