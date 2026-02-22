@@ -205,6 +205,9 @@ defmodule JidoCodeServer.Project.Server do
             runtime_opt(state, :tool_max_output_bytes, Config.tool_max_output_bytes()),
           tool_max_artifact_bytes:
             runtime_opt(state, :tool_max_artifact_bytes, Config.tool_max_artifact_bytes()),
+          network_egress_policy:
+            runtime_opt(state, :network_egress_policy, Config.network_egress_policy()),
+          network_allowlist: runtime_opt(state, :network_allowlist, Config.network_allowlist()),
           llm_timeout_ms: runtime_opt(state, :llm_timeout_ms, Config.llm_timeout_ms()),
           orchestration_enabled: conversation_orchestration_enabled?(state.runtime_opts),
           llm_adapter: Keyword.get(state.runtime_opts, :llm_adapter),
@@ -446,7 +449,10 @@ defmodule JidoCodeServer.Project.Server do
       tool_max_output_bytes:
         runtime_opt(state, :tool_max_output_bytes, Config.tool_max_output_bytes()),
       tool_max_artifact_bytes:
-        runtime_opt(state, :tool_max_artifact_bytes, Config.tool_max_artifact_bytes())
+        runtime_opt(state, :tool_max_artifact_bytes, Config.tool_max_artifact_bytes()),
+      network_egress_policy:
+        runtime_opt(state, :network_egress_policy, Config.network_egress_policy()),
+      network_allowlist: runtime_opt(state, :network_allowlist, Config.network_allowlist())
     }
   end
 
@@ -482,6 +488,8 @@ defmodule JidoCodeServer.Project.Server do
           :tool_timeout_alert_threshold,
           :tool_max_output_bytes,
           :tool_max_artifact_bytes,
+          :network_egress_policy,
+          :network_allowlist,
           :llm_timeout_ms
         ]),
       health: %{

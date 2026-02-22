@@ -131,7 +131,12 @@ defmodule JidoCodeServer.Engine.Project do
     supervisor_opts = Keyword.put(supervisor_opts, :runtime_opts, runtime_opts)
 
     supervisor_opts =
-      case Keyword.take(runtime_opts, [:allow_tools, :deny_tools]) do
+      case Keyword.take(runtime_opts, [
+             :allow_tools,
+             :deny_tools,
+             :network_egress_policy,
+             :network_allowlist
+           ]) do
         [] -> supervisor_opts
         policy_opts -> Keyword.put(supervisor_opts, :policy, policy_opts)
       end

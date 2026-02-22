@@ -35,6 +35,18 @@ defmodule JidoCodeServer.Config do
     Application.get_env(@app, :tool_max_artifact_bytes, 131_072)
   end
 
+  @spec network_egress_policy() :: :allow | :deny
+  def network_egress_policy do
+    Application.get_env(@app, :network_egress_policy, :deny)
+  end
+
+  @spec network_allowlist() :: [String.t()]
+  def network_allowlist do
+    Application.get_env(@app, :network_allowlist, [])
+    |> List.wrap()
+    |> Enum.filter(&is_binary/1)
+  end
+
   @spec llm_timeout_ms() :: pos_integer()
   def llm_timeout_ms do
     Application.get_env(@app, :llm_timeout_ms, 120_000)

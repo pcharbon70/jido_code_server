@@ -32,7 +32,7 @@ defmodule JidoCodeServer.Project.ToolCatalog do
           "required" => ["type"]
         },
         output_schema: %{"type" => "array"},
-        safety: %{sandboxed: true},
+        safety: %{sandboxed: true, network_capable: false},
         kind: :asset_list
       },
       %{
@@ -47,7 +47,7 @@ defmodule JidoCodeServer.Project.ToolCatalog do
           "required" => ["type", "query"]
         },
         output_schema: %{"type" => "array"},
-        safety: %{sandboxed: true},
+        safety: %{sandboxed: true, network_capable: false},
         kind: :asset_search
       },
       %{
@@ -62,7 +62,7 @@ defmodule JidoCodeServer.Project.ToolCatalog do
           "required" => ["type", "key"]
         },
         output_schema: %{"type" => "object"},
-        safety: %{sandboxed: true},
+        safety: %{sandboxed: true, network_capable: false},
         kind: :asset_get
       }
     ]
@@ -80,7 +80,7 @@ defmodule JidoCodeServer.Project.ToolCatalog do
           description: "Execute project command #{command.name}.",
           input_schema: %{"type" => "object", "properties" => %{}, "additionalProperties" => true},
           output_schema: %{"type" => "object"},
-          safety: %{sandboxed: true},
+          safety: %{sandboxed: true, network_capable: true},
           kind: :command_run,
           asset_name: command.name
         }
@@ -95,7 +95,7 @@ defmodule JidoCodeServer.Project.ToolCatalog do
           description: "Execute workflow #{workflow.name}.",
           input_schema: %{"type" => "object", "properties" => %{}, "additionalProperties" => true},
           output_schema: %{"type" => "object"},
-          safety: %{sandboxed: true},
+          safety: %{sandboxed: true, network_capable: true},
           kind: :workflow_run,
           asset_name: workflow.name
         }

@@ -32,6 +32,7 @@ defmodule JidoCodeServer.Project.ToolRunner do
              normalized_call.name,
              normalized_call.args,
              normalized_call.meta,
+             Map.get(spec, :safety, %{}) || %{},
              project_ctx
            ),
          :ok <- ensure_capacity(project_ctx),
