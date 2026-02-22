@@ -5,6 +5,7 @@ defmodule Jido.Code.Server.Project.Policy do
 
   use GenServer
 
+  alias Jido.Code.Server.Correlation
   alias Jido.Code.Server.Telemetry
 
   @max_decisions 200
@@ -114,6 +115,7 @@ defmodule Jido.Code.Server.Project.Policy do
     decision = %{
       project_id: state.project_id || Map.get(ctx, :project_id),
       conversation_id: extract_conversation_id(meta, ctx),
+      correlation_id: extract_correlation_id(meta, ctx),
       tool_name: tool_name,
       reason: reason,
       decision: if(reply == :ok, do: :allow, else: :deny),
@@ -432,5 +434,18 @@ defmodule Jido.Code.Server.Project.Policy do
       Map.get(meta, "conversation_id") ||
       Map.get(ctx, :conversation_id) ||
       Map.get(ctx, "conversation_id")
+  end
+
+  defp extract_correlation_id(meta, ctx) do
+    case Correlation.fetch(meta) do
+      {:ok, correlation_id} ->
+        correlation_id
+
+      :error ->
+        case Correlation.fetch(ctx) do
+          {:ok, correlation_id} -> correlation_id
+          :error -> nil
+        end
+    end
   end
 end

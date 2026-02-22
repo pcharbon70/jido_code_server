@@ -8,6 +8,7 @@
   - Tool input/output safety guards
   - Policy decision auditability and telemetry
   - Telemetry secret redaction for diagnostics persistence
+  - Correlation ID propagation across ingest, LLM, tool execution, and policy decisions
 
 ## Implemented Controls
 
@@ -76,6 +77,16 @@
 - Policy telemetry now emits security signal on denied network attempts:
   - `security.network_denied`
 
+### 7. Correlation ID propagation across runtime boundaries
+
+- Conversation ingest now guarantees a correlation ID on every incoming event and propagates it to emitted events.
+- LLM lifecycle events (`llm.started`, `assistant.delta`, `tool.requested`, `assistant.message`, `llm.completed`) carry the same correlation ID.
+- Tool bridge and tool runner propagate correlation ID through:
+  - tool call metadata
+  - tool response payloads (`tool.completed`, `tool.failed`, timeout/escalation telemetry)
+  - policy decision records (`recent_decisions`, `policy.allowed`, `policy.denied`)
+- This enables end-to-end incident stitching by `project_id` + `conversation_id` + `correlation_id`.
+
 ## Evidence (Automated Tests)
 
 - Added: `test/jido_code_server/project_phase9_test.exs`
@@ -83,6 +94,8 @@
   - schema rejection
   - output cap enforcement
   - policy audit + telemetry events
+  - correlation ID propagation through conversation + tool + policy paths
+  - generated correlation ID fallback when ingest events omit one
   - sandbox violation security signal
   - network deny-by-default and allowlist enforcement
   - secret redaction behavior

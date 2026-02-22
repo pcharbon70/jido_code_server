@@ -5,6 +5,7 @@ defmodule Jido.Code.Server.Conversation.Loop do
 
   alias Jido.Code.Server.Conversation.LLM
   alias Jido.Code.Server.Conversation.ToolBridge
+  alias Jido.Code.Server.Correlation
   alias Jido.Code.Server.Project.Policy
   alias Jido.Code.Server.Project.ToolCatalog
   alias Jido.Code.Server.Types.Event
@@ -123,6 +124,8 @@ defmodule Jido.Code.Server.Conversation.Loop do
   end
 
   defp derive_followups(state, %Event{} = event, project_ctx) do
+    correlation_id = correlation_id_from_event(event)
+
     cond do
       event.type == "conversation.cancel" ->
         cancel_runtime_work(state, project_ctx)
@@ -133,12 +136,15 @@ defmodule Jido.Code.Server.Conversation.Loop do
 
       event.type == "tool.requested" ->
         tool_followups(project_ctx, state.conversation_id, event)
+        |> attach_correlation(event, correlation_id)
 
       event.type in ["tool.completed", "tool.failed"] and state.pending_tool_calls == [] ->
         llm_followups(state, project_ctx, event)
+        |> attach_correlation(event, correlation_id)
 
       event.type == "user.message" ->
         llm_followups(state, project_ctx, event)
+        |> attach_correlation(event, correlation_id)
 
       true ->
         []
@@ -355,4 +361,39 @@ defmodule Jido.Code.Server.Conversation.Loop do
         nil
     end
   end
+
+  defp attach_correlation(events, _event, nil) when is_list(events), do: events
+
+  defp attach_correlation(events, _event, correlation_id) when is_list(events) do
+    Enum.map(events, fn raw_event ->
+      put_event_correlation(raw_event, correlation_id)
+    end)
+  end
+
+  defp put_event_correlation(raw_event, correlation_id) when is_map(raw_event) do
+    meta = Map.get(raw_event, :meta, Map.get(raw_event, "meta", %{})) || %{}
+    meta_with_correlation = Correlation.put(meta, correlation_id)
+
+    cond do
+      Map.has_key?(raw_event, :meta) ->
+        Map.put(raw_event, :meta, meta_with_correlation)
+
+      Map.has_key?(raw_event, "meta") ->
+        Map.put(raw_event, "meta", meta_with_correlation)
+
+      true ->
+        Map.put(raw_event, "meta", meta_with_correlation)
+    end
+  end
+
+  defp put_event_correlation(raw_event, _correlation_id), do: raw_event
+
+  defp correlation_id_from_event(%Event{meta: meta}) when is_map(meta) do
+    case Correlation.fetch(meta) do
+      {:ok, correlation_id} -> correlation_id
+      :error -> nil
+    end
+  end
+
+  defp correlation_id_from_event(_event), do: nil
 end

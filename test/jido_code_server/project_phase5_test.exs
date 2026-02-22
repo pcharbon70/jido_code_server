@@ -57,7 +57,7 @@ defmodule Jido.Code.Server.ProjectPhase5Test do
 
     assert {:ok, timeline_a} = Runtime.get_projection(project_id, "c-a", :timeline)
     assert {:ok, timeline_b} = Runtime.get_projection(project_id, "c-b", :timeline)
-    assert timeline_a == timeline_b
+    assert strip_correlation_id(timeline_a) == strip_correlation_id(timeline_b)
 
     assert {:ok, pending_a} =
              Runtime.get_projection(project_id, "c-a", :pending_tool_calls)
@@ -129,4 +129,21 @@ defmodule Jido.Code.Server.ProjectPhase5Test do
 
     assert {:ok, []} = Runtime.get_projection(project_id, "restart-c", :timeline)
   end
+
+  defp strip_correlation_id(term) when is_list(term) do
+    Enum.map(term, &strip_correlation_id/1)
+  end
+
+  defp strip_correlation_id(%_{} = struct), do: struct
+
+  defp strip_correlation_id(term) when is_map(term) do
+    term
+    |> Map.delete(:correlation_id)
+    |> Map.delete("correlation_id")
+    |> Enum.reduce(%{}, fn {key, value}, acc ->
+      Map.put(acc, key, strip_correlation_id(value))
+    end)
+  end
+
+  defp strip_correlation_id(term), do: term
 end

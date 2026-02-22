@@ -4,6 +4,7 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   """
 
   alias Jido.Code.Server.Config
+  alias Jido.Code.Server.Correlation
   alias Jido.Code.Server.Project.AssetStore
   alias Jido.Code.Server.Project.Policy
   alias Jido.Code.Server.Project.ToolCatalog
@@ -23,33 +24,13 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   def run(project_ctx, tool_call) when is_map(project_ctx) do
     started_at = System.monotonic_time(:millisecond)
 
-    with {:ok, normalized_call} <- normalize_call(tool_call),
-         {:ok, spec} <- ToolCatalog.get_tool(project_ctx, normalized_call.name),
-         :ok <- validate_tool_args(spec, normalized_call.args),
-         :ok <-
-           Policy.authorize_tool(
-             project_ctx.policy,
-             normalized_call.name,
-             normalized_call.args,
-             normalized_call.meta,
-             Map.get(spec, :safety, %{}) || %{},
-             project_ctx
-           ),
-         :ok <- ensure_capacity(project_ctx),
-         :ok <- emit_started(project_ctx, normalized_call, spec),
-         {:ok, result} <- execute_within_task(project_ctx, spec, normalized_call),
-         :ok <- enforce_result_limits(project_ctx, result) do
-      duration_ms = System.monotonic_time(:millisecond) - started_at
-      response = success_response(normalized_call, spec, duration_ms, result)
-      Telemetry.emit("tool.completed", response)
-      {:ok, response}
-    else
+    case normalize_call(tool_call) do
+      {:ok, normalized_call} ->
+        correlated_call = ensure_call_correlation(normalized_call)
+        execute_run(project_ctx, correlated_call, started_at)
+
       {:error, reason} ->
-        duration_ms = System.monotonic_time(:millisecond) - started_at
-        error = error_response(tool_call, duration_ms, reason)
-        maybe_emit_timeout_signals(project_ctx, tool_call, reason)
-        Telemetry.emit("tool.failed", error)
-        {:error, error}
+        run_failed(project_ctx, tool_call, started_at, reason)
     end
   end
 
@@ -67,6 +48,45 @@ defmodule Jido.Code.Server.Project.ToolRunner do
       end)
 
     :ok
+  end
+
+  defp execute_run(project_ctx, call, started_at) do
+    run_ctx =
+      project_ctx
+      |> put_ctx_value(:conversation_id, conversation_id_from_call(call))
+      |> put_ctx_value(:correlation_id, correlation_id_from_call(call))
+
+    with {:ok, spec} <- ToolCatalog.get_tool(project_ctx, call.name),
+         :ok <- validate_tool_args(spec, call.args),
+         :ok <-
+           Policy.authorize_tool(
+             project_ctx.policy,
+             call.name,
+             call.args,
+             call.meta,
+             Map.get(spec, :safety, %{}) || %{},
+             run_ctx
+           ),
+         :ok <- ensure_capacity(project_ctx),
+         :ok <- emit_started(project_ctx, call, spec),
+         {:ok, result} <- execute_within_task(project_ctx, spec, call),
+         :ok <- enforce_result_limits(project_ctx, result) do
+      duration_ms = System.monotonic_time(:millisecond) - started_at
+      response = success_response(call, spec, duration_ms, result)
+      Telemetry.emit("tool.completed", response)
+      {:ok, response}
+    else
+      {:error, reason} ->
+        run_failed(project_ctx, call, started_at, reason)
+    end
+  end
+
+  defp run_failed(project_ctx, tool_call, started_at, reason) do
+    duration_ms = System.monotonic_time(:millisecond) - started_at
+    error = error_response(tool_call, duration_ms, reason)
+    maybe_emit_timeout_signals(project_ctx, tool_call, reason)
+    Telemetry.emit("tool.failed", error)
+    {:error, error}
   end
 
   defp execute_within_task(project_ctx, spec, call) do
@@ -153,6 +173,8 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   defp emit_started(project_ctx, call, spec) do
     Telemetry.emit("tool.started", %{
       project_id: project_ctx.project_id,
+      conversation_id: conversation_id_from_call(call),
+      correlation_id: correlation_id_from_call(call),
       tool: call.name,
       kind: spec.kind,
       args: call.args
@@ -165,6 +187,8 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     %{
       status: :ok,
       tool: call.name,
+      conversation_id: conversation_id_from_call(call),
+      correlation_id: correlation_id_from_call(call),
       kind: spec.kind,
       duration_ms: duration_ms,
       result: result
@@ -175,6 +199,8 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     %{
       status: :error,
       tool: tool_name(tool_call),
+      conversation_id: conversation_id_from_call(tool_call),
+      correlation_id: correlation_id_from_call(tool_call),
       duration_ms: duration_ms,
       reason: reason
     }
@@ -196,6 +222,12 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   end
 
   defp normalize_call(_invalid), do: {:error, :invalid_tool_call}
+
+  defp ensure_call_correlation(call) when is_map(call) do
+    meta = call_meta(call)
+    {_correlation_id, ensured_meta} = Correlation.ensure(meta)
+    Map.put(call, :meta, ensured_meta)
+  end
 
   defp validate_tool_args(spec, args) when is_map(spec) and is_map(args) do
     schema = Map.get(spec, :input_schema, %{}) || %{}
@@ -393,10 +425,12 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
     timeout_count = increment_timeout_counter(project_ctx.project_id, tool)
     conversation_id = conversation_id_from_call(tool_call)
+    correlation_id = correlation_id_from_call(tool_call)
 
     Telemetry.emit("tool.timeout", %{
       project_id: project_ctx.project_id,
       conversation_id: conversation_id,
+      correlation_id: correlation_id,
       tool: tool,
       timeout_count: timeout_count
     })
@@ -405,6 +439,7 @@ defmodule Jido.Code.Server.Project.ToolRunner do
       Telemetry.emit("security.repeated_timeout_failures", %{
         project_id: project_ctx.project_id,
         conversation_id: conversation_id,
+        correlation_id: correlation_id,
         tool: tool,
         timeout_count: timeout_count,
         threshold: threshold
@@ -451,15 +486,25 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
   defp normalize_project_key(_project_id), do: "global"
 
-  defp conversation_id_from_call(%ToolCall{meta: meta}) when is_map(meta) do
+  defp put_ctx_value(ctx, _key, nil), do: ctx
+  defp put_ctx_value(ctx, key, value), do: Map.put(ctx, key, value)
+
+  defp conversation_id_from_call(tool_call) do
+    meta = call_meta(tool_call)
     Map.get(meta, :conversation_id) || Map.get(meta, "conversation_id")
   end
 
-  defp conversation_id_from_call(%{meta: meta}) when is_map(meta) do
-    Map.get(meta, :conversation_id) || Map.get(meta, "conversation_id")
+  defp correlation_id_from_call(tool_call) do
+    case Correlation.fetch(call_meta(tool_call)) do
+      {:ok, correlation_id} -> correlation_id
+      :error -> nil
+    end
   end
 
-  defp conversation_id_from_call(_), do: nil
+  defp call_meta(%ToolCall{meta: meta}) when is_map(meta), do: meta
+  defp call_meta(%{meta: meta}) when is_map(meta), do: meta
+  defp call_meta(%{"meta" => meta}) when is_map(meta), do: meta
+  defp call_meta(_), do: %{}
 
   defp map_get(map, key) when is_map(map) and is_binary(key) do
     case Map.get(@schema_atom_keys, key) do
@@ -470,6 +515,7 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
   defp tool_name(%ToolCall{name: name}) when is_binary(name), do: name
   defp tool_name(%{name: name}) when is_binary(name), do: name
+  defp tool_name(%{"name" => name}) when is_binary(name), do: name
   defp tool_name(_), do: "unknown"
 
   defp fetch_string_arg(args, key) when is_map(args) do

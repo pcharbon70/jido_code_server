@@ -3,6 +3,7 @@ defmodule Jido.Code.Server.Conversation.LLM do
   Conversation-scoped LLM adapter with deterministic and Jido.AI-backed modes.
   """
 
+  alias Jido.Code.Server.Correlation
   alias Jido.Code.Server.Types.ToolCall
 
   @type completion_result :: %{
@@ -25,11 +26,14 @@ defmodule Jido.Code.Server.Conversation.LLM do
   def cancel(_ref), do: :ok
 
   defp build_request(project_ctx, conversation_id, llm_context, opts) do
+    source_event = Keyword.get(opts, :source_event)
+
     %{
       project_id: Map.get(project_ctx, :project_id),
       conversation_id: conversation_id,
       llm_context: normalize_llm_context(llm_context),
-      source_event: Keyword.get(opts, :source_event),
+      source_event: source_event,
+      correlation_id: resolve_correlation_id(opts, source_event),
       tool_specs: normalize_tool_specs(Keyword.get(opts, :tool_specs, [])),
       adapter: resolve_adapter(project_ctx, opts),
       model: Keyword.get(opts, :model) || Map.get(project_ctx, :llm_model),
@@ -135,12 +139,16 @@ defmodule Jido.Code.Server.Conversation.LLM do
   end
 
   defp response_to_events(request, response) do
+    correlation_id = Map.get(request, :correlation_id)
+    event_meta = build_event_meta(correlation_id)
+
     tool_calls = Enum.take(Map.get(response, :tool_calls, []), 1)
     text = Map.get(response, :text, "") || ""
     delta_chunks = normalize_delta_chunks(Map.get(response, :delta_chunks, []))
 
     started = %{
       type: "llm.started",
+      meta: event_meta,
       data: %{
         "provider" => normalize_provider(Map.get(response, :provider)),
         "model" => request.model || "default"
@@ -149,23 +157,28 @@ defmodule Jido.Code.Server.Conversation.LLM do
 
     delta_events =
       Enum.map(delta_chunks, fn chunk ->
-        %{type: "assistant.delta", data: %{"content" => chunk}}
+        %{type: "assistant.delta", meta: event_meta, data: %{"content" => chunk}}
       end)
 
     tool_events =
       Enum.map(tool_calls, fn tool_call ->
-        %{type: "tool.requested", data: %{"tool_call" => tool_call}}
+        %{
+          type: "tool.requested",
+          meta: event_meta,
+          data: %{"tool_call" => tool_call_with_correlation(tool_call, correlation_id)}
+        }
       end)
 
     assistant_events =
       if tool_events == [] and String.trim(text) != "" do
-        [%{type: "assistant.message", data: %{"content" => text}}]
+        [%{type: "assistant.message", meta: event_meta, data: %{"content" => text}}]
       else
         []
       end
 
     completed = %{
       type: "llm.completed",
+      meta: event_meta,
       data: %{
         "finish_reason" => normalize_finish_reason(Map.get(response, :finish_reason)),
         "tool_call_count" => length(tool_events)
@@ -440,6 +453,39 @@ defmodule Jido.Code.Server.Conversation.LLM do
     case map_lookup(tool_call, :id) do
       id when is_binary(id) and id != "" -> %{"llm_tool_call_id" => id}
       _ -> %{}
+    end
+  end
+
+  defp resolve_correlation_id(opts, source_event) do
+    with nil <- Keyword.get(opts, :correlation_id),
+         nil <- correlation_id_from_source_event(source_event) do
+      Correlation.generate()
+    end
+  end
+
+  defp correlation_id_from_source_event(%{meta: meta}) when is_map(meta) do
+    case Correlation.fetch(meta) do
+      {:ok, correlation_id} -> correlation_id
+      :error -> nil
+    end
+  end
+
+  defp correlation_id_from_source_event(_source_event), do: nil
+
+  defp build_event_meta(correlation_id) when is_binary(correlation_id) do
+    Correlation.put(%{}, correlation_id)
+  end
+
+  defp build_event_meta(_correlation_id), do: %{}
+
+  defp tool_call_with_correlation(tool_call, correlation_id) do
+    case ToolCall.from_map(tool_call) do
+      {:ok, normalized} ->
+        meta = Correlation.put(normalized.meta, correlation_id)
+        ToolCall.to_map(%{normalized | meta: meta})
+
+      _ ->
+        tool_call
     end
   end
 

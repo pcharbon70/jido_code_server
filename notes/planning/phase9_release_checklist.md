@@ -10,6 +10,7 @@
 
 - [ ] Tool schema validation rejects malformed payloads.
 - [ ] Policy decisions emit `policy.allowed` / `policy.denied` with auditable context.
+- [ ] Correlation IDs propagate across ingest, LLM lifecycle, tool execution, and policy decisions.
 - [ ] Sandbox escape attempts emit `security.sandbox_violation`.
 - [ ] Network-capable tools are deny-by-default and emit `security.network_denied` when blocked.
 - [ ] `network_allowlist` filtering is validated for allowlisted and non-allowlisted endpoints.

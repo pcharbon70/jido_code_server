@@ -62,11 +62,23 @@ defmodule Jido.Code.Server.ProjectPhase2Test do
     event = %{"type" => "user.message", "content" => "hello"}
     assert :ok = Runtime.send_event(project_id, "conversation-a", event)
 
-    assert {:ok, [^event]} =
+    assert {:ok, [timeline_event]} =
              Runtime.get_projection(project_id, "conversation-a", :timeline)
 
-    assert {:ok, %{project_id: ^project_id, conversation_id: "conversation-a", events: [^event]}} =
+    assert timeline_event["type"] == "user.message"
+    assert timeline_event["content"] == "hello"
+    assert is_binary(get_in(timeline_event, ["meta", "correlation_id"]))
+    correlation_id = get_in(timeline_event, ["meta", "correlation_id"])
+
+    assert {:ok, llm_context} =
              Runtime.get_projection(project_id, "conversation-a", :llm_context)
+
+    assert llm_context.project_id == project_id
+    assert llm_context.conversation_id == "conversation-a"
+    assert [context_event] = llm_context.events
+    assert context_event["type"] == "user.message"
+    assert context_event["content"] == "hello"
+    assert get_in(context_event, ["meta", "correlation_id"]) == correlation_id
 
     assert :ok = Runtime.stop_conversation(project_id, "conversation-a")
 
