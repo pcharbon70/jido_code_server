@@ -10,9 +10,11 @@ defmodule JidoCodeServer.Project.Server do
 
   use GenServer
 
+  alias JidoCodeServer.Conversation.Server, as: ConversationServer
   alias JidoCodeServer.Project.ConversationRegistry
   alias JidoCodeServer.Project.ConversationSupervisor
   alias JidoCodeServer.Project.Layout
+  alias JidoCodeServer.Telemetry
 
   @type conversation_id :: String.t()
 
@@ -24,7 +26,8 @@ defmodule JidoCodeServer.Project.Server do
     end
   end
 
-  @spec start_conversation(GenServer.server(), keyword()) :: {:ok, conversation_id()} | {:error, term()}
+  @spec start_conversation(GenServer.server(), keyword()) ::
+          {:ok, conversation_id()} | {:error, term()}
   def start_conversation(server, opts \\ []) do
     GenServer.call(server, {:start_conversation, opts})
   end
@@ -70,7 +73,7 @@ defmodule JidoCodeServer.Project.Server do
 
     with {:ok, canonical_root} <- Layout.canonical_root(root_path),
          {:ok, layout} <- Layout.ensure_layout(canonical_root, data_dir) do
-      JidoCodeServer.Telemetry.emit("project.started", %{
+      Telemetry.emit("project.started", %{
         project_id: project_id,
         root_path: canonical_root,
         data_dir: data_dir
@@ -94,7 +97,7 @@ defmodule JidoCodeServer.Project.Server do
 
   @impl true
   def terminate(_reason, state) do
-    JidoCodeServer.Telemetry.emit("project.stopped", %{
+    Telemetry.emit("project.stopped", %{
       project_id: state.project_id,
       root_path: state.root_path,
       data_dir: state.data_dir
@@ -124,12 +127,16 @@ defmodule JidoCodeServer.Project.Server do
           conversation_id: conversation_id
         ]
 
-        case ConversationSupervisor.start_conversation(state.conversation_supervisor, conversation_opts) do
+        case ConversationSupervisor.start_conversation(
+               state.conversation_supervisor,
+               conversation_opts
+             ) do
           {:ok, pid} ->
             monitor_ref = Process.monitor(pid)
             :ok = ConversationRegistry.put(state.conversation_registry, conversation_id, pid)
 
-            conversations = Map.put(state.conversations, conversation_id, %{pid: pid, monitor_ref: monitor_ref})
+            conversations =
+              Map.put(state.conversations, conversation_id, %{pid: pid, monitor_ref: monitor_ref})
 
             {:reply, {:ok, conversation_id}, %{state | conversations: conversations}}
 
@@ -155,19 +162,23 @@ defmodule JidoCodeServer.Project.Server do
   end
 
   def handle_call({:send_event, conversation_id, event}, _from, state) do
-    with {:ok, pid} <- fetch_conversation_pid(state, conversation_id) do
-      :ok = JidoCodeServer.Conversation.Server.ingest_event(pid, event)
-      {:reply, :ok, state}
-    else
-      {:error, reason} -> {:reply, {:error, reason}, state}
+    case fetch_conversation_pid(state, conversation_id) do
+      {:ok, pid} ->
+        :ok = ConversationServer.ingest_event(pid, event)
+        {:reply, :ok, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
   def handle_call({:get_projection, conversation_id, key}, _from, state) do
-    with {:ok, pid} <- fetch_conversation_pid(state, conversation_id) do
-      {:reply, JidoCodeServer.Conversation.Server.get_projection(pid, key), state}
-    else
-      {:error, reason} -> {:reply, {:error, reason}, state}
+    case fetch_conversation_pid(state, conversation_id) do
+      {:ok, pid} ->
+        {:reply, ConversationServer.get_projection(pid, key), state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
@@ -219,7 +230,8 @@ defmodule JidoCodeServer.Project.Server do
   end
 
   defp pop_by_monitor_ref(conversations, ref, pid) do
-    Enum.reduce(conversations, {nil, conversations}, fn {conversation_id, info}, {found_id, acc} ->
+    Enum.reduce(conversations, {nil, conversations}, fn {conversation_id, info},
+                                                        {found_id, acc} ->
       cond do
         found_id ->
           {found_id, acc}

@@ -18,13 +18,12 @@ defmodule JidoCodeServer.Project.ConversationSupervisor do
     DynamicSupervisor.init(strategy: :one_for_one)
   end
 
-  @spec start_conversation(DynamicSupervisor.supervisor(), keyword()) ::
-          DynamicSupervisor.on_start_child()
+  @spec start_conversation(GenServer.server(), keyword()) :: DynamicSupervisor.on_start_child()
   def start_conversation(supervisor, opts) do
     DynamicSupervisor.start_child(supervisor, {JidoCodeServer.Conversation.Server, opts})
   end
 
-  @spec stop_conversation(DynamicSupervisor.supervisor(), pid()) :: :ok | {:error, term()}
+  @spec stop_conversation(GenServer.server(), pid()) :: :ok | {:error, term()}
   def stop_conversation(supervisor, pid) when is_pid(pid) do
     DynamicSupervisor.terminate_child(supervisor, pid)
   end

@@ -24,13 +24,12 @@ defmodule JidoCodeServer.Project.Layout do
   def canonical_root(root_path) when is_binary(root_path) do
     expanded = Path.expand(root_path)
 
-    case File.realpath(expanded) do
-      {:ok, canonical} ->
-        case File.stat(canonical) do
-          {:ok, %File.Stat{type: :directory}} -> {:ok, canonical}
-          {:ok, _other} -> {:error, {:invalid_root_path, :not_directory}}
-          {:error, reason} -> {:error, {:invalid_root_path, reason}}
-        end
+    case File.stat(expanded) do
+      {:ok, %File.Stat{type: :directory}} ->
+        {:ok, expanded}
+
+      {:ok, _other} ->
+        {:error, {:invalid_root_path, :not_directory}}
 
       {:error, reason} ->
         {:error, {:invalid_root_path, reason}}
@@ -39,23 +38,18 @@ defmodule JidoCodeServer.Project.Layout do
 
   def canonical_root(_root_path), do: {:error, {:invalid_root_path, :expected_string}}
 
-  @spec ensure_layout(String.t(), String.t()) :: {:ok, map()} | {:error, {:layout_create_failed, term()}}
+  @spec ensure_layout(String.t(), String.t()) ::
+          {:ok, map()} | {:error, {:layout_create_failed, term()}}
   def ensure_layout(root_path, data_dir) do
     layout = paths(root_path, data_dir)
 
-    with :ok <- mkdir(layout.data) do
-      case Enum.reduce_while(@required_dirs, :ok, fn dir, :ok ->
-             path = Path.join(layout.data, dir)
+    case mkdir(layout.data) do
+      :ok ->
+        case ensure_required_dirs(layout.data) do
+          :ok -> {:ok, layout}
+          {:error, reason} -> {:error, {:layout_create_failed, reason}}
+        end
 
-             case mkdir(path) do
-               :ok -> {:cont, :ok}
-               {:error, reason} -> {:halt, {:error, reason}}
-             end
-           end) do
-        :ok -> {:ok, layout}
-        {:error, reason} -> {:error, {:layout_create_failed, reason}}
-      end
-    else
       {:error, reason} ->
         {:error, {:layout_create_failed, reason}}
     end
@@ -77,5 +71,17 @@ defmodule JidoCodeServer.Project.Layout do
       :ok -> :ok
       {:error, reason} -> {:error, {path, reason}}
     end
+  end
+
+  defp ensure_required_dirs(data_root) do
+    Enum.reduce_while(@required_dirs, :ok, fn dir, :ok ->
+      data_root
+      |> Path.join(dir)
+      |> mkdir()
+      |> case do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
   end
 end

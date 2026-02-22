@@ -8,6 +8,11 @@ defmodule JidoCodeServer.Engine.Project do
 
   use GenServer
 
+  alias JidoCodeServer.Engine.ProjectRegistry
+  alias JidoCodeServer.Project.Naming
+  alias JidoCodeServer.Project.Server
+  alias JidoCodeServer.Project.Supervisor
+
   @type t :: %{
           project_id: String.t(),
           root_path: String.t(),
@@ -21,7 +26,7 @@ defmodule JidoCodeServer.Engine.Project do
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     project_id = Keyword.fetch!(opts, :project_id)
-    name = JidoCodeServer.Engine.ProjectRegistry.via(project_id)
+    name = ProjectRegistry.via(project_id)
 
     GenServer.start_link(__MODULE__, opts, name: name)
   end
@@ -80,7 +85,7 @@ defmodule JidoCodeServer.Engine.Project do
         :error -> supervisor_opts
       end
 
-    case JidoCodeServer.Project.Supervisor.start_link(supervisor_opts) do
+    case Supervisor.start_link(supervisor_opts) do
       {:ok, project_supervisor} ->
         state = %{
           project_id: project_id,
@@ -89,7 +94,7 @@ defmodule JidoCodeServer.Engine.Project do
           started_at: DateTime.utc_now(),
           opts: opts,
           project_supervisor: project_supervisor,
-          project_server: JidoCodeServer.Project.Naming.via(project_id, :project_server)
+          project_server: Naming.via(project_id, :project_server)
         }
 
         {:ok, state}
@@ -102,7 +107,7 @@ defmodule JidoCodeServer.Engine.Project do
   @impl true
   def handle_call(:summary, _from, state) do
     project_summary =
-      case delegate(fn -> JidoCodeServer.Project.Server.summary(state.project_server) end) do
+      case delegate(fn -> Server.summary(state.project_server) end) do
         {:ok, summary} ->
           summary
 
@@ -128,7 +133,9 @@ defmodule JidoCodeServer.Engine.Project do
 
   def handle_call({:start_conversation, opts}, _from, state) do
     reply =
-      delegate(fn -> JidoCodeServer.Project.Server.start_conversation(state.project_server, opts) end)
+      delegate(fn ->
+        Server.start_conversation(state.project_server, opts)
+      end)
       |> unwrap_delegate()
 
     {:reply, reply, state}
@@ -136,7 +143,9 @@ defmodule JidoCodeServer.Engine.Project do
 
   def handle_call({:stop_conversation, conversation_id}, _from, state) do
     reply =
-      delegate(fn -> JidoCodeServer.Project.Server.stop_conversation(state.project_server, conversation_id) end)
+      delegate(fn ->
+        Server.stop_conversation(state.project_server, conversation_id)
+      end)
       |> unwrap_delegate()
 
     {:reply, reply, state}
@@ -144,7 +153,9 @@ defmodule JidoCodeServer.Engine.Project do
 
   def handle_call({:send_event, conversation_id, event}, _from, state) do
     reply =
-      delegate(fn -> JidoCodeServer.Project.Server.send_event(state.project_server, conversation_id, event) end)
+      delegate(fn ->
+        Server.send_event(state.project_server, conversation_id, event)
+      end)
       |> unwrap_delegate()
 
     {:reply, reply, state}
@@ -152,7 +163,9 @@ defmodule JidoCodeServer.Engine.Project do
 
   def handle_call({:get_projection, conversation_id, key}, _from, state) do
     reply =
-      delegate(fn -> JidoCodeServer.Project.Server.get_projection(state.project_server, conversation_id, key) end)
+      delegate(fn ->
+        Server.get_projection(state.project_server, conversation_id, key)
+      end)
       |> unwrap_delegate()
 
     {:reply, reply, state}
@@ -160,7 +173,7 @@ defmodule JidoCodeServer.Engine.Project do
 
   def handle_call(:list_tools, _from, state) do
     reply =
-      delegate(fn -> JidoCodeServer.Project.Server.list_tools(state.project_server) end)
+      delegate(fn -> Server.list_tools(state.project_server) end)
       |> unwrap_delegate([])
 
     {:reply, reply, state}
@@ -168,7 +181,7 @@ defmodule JidoCodeServer.Engine.Project do
 
   def handle_call(:reload_assets, _from, state) do
     reply =
-      delegate(fn -> JidoCodeServer.Project.Server.reload_assets(state.project_server) end)
+      delegate(fn -> Server.reload_assets(state.project_server) end)
       |> unwrap_delegate()
 
     {:reply, reply, state}
@@ -181,10 +194,8 @@ defmodule JidoCodeServer.Engine.Project do
       {:error, {:project_unavailable, reason}}
   end
 
+  defp unwrap_delegate(result), do: unwrap_delegate(result, nil)
   defp unwrap_delegate({:ok, value}, _default), do: value
-  defp unwrap_delegate({:ok, value}), do: value
-  defp unwrap_delegate({:error, reason}, default), do: default || {:error, reason}
-  defp unwrap_delegate({:error, reason}), do: {:error, reason}
-  defp unwrap_delegate(value, _default), do: value
-  defp unwrap_delegate(value), do: value
+  defp unwrap_delegate({:error, _reason}, default) when not is_nil(default), do: default
+  defp unwrap_delegate({:error, reason}, nil), do: {:error, reason}
 end

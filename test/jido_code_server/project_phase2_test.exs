@@ -14,7 +14,12 @@ defmodule JidoCodeServer.ProjectPhase2Test do
   end
 
   test "project start ensures data layout for configured data_dir" do
-    root = Path.join(System.tmp_dir!(), "jido_code_server_phase2_root_#{System.unique_integer([:positive])}")
+    root =
+      Path.join(
+        System.tmp_dir!(),
+        "jido_code_server_phase2_root_#{System.unique_integer([:positive])}"
+      )
+
     File.mkdir_p!(root)
 
     on_exit(fn ->
@@ -32,7 +37,7 @@ defmodule JidoCodeServer.ProjectPhase2Test do
     assert File.dir?(Path.join(root, ".runtime/state"))
 
     [summary] = Enum.filter(JidoCodeServer.list_projects(), &(&1.project_id == "phase2-layout"))
-    assert summary.root_path == File.realpath!(root)
+    assert summary.root_path == Path.expand(root)
     assert summary.data_dir == ".runtime"
   end
 
@@ -40,7 +45,9 @@ defmodule JidoCodeServer.ProjectPhase2Test do
     root = TempProject.create!()
     on_exit(fn -> TempProject.cleanup(root) end)
 
-    assert {:ok, project_id} = JidoCodeServer.start_project(root, project_id: "phase2-conversations")
+    assert {:ok, project_id} =
+             JidoCodeServer.start_project(root, project_id: "phase2-conversations")
+
     assert {:ok, "conversation-a"} =
              JidoCodeServer.start_conversation(project_id, conversation_id: "conversation-a")
 

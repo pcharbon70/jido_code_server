@@ -1,6 +1,8 @@
 defmodule JidoCodeServerTest do
   use ExUnit.Case, async: true
 
+  alias JidoCodeServer.TestSupport.FakeAction
+  alias JidoCodeServer.TestSupport.FakeLLM
   alias JidoCodeServer.TestSupport.TempProject
 
   test "root module is available" do
@@ -27,9 +29,10 @@ defmodule JidoCodeServerTest do
 
   test "fake adapters return deterministic payloads" do
     assert {:ok, %{ok: true, args: %{path: "foo"}, ctx: %{project: "p1"}}} =
-             JidoCodeServer.TestSupport.FakeAction.run(%{path: "foo"}, %{project: "p1"})
+             FakeAction.run(%{path: "foo"}, %{project: "p1"})
 
-    assert {:ok, %{id: "fake-completion", model: "fake-model", text: "fake-response", tool_calls: []}} =
-             JidoCodeServer.TestSupport.FakeLLM.complete(%{})
+    assert {:ok,
+            %{id: "fake-completion", model: "fake-model", text: "fake-response", tool_calls: []}} =
+             FakeLLM.complete(%{})
   end
 end

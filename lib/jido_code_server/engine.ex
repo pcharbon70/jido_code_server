@@ -35,9 +35,9 @@ defmodule JidoCodeServer.Engine do
 
   @spec stop_project(project_id()) :: :ok | {:error, term()}
   def stop_project(project_id) do
-    with {:ok, pid} <- whereis_project(project_id),
-         :ok <- terminate_project(pid) do
-      :ok
+    case whereis_project(project_id) do
+      {:ok, pid} -> terminate_project(pid)
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -48,7 +48,11 @@ defmodule JidoCodeServer.Engine do
   def whereis_project(project_id) when is_binary(project_id) do
     case ProjectRegistry.lookup(project_id) do
       [{pid, _value}] when is_pid(pid) ->
-        {:ok, pid}
+        if Process.alive?(pid) do
+          {:ok, pid}
+        else
+          {:error, {:project_not_found, project_id}}
+        end
 
       _ ->
         {:error, {:project_not_found, project_id}}
@@ -181,10 +185,22 @@ defmodule JidoCodeServer.Engine do
   end
 
   defp terminate_project(pid) when is_pid(pid) do
+    ref = Process.monitor(pid)
+
     case ProjectSupervisor.stop_project(pid) do
-      :ok -> :ok
+      :ok -> await_project_exit(pid, ref)
       {:error, :not_found} -> :ok
-      {:error, reason} -> {:error, {:stop_project_failed, reason}}
+    end
+  end
+
+  defp await_project_exit(pid, ref) do
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _reason} ->
+        :ok
+    after
+      6_000 ->
+        Process.demonitor(ref, [:flush])
+        :ok
     end
   end
 

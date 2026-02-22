@@ -18,7 +18,8 @@ defmodule JidoCodeServer.Conversation.Server do
     end
   end
 
-  @spec get_projection(GenServer.server(), atom() | String.t()) :: {:ok, term()} | {:error, term()}
+  @spec get_projection(GenServer.server(), atom() | String.t()) ::
+          {:ok, term()} | {:error, term()}
   def get_projection(server, key) do
     GenServer.call(server, {:get_projection, key})
   end
