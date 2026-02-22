@@ -34,6 +34,8 @@
   - expected for unauthorized calls; alert only on sudden volume spikes (>3x baseline).
 - `security.sandbox_violation`:
   - page immediately; indicates outside-root path attempt.
+- `security.sensitive_path_denied`:
+  - page for unexpected access to denylisted sensitive files (investigate credential handling and tool prompts).
 - `security.network_denied`:
   - warning by default; page if repeated and unexpected for a project with enabled egress policy.
   - includes endpoint-denied and protocol-denied (`network_protocol_denied`) policy outcomes.
