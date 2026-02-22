@@ -192,9 +192,20 @@ defmodule JidoCodeServer.Project.Server do
           asset_store: state.asset_store,
           policy: state.policy,
           task_supervisor: state.task_supervisor,
-          tool_timeout_ms: Config.tool_timeout_ms(),
-          tool_max_concurrency: Config.tool_max_concurrency(),
-          llm_timeout_ms: Config.llm_timeout_ms(),
+          tool_timeout_ms: runtime_opt(state, :tool_timeout_ms, Config.tool_timeout_ms()),
+          tool_max_concurrency:
+            runtime_opt(state, :tool_max_concurrency, Config.tool_max_concurrency()),
+          tool_timeout_alert_threshold:
+            runtime_opt(
+              state,
+              :tool_timeout_alert_threshold,
+              Config.tool_timeout_alert_threshold()
+            ),
+          tool_max_output_bytes:
+            runtime_opt(state, :tool_max_output_bytes, Config.tool_max_output_bytes()),
+          tool_max_artifact_bytes:
+            runtime_opt(state, :tool_max_artifact_bytes, Config.tool_max_artifact_bytes()),
+          llm_timeout_ms: runtime_opt(state, :llm_timeout_ms, Config.llm_timeout_ms()),
           orchestration_enabled: conversation_orchestration_enabled?(state.runtime_opts),
           llm_adapter: Keyword.get(state.runtime_opts, :llm_adapter),
           llm_model: Keyword.get(state.runtime_opts, :llm_model),
@@ -423,9 +434,24 @@ defmodule JidoCodeServer.Project.Server do
       asset_store: state.asset_store,
       policy: state.policy,
       task_supervisor: state.task_supervisor,
-      tool_timeout_ms: Config.tool_timeout_ms(),
-      tool_max_concurrency: Config.tool_max_concurrency()
+      tool_timeout_ms: runtime_opt(state, :tool_timeout_ms, Config.tool_timeout_ms()),
+      tool_max_concurrency:
+        runtime_opt(state, :tool_max_concurrency, Config.tool_max_concurrency()),
+      tool_timeout_alert_threshold:
+        runtime_opt(
+          state,
+          :tool_timeout_alert_threshold,
+          Config.tool_timeout_alert_threshold()
+        ),
+      tool_max_output_bytes:
+        runtime_opt(state, :tool_max_output_bytes, Config.tool_max_output_bytes()),
+      tool_max_artifact_bytes:
+        runtime_opt(state, :tool_max_artifact_bytes, Config.tool_max_artifact_bytes())
     }
+  end
+
+  defp runtime_opt(state, key, default) do
+    Keyword.get(state.runtime_opts, key, default)
   end
 
   defp conversation_orchestration_enabled?(runtime_opts) when is_list(runtime_opts) do
@@ -446,7 +472,18 @@ defmodule JidoCodeServer.Project.Server do
       data_dir: state.data_dir,
       watcher_enabled: Keyword.get(state.opts, :watcher, false) == true,
       runtime_opts:
-        Keyword.take(state.runtime_opts, [:conversation_orchestration, :llm_adapter, :watcher]),
+        Keyword.take(state.runtime_opts, [
+          :conversation_orchestration,
+          :llm_adapter,
+          :watcher,
+          :watcher_debounce_ms,
+          :tool_timeout_ms,
+          :tool_max_concurrency,
+          :tool_timeout_alert_threshold,
+          :tool_max_output_bytes,
+          :tool_max_artifact_bytes,
+          :llm_timeout_ms
+        ]),
       health: %{
         status: if(telemetry.recent_errors == [], do: :ok, else: :degraded),
         conversation_count: map_size(state.conversations),

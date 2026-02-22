@@ -81,5 +81,4 @@
 
 - Tool timeout handling currently terminates the task process; child OS process group termination is not yet implemented.
 - Network egress policy enforcement is not yet implemented in this phase slice.
-- Load/soak benchmark harness and runbook/dashboard artifacts remain pending for full operational sign-off.
-
+- External benchmark harness beyond test-suite load scenarios remains pending for full operational sign-off.
