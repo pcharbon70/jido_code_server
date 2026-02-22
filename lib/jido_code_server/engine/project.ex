@@ -2,8 +2,8 @@ defmodule JidoCodeServer.Engine.Project do
   @moduledoc """
   Runtime process representing a started project instance.
 
-  Phase 1 keeps this intentionally lightweight. It stores normalized project metadata
-  and exposes a summary API used by engine list/lookup operations.
+  It owns the project container lifecycle by starting a project-level supervisor
+  and delegating control-plane operations to `Project.Server`.
   """
 
   use GenServer
@@ -13,7 +13,9 @@ defmodule JidoCodeServer.Engine.Project do
           root_path: String.t(),
           data_dir: String.t(),
           started_at: DateTime.t(),
-          opts: keyword()
+          opts: keyword(),
+          project_supervisor: pid(),
+          project_server: GenServer.server()
         }
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -29,29 +31,160 @@ defmodule JidoCodeServer.Engine.Project do
     GenServer.call(pid, :summary)
   end
 
+  @spec start_conversation(pid(), keyword()) :: {:ok, String.t()} | {:error, term()}
+  def start_conversation(pid, opts \\ []) when is_pid(pid) do
+    GenServer.call(pid, {:start_conversation, opts})
+  end
+
+  @spec stop_conversation(pid(), String.t()) :: :ok | {:error, term()}
+  def stop_conversation(pid, conversation_id) when is_pid(pid) and is_binary(conversation_id) do
+    GenServer.call(pid, {:stop_conversation, conversation_id})
+  end
+
+  @spec send_event(pid(), String.t(), map()) :: :ok | {:error, term()}
+  def send_event(pid, conversation_id, event)
+      when is_pid(pid) and is_binary(conversation_id) and is_map(event) do
+    GenServer.call(pid, {:send_event, conversation_id, event})
+  end
+
+  @spec get_projection(pid(), String.t(), atom() | String.t()) :: {:ok, term()} | {:error, term()}
+  def get_projection(pid, conversation_id, key) when is_pid(pid) and is_binary(conversation_id) do
+    GenServer.call(pid, {:get_projection, conversation_id, key})
+  end
+
+  @spec list_tools(pid()) :: [map()]
+  def list_tools(pid) when is_pid(pid) do
+    GenServer.call(pid, :list_tools)
+  end
+
+  @spec reload_assets(pid()) :: :ok | {:error, term()}
+  def reload_assets(pid) when is_pid(pid) do
+    GenServer.call(pid, :reload_assets)
+  end
+
   @impl true
   def init(opts) do
-    state = %{
-      project_id: Keyword.fetch!(opts, :project_id),
-      root_path: Keyword.fetch!(opts, :root_path),
-      data_dir: Keyword.fetch!(opts, :data_dir),
-      started_at: DateTime.utc_now(),
-      opts: opts
-    }
+    project_id = Keyword.fetch!(opts, :project_id)
+    root_path = Keyword.fetch!(opts, :root_path)
+    data_dir = Keyword.fetch!(opts, :data_dir)
 
-    {:ok, state}
+    supervisor_opts = [
+      project_id: project_id,
+      root_path: root_path,
+      data_dir: data_dir
+    ]
+
+    supervisor_opts =
+      case Keyword.fetch(opts, :watcher) do
+        {:ok, watcher} -> Keyword.put(supervisor_opts, :watcher, watcher)
+        :error -> supervisor_opts
+      end
+
+    case JidoCodeServer.Project.Supervisor.start_link(supervisor_opts) do
+      {:ok, project_supervisor} ->
+        state = %{
+          project_id: project_id,
+          root_path: root_path,
+          data_dir: data_dir,
+          started_at: DateTime.utc_now(),
+          opts: opts,
+          project_supervisor: project_supervisor,
+          project_server: JidoCodeServer.Project.Naming.via(project_id, :project_server)
+        }
+
+        {:ok, state}
+
+      {:error, reason} ->
+        {:stop, {:project_supervisor_start_failed, reason}}
+    end
   end
 
   @impl true
   def handle_call(:summary, _from, state) do
-    summary = %{
-      project_id: state.project_id,
-      root_path: state.root_path,
-      data_dir: state.data_dir,
-      started_at: state.started_at,
-      pid: self()
-    }
+    project_summary =
+      case delegate(fn -> JidoCodeServer.Project.Server.summary(state.project_server) end) do
+        {:ok, summary} ->
+          summary
+
+        {:error, _reason} ->
+          %{
+            project_id: state.project_id,
+            root_path: state.root_path,
+            data_dir: state.data_dir,
+            layout: %{},
+            conversation_count: 0
+          }
+      end
+
+    summary =
+      Map.merge(project_summary, %{
+        started_at: state.started_at,
+        pid: self(),
+        project_supervisor: state.project_supervisor
+      })
 
     {:reply, summary, state}
   end
+
+  def handle_call({:start_conversation, opts}, _from, state) do
+    reply =
+      delegate(fn -> JidoCodeServer.Project.Server.start_conversation(state.project_server, opts) end)
+      |> unwrap_delegate()
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:stop_conversation, conversation_id}, _from, state) do
+    reply =
+      delegate(fn -> JidoCodeServer.Project.Server.stop_conversation(state.project_server, conversation_id) end)
+      |> unwrap_delegate()
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:send_event, conversation_id, event}, _from, state) do
+    reply =
+      delegate(fn -> JidoCodeServer.Project.Server.send_event(state.project_server, conversation_id, event) end)
+      |> unwrap_delegate()
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:get_projection, conversation_id, key}, _from, state) do
+    reply =
+      delegate(fn -> JidoCodeServer.Project.Server.get_projection(state.project_server, conversation_id, key) end)
+      |> unwrap_delegate()
+
+    {:reply, reply, state}
+  end
+
+  def handle_call(:list_tools, _from, state) do
+    reply =
+      delegate(fn -> JidoCodeServer.Project.Server.list_tools(state.project_server) end)
+      |> unwrap_delegate([])
+
+    {:reply, reply, state}
+  end
+
+  def handle_call(:reload_assets, _from, state) do
+    reply =
+      delegate(fn -> JidoCodeServer.Project.Server.reload_assets(state.project_server) end)
+      |> unwrap_delegate()
+
+    {:reply, reply, state}
+  end
+
+  defp delegate(fun) when is_function(fun, 0) do
+    {:ok, fun.()}
+  catch
+    :exit, reason ->
+      {:error, {:project_unavailable, reason}}
+  end
+
+  defp unwrap_delegate({:ok, value}, _default), do: value
+  defp unwrap_delegate({:ok, value}), do: value
+  defp unwrap_delegate({:error, reason}, default), do: default || {:error, reason}
+  defp unwrap_delegate({:error, reason}), do: {:error, reason}
+  defp unwrap_delegate(value, _default), do: value
+  defp unwrap_delegate(value), do: value
 end

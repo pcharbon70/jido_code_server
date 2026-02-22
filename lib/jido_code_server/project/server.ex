@@ -1,17 +1,235 @@
 defmodule JidoCodeServer.Project.Server do
   @moduledoc """
-  Project control-plane placeholder.
+  Project control-plane process.
+
+  Phase 2 responsibilities:
+  - canonicalize and validate project root
+  - ensure project layout exists on disk
+  - route conversation lifecycle and event/projection operations
   """
 
   use GenServer
 
+  alias JidoCodeServer.Project.ConversationRegistry
+  alias JidoCodeServer.Project.ConversationSupervisor
+  alias JidoCodeServer.Project.Layout
+
+  @type conversation_id :: String.t()
+
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
+    case Keyword.get(opts, :name) do
+      nil -> GenServer.start_link(__MODULE__, opts)
+      name -> GenServer.start_link(__MODULE__, opts, name: name)
+    end
+  end
+
+  @spec start_conversation(GenServer.server(), keyword()) :: {:ok, conversation_id()} | {:error, term()}
+  def start_conversation(server, opts \\ []) do
+    GenServer.call(server, {:start_conversation, opts})
+  end
+
+  @spec stop_conversation(GenServer.server(), conversation_id()) :: :ok | {:error, term()}
+  def stop_conversation(server, conversation_id) do
+    GenServer.call(server, {:stop_conversation, conversation_id})
+  end
+
+  @spec send_event(GenServer.server(), conversation_id(), map()) :: :ok | {:error, term()}
+  def send_event(server, conversation_id, event) when is_map(event) do
+    GenServer.call(server, {:send_event, conversation_id, event})
+  end
+
+  @spec get_projection(GenServer.server(), conversation_id(), atom() | String.t()) ::
+          {:ok, term()} | {:error, term()}
+  def get_projection(server, conversation_id, key) do
+    GenServer.call(server, {:get_projection, conversation_id, key})
+  end
+
+  @spec list_tools(GenServer.server()) :: [map()]
+  def list_tools(server) do
+    GenServer.call(server, :list_tools)
+  end
+
+  @spec reload_assets(GenServer.server()) :: :ok | {:error, term()}
+  def reload_assets(server) do
+    GenServer.call(server, :reload_assets)
+  end
+
+  @spec summary(GenServer.server()) :: map()
+  def summary(server) do
+    GenServer.call(server, :summary)
   end
 
   @impl true
   def init(opts) do
-    {:ok, %{opts: opts}}
+    project_id = Keyword.fetch!(opts, :project_id)
+    root_path = Keyword.fetch!(opts, :root_path)
+    data_dir = Keyword.fetch!(opts, :data_dir)
+    conversation_registry = Keyword.fetch!(opts, :conversation_registry)
+    conversation_supervisor = Keyword.fetch!(opts, :conversation_supervisor)
+
+    with {:ok, canonical_root} <- Layout.canonical_root(root_path),
+         {:ok, layout} <- Layout.ensure_layout(canonical_root, data_dir) do
+      JidoCodeServer.Telemetry.emit("project.started", %{
+        project_id: project_id,
+        root_path: canonical_root,
+        data_dir: data_dir
+      })
+
+      {:ok,
+       %{
+         project_id: project_id,
+         root_path: canonical_root,
+         data_dir: data_dir,
+         layout: layout,
+         conversation_registry: conversation_registry,
+         conversation_supervisor: conversation_supervisor,
+         conversations: %{},
+         opts: opts
+       }}
+    else
+      {:error, reason} -> {:stop, reason}
+    end
+  end
+
+  @impl true
+  def terminate(_reason, state) do
+    JidoCodeServer.Telemetry.emit("project.stopped", %{
+      project_id: state.project_id,
+      root_path: state.root_path,
+      data_dir: state.data_dir
+    })
+
+    :ok
+  end
+
+  @impl true
+  def handle_call({:start_conversation, opts}, _from, state) do
+    conversation_id =
+      case Keyword.get(opts, :conversation_id) do
+        id when is_binary(id) and id != "" ->
+          id
+
+        _ ->
+          "conversation_" <> Integer.to_string(System.unique_integer([:positive]))
+      end
+
+    case ConversationRegistry.fetch(state.conversation_registry, conversation_id) do
+      {:ok, _existing_pid} ->
+        {:reply, {:error, {:conversation_already_started, conversation_id}}, state}
+
+      :error ->
+        conversation_opts = [
+          project_id: state.project_id,
+          conversation_id: conversation_id
+        ]
+
+        case ConversationSupervisor.start_conversation(state.conversation_supervisor, conversation_opts) do
+          {:ok, pid} ->
+            monitor_ref = Process.monitor(pid)
+            :ok = ConversationRegistry.put(state.conversation_registry, conversation_id, pid)
+
+            conversations = Map.put(state.conversations, conversation_id, %{pid: pid, monitor_ref: monitor_ref})
+
+            {:reply, {:ok, conversation_id}, %{state | conversations: conversations}}
+
+          {:error, reason} ->
+            {:reply, {:error, {:start_conversation_failed, reason}}, state}
+        end
+    end
+  end
+
+  def handle_call({:stop_conversation, conversation_id}, _from, state) do
+    case Map.fetch(state.conversations, conversation_id) do
+      {:ok, %{pid: pid, monitor_ref: monitor_ref}} ->
+        _ = ConversationSupervisor.stop_conversation(state.conversation_supervisor, pid)
+        :ok = ConversationRegistry.delete(state.conversation_registry, conversation_id)
+        Process.demonitor(monitor_ref, [:flush])
+
+        conversations = Map.delete(state.conversations, conversation_id)
+        {:reply, :ok, %{state | conversations: conversations}}
+
+      :error ->
+        {:reply, {:error, {:conversation_not_found, conversation_id}}, state}
+    end
+  end
+
+  def handle_call({:send_event, conversation_id, event}, _from, state) do
+    with {:ok, pid} <- fetch_conversation_pid(state, conversation_id) do
+      :ok = JidoCodeServer.Conversation.Server.ingest_event(pid, event)
+      {:reply, :ok, state}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:get_projection, conversation_id, key}, _from, state) do
+    with {:ok, pid} <- fetch_conversation_pid(state, conversation_id) do
+      {:reply, JidoCodeServer.Conversation.Server.get_projection(pid, key), state}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call(:list_tools, _from, state) do
+    {:reply, [], state}
+  end
+
+  def handle_call(:reload_assets, _from, state) do
+    {:reply, :ok, state}
+  end
+
+  def handle_call(:summary, _from, state) do
+    summary = %{
+      project_id: state.project_id,
+      root_path: state.root_path,
+      data_dir: state.data_dir,
+      layout: state.layout,
+      conversation_count: map_size(state.conversations)
+    }
+
+    {:reply, summary, state}
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
+    {conversation_id, conversations} = pop_by_monitor_ref(state.conversations, ref, pid)
+
+    if conversation_id do
+      :ok = ConversationRegistry.delete(state.conversation_registry, conversation_id)
+      {:noreply, %{state | conversations: conversations}}
+    else
+      {:noreply, state}
+    end
+  end
+
+  defp fetch_conversation_pid(state, conversation_id) do
+    case ConversationRegistry.fetch(state.conversation_registry, conversation_id) do
+      {:ok, pid} when is_pid(pid) ->
+        if Process.alive?(pid) do
+          {:ok, pid}
+        else
+          :ok = ConversationRegistry.delete(state.conversation_registry, conversation_id)
+          {:error, {:conversation_not_found, conversation_id}}
+        end
+
+      _ ->
+        {:error, {:conversation_not_found, conversation_id}}
+    end
+  end
+
+  defp pop_by_monitor_ref(conversations, ref, pid) do
+    Enum.reduce(conversations, {nil, conversations}, fn {conversation_id, info}, {found_id, acc} ->
+      cond do
+        found_id ->
+          {found_id, acc}
+
+        info.monitor_ref == ref or info.pid == pid ->
+          {conversation_id, Map.delete(acc, conversation_id)}
+
+        true ->
+          {nil, acc}
+      end
+    end)
   end
 end

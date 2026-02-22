@@ -56,6 +56,12 @@ defmodule JidoCodeServer.EngineTest do
 
     assert {:error, {:invalid_data_dir, :expected_non_empty_string}} =
              JidoCodeServer.start_project(root, data_dir: "")
+
+    assert {:error, {:invalid_data_dir, :must_be_relative}} =
+             JidoCodeServer.start_project(root, data_dir: "/tmp/jido")
+
+    assert {:error, {:invalid_data_dir, :must_not_traverse}} =
+             JidoCodeServer.start_project(root, data_dir: "../jido")
   end
 
   test "stop_project returns not found error for unknown project" do
