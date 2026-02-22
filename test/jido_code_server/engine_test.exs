@@ -45,7 +45,10 @@ defmodule JidoCodeServer.EngineTest do
 
   test "rejects invalid root paths" do
     missing_path =
-      Path.join(System.tmp_dir!(), "jido_code_server_missing_#{System.unique_integer([:positive])}")
+      Path.join(
+        System.tmp_dir!(),
+        "jido_code_server_missing_#{System.unique_integer([:positive])}"
+      )
 
     assert {:error, {:invalid_root_path, _reason}} = JidoCodeServer.start_project(missing_path)
   end
@@ -56,6 +59,12 @@ defmodule JidoCodeServer.EngineTest do
 
     assert {:error, {:invalid_data_dir, :expected_non_empty_string}} =
              JidoCodeServer.start_project(root, data_dir: "")
+
+    assert {:error, {:invalid_data_dir, :must_be_relative}} =
+             JidoCodeServer.start_project(root, data_dir: "/tmp/jido")
+
+    assert {:error, {:invalid_data_dir, :must_not_traverse}} =
+             JidoCodeServer.start_project(root, data_dir: "../jido")
   end
 
   test "stop_project returns not found error for unknown project" do

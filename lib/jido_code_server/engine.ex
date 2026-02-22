@@ -2,8 +2,9 @@ defmodule JidoCodeServer.Engine do
   @moduledoc """
   Internal multi-project runtime API.
 
-  Phase 1 implements engine-level project lifecycle operations:
-  start, stop, lookup, and list.
+  Implemented baseline:
+  - engine-level project lifecycle operations
+  - project-scoped conversation shell routing through `Project.Server`
   """
 
   alias JidoCodeServer.Config
@@ -34,9 +35,9 @@ defmodule JidoCodeServer.Engine do
 
   @spec stop_project(project_id()) :: :ok | {:error, term()}
   def stop_project(project_id) do
-    with {:ok, pid} <- whereis_project(project_id),
-         :ok <- terminate_project(pid) do
-      :ok
+    case whereis_project(project_id) do
+      {:ok, pid} -> terminate_project(pid)
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -47,7 +48,11 @@ defmodule JidoCodeServer.Engine do
   def whereis_project(project_id) when is_binary(project_id) do
     case ProjectRegistry.lookup(project_id) do
       [{pid, _value}] when is_pid(pid) ->
-        {:ok, pid}
+        if Process.alive?(pid) do
+          {:ok, pid}
+        else
+          {:error, {:project_not_found, project_id}}
+        end
 
       _ ->
         {:error, {:project_not_found, project_id}}
@@ -65,37 +70,37 @@ defmodule JidoCodeServer.Engine do
   end
 
   @spec start_conversation(project_id(), keyword()) :: {:ok, conversation_id()} | {:error, term()}
-  def start_conversation(project_id, _opts \\ []) do
-    with_project(project_id, fn _pid -> {:error, :not_implemented} end)
+  def start_conversation(project_id, opts \\ []) do
+    with_project(project_id, fn pid -> Project.start_conversation(pid, opts) end)
   end
 
   @spec stop_conversation(project_id(), conversation_id()) :: :ok | {:error, term()}
-  def stop_conversation(project_id, _conversation_id) do
-    with_project(project_id, fn _pid -> {:error, :not_implemented} end)
+  def stop_conversation(project_id, conversation_id) do
+    with_project(project_id, fn pid -> Project.stop_conversation(pid, conversation_id) end)
   end
 
   @spec send_event(project_id(), conversation_id(), map()) :: :ok | {:error, term()}
-  def send_event(project_id, _conversation_id, _event) do
-    with_project(project_id, fn _pid -> {:error, :not_implemented} end)
+  def send_event(project_id, conversation_id, event) do
+    with_project(project_id, fn pid -> Project.send_event(pid, conversation_id, event) end)
   end
 
   @spec get_projection(project_id(), conversation_id(), atom() | String.t()) ::
           {:ok, term()} | {:error, term()}
-  def get_projection(project_id, _conversation_id, _key) do
-    with_project(project_id, fn _pid -> {:error, :not_implemented} end)
+  def get_projection(project_id, conversation_id, key) do
+    with_project(project_id, fn pid -> Project.get_projection(pid, conversation_id, key) end)
   end
 
   @spec list_tools(project_id()) :: list(map())
   def list_tools(project_id) do
     case whereis_project(project_id) do
-      {:ok, _pid} -> []
+      {:ok, pid} -> Project.list_tools(pid)
       {:error, _reason} -> []
     end
   end
 
   @spec reload_assets(project_id()) :: :ok | {:error, term()}
   def reload_assets(project_id) do
-    with_project(project_id, fn _pid -> {:error, :not_implemented} end)
+    with_project(project_id, fn pid -> Project.reload_assets(pid) end)
   end
 
   defp resolve_project_id(opts) do
@@ -134,10 +139,21 @@ defmodule JidoCodeServer.Engine do
   defp resolve_data_dir(opts) do
     data_dir = Keyword.get(opts, :data_dir, Config.default_data_dir())
 
-    if is_binary(data_dir) and String.trim(data_dir) != "" do
-      {:ok, data_dir}
-    else
-      {:error, {:invalid_data_dir, :expected_non_empty_string}}
+    cond do
+      not is_binary(data_dir) ->
+        {:error, {:invalid_data_dir, :expected_non_empty_string}}
+
+      String.trim(data_dir) == "" ->
+        {:error, {:invalid_data_dir, :expected_non_empty_string}}
+
+      Path.type(data_dir) == :absolute ->
+        {:error, {:invalid_data_dir, :must_be_relative}}
+
+      Enum.member?(Path.split(data_dir), "..") ->
+        {:error, {:invalid_data_dir, :must_not_traverse}}
+
+      true ->
+        {:ok, data_dir}
     end
   end
 
@@ -169,10 +185,22 @@ defmodule JidoCodeServer.Engine do
   end
 
   defp terminate_project(pid) when is_pid(pid) do
+    ref = Process.monitor(pid)
+
     case ProjectSupervisor.stop_project(pid) do
-      :ok -> :ok
+      :ok -> await_project_exit(pid, ref)
       {:error, :not_found} -> :ok
-      {:error, reason} -> {:error, {:stop_project_failed, reason}}
+    end
+  end
+
+  defp await_project_exit(pid, ref) do
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _reason} ->
+        :ok
+    after
+      6_000 ->
+        Process.demonitor(ref, [:flush])
+        :ok
     end
   end
 

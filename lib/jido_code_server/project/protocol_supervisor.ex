@@ -7,7 +7,10 @@ defmodule JidoCodeServer.Project.ProtocolSupervisor do
 
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts \\ []) do
-    Supervisor.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
+    case Keyword.get(opts, :name) do
+      nil -> Supervisor.start_link(__MODULE__, opts)
+      name -> Supervisor.start_link(__MODULE__, opts, name: name)
+    end
   end
 
   @impl true

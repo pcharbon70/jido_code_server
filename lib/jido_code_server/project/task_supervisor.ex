@@ -5,6 +5,6 @@ defmodule JidoCodeServer.Project.TaskSupervisor do
 
   @spec child_spec(keyword()) :: Supervisor.child_spec()
   def child_spec(opts \\ []) do
-    Task.Supervisor.child_spec(Keyword.merge([name: __MODULE__], opts))
+    Task.Supervisor.child_spec(opts)
   end
 end

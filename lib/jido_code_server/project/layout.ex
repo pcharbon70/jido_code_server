@@ -20,16 +20,68 @@ defmodule JidoCodeServer.Project.Layout do
     }
   end
 
-  @spec ensure_layout!(String.t(), String.t()) :: map()
-  def ensure_layout!(root_path, data_dir) do
+  @spec canonical_root(String.t()) :: {:ok, String.t()} | {:error, {:invalid_root_path, term()}}
+  def canonical_root(root_path) when is_binary(root_path) do
+    expanded = Path.expand(root_path)
+
+    case File.stat(expanded) do
+      {:ok, %File.Stat{type: :directory}} ->
+        {:ok, expanded}
+
+      {:ok, _other} ->
+        {:error, {:invalid_root_path, :not_directory}}
+
+      {:error, reason} ->
+        {:error, {:invalid_root_path, reason}}
+    end
+  end
+
+  def canonical_root(_root_path), do: {:error, {:invalid_root_path, :expected_string}}
+
+  @spec ensure_layout(String.t(), String.t()) ::
+          {:ok, map()} | {:error, {:layout_create_failed, term()}}
+  def ensure_layout(root_path, data_dir) do
     layout = paths(root_path, data_dir)
 
-    File.mkdir_p!(layout.data)
+    case mkdir(layout.data) do
+      :ok ->
+        case ensure_required_dirs(layout.data) do
+          :ok -> {:ok, layout}
+          {:error, reason} -> {:error, {:layout_create_failed, reason}}
+        end
 
-    Enum.each(@required_dirs, fn dir ->
-      File.mkdir_p!(Path.join(layout.data, dir))
+      {:error, reason} ->
+        {:error, {:layout_create_failed, reason}}
+    end
+  end
+
+  @spec ensure_layout!(String.t(), String.t()) :: map()
+  def ensure_layout!(root_path, data_dir) do
+    case ensure_layout(root_path, data_dir) do
+      {:ok, layout} ->
+        layout
+
+      {:error, reason} ->
+        raise ArgumentError, "failed to create project layout: #{inspect(reason)}"
+    end
+  end
+
+  defp mkdir(path) do
+    case File.mkdir_p(path) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {path, reason}}
+    end
+  end
+
+  defp ensure_required_dirs(data_root) do
+    Enum.reduce_while(@required_dirs, :ok, fn dir, :ok ->
+      data_root
+      |> Path.join(dir)
+      |> mkdir()
+      |> case do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
     end)
-
-    layout
   end
 end

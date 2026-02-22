@@ -3,12 +3,14 @@ defmodule JidoCodeServer.TestSupport.TempProject do
   Helpers for creating temporary project roots with `.jido` layout during tests.
   """
 
+  alias JidoCodeServer.Project.Layout
+
   @spec create!(keyword()) :: String.t()
   def create!(opts \\ []) do
     root = Path.join(System.tmp_dir!(), "jido_code_server_#{System.unique_integer([:positive])}")
     data_dir = Keyword.get(opts, :data_dir, ".jido")
 
-    layout = JidoCodeServer.Project.Layout.ensure_layout!(root, data_dir)
+    layout = Layout.ensure_layout!(root, data_dir)
 
     Keyword.get(opts, :with_seed_files, false)
     |> maybe_seed(layout)
@@ -18,13 +20,18 @@ defmodule JidoCodeServer.TestSupport.TempProject do
 
   @spec copy_fixture!(String.t(), keyword()) :: String.t()
   def copy_fixture!(fixture_name, opts \\ []) do
-    root = Path.join(System.tmp_dir!(), "jido_code_server_fixture_#{System.unique_integer([:positive])}")
+    root =
+      Path.join(
+        System.tmp_dir!(),
+        "jido_code_server_fixture_#{System.unique_integer([:positive])}"
+      )
+
     fixture_root = fixture_root(fixture_name)
 
     File.cp_r!(fixture_root, root)
 
     if Keyword.get(opts, :ensure_layout, true) do
-      _ = JidoCodeServer.Project.Layout.ensure_layout!(root, ".jido")
+      _ = Layout.ensure_layout!(root, ".jido")
     end
 
     root
