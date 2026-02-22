@@ -56,7 +56,14 @@ defmodule JidoCodeServer.Conversation.Server do
       policy: Keyword.get(opts, :policy),
       task_supervisor: Keyword.get(opts, :task_supervisor),
       tool_timeout_ms: Keyword.get(opts, :tool_timeout_ms),
-      tool_max_concurrency: Keyword.get(opts, :tool_max_concurrency)
+      tool_max_concurrency: Keyword.get(opts, :tool_max_concurrency),
+      llm_timeout_ms: Keyword.get(opts, :llm_timeout_ms),
+      orchestration_enabled: Keyword.get(opts, :orchestration_enabled, false),
+      llm_adapter: Keyword.get(opts, :llm_adapter),
+      llm_model: Keyword.get(opts, :llm_model),
+      llm_system_prompt: Keyword.get(opts, :llm_system_prompt),
+      llm_temperature: Keyword.get(opts, :llm_temperature),
+      llm_max_tokens: Keyword.get(opts, :llm_max_tokens)
     }
 
     state = %{

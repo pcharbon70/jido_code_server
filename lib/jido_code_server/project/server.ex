@@ -117,6 +117,7 @@ defmodule JidoCodeServer.Project.Server do
     task_supervisor = Naming.via(project_id, :task_supervisor)
     conversation_registry = Keyword.fetch!(opts, :conversation_registry)
     conversation_supervisor = Keyword.fetch!(opts, :conversation_supervisor)
+    runtime_opts = Keyword.get(opts, :runtime_opts, [])
 
     with {:ok, canonical_root} <- Layout.canonical_root(root_path),
          {:ok, layout} <- Layout.ensure_layout(canonical_root, data_dir),
@@ -139,6 +140,7 @@ defmodule JidoCodeServer.Project.Server do
          conversation_registry: conversation_registry,
          conversation_supervisor: conversation_supervisor,
          conversations: %{},
+         runtime_opts: runtime_opts,
          opts: opts
        }}
     else
@@ -180,7 +182,14 @@ defmodule JidoCodeServer.Project.Server do
           policy: state.policy,
           task_supervisor: state.task_supervisor,
           tool_timeout_ms: Config.tool_timeout_ms(),
-          tool_max_concurrency: Config.tool_max_concurrency()
+          tool_max_concurrency: Config.tool_max_concurrency(),
+          llm_timeout_ms: Config.llm_timeout_ms(),
+          orchestration_enabled: conversation_orchestration_enabled?(state.runtime_opts),
+          llm_adapter: Keyword.get(state.runtime_opts, :llm_adapter),
+          llm_model: Keyword.get(state.runtime_opts, :llm_model),
+          llm_system_prompt: Keyword.get(state.runtime_opts, :llm_system_prompt),
+          llm_temperature: Keyword.get(state.runtime_opts, :llm_temperature),
+          llm_max_tokens: Keyword.get(state.runtime_opts, :llm_max_tokens)
         ]
 
         case ConversationSupervisor.start_conversation(
@@ -373,4 +382,10 @@ defmodule JidoCodeServer.Project.Server do
       tool_max_concurrency: Config.tool_max_concurrency()
     }
   end
+
+  defp conversation_orchestration_enabled?(runtime_opts) when is_list(runtime_opts) do
+    Keyword.get(runtime_opts, :conversation_orchestration, false) == true
+  end
+
+  defp conversation_orchestration_enabled?(_runtime_opts), do: false
 end

@@ -117,6 +117,7 @@ defmodule JidoCodeServer.Engine.Project do
     ]
 
     runtime_opts = Keyword.get(opts, :opts, [])
+    supervisor_opts = Keyword.put(supervisor_opts, :runtime_opts, runtime_opts)
 
     supervisor_opts =
       case Keyword.take(runtime_opts, [:allow_tools, :deny_tools]) do
