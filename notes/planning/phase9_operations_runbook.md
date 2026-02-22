@@ -34,6 +34,8 @@
   - expected for unauthorized calls; alert only on sudden volume spikes (>3x baseline).
 - `security.sandbox_violation`:
   - page immediately; indicates outside-root path attempt.
+- `security.sandbox_exception_used`:
+  - warning by default; validate reason code and change ticket context for each occurrence.
 - `security.sensitive_path_denied`:
   - page for unexpected access to denylisted sensitive files (investigate credential handling and tool prompts).
 - `security.sensitive_artifact_detected`:
@@ -58,6 +60,7 @@
 3. Classify incident:
    - policy denial spike
    - sandbox violation
+   - sandbox exception usage anomaly
    - repeated timeout failures
    - loader/watcher degradation
 4. Apply containment:
