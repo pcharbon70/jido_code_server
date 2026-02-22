@@ -31,6 +31,7 @@ defmodule JidoCodeServer.Project.Supervisor do
     protocol_supervisor = Naming.via(project_id, :protocol_supervisor)
     policy_opts = Keyword.get(opts, :policy, [])
     runtime_opts = Keyword.get(opts, :runtime_opts, [])
+    watcher_opts = Keyword.get(opts, :watcher_opts, [])
 
     children = [
       {JidoCodeServer.Project.ConversationRegistry, name: conversation_registry},
@@ -55,7 +56,19 @@ defmodule JidoCodeServer.Project.Supervisor do
     children =
       if Keyword.get(opts, :watcher, false) do
         watcher = Naming.via(project_id, :watcher)
-        children ++ [{JidoCodeServer.Project.Watcher, [name: watcher, project_id: project_id]}]
+
+        children ++
+          [
+            {JidoCodeServer.Project.Watcher,
+             [
+               name: watcher,
+               project_id: project_id,
+               root_path: root_path,
+               data_dir: data_dir,
+               asset_store: asset_store,
+               debounce_ms: Keyword.get(watcher_opts, :watcher_debounce_ms)
+             ]}
+          ]
       else
         children
       end

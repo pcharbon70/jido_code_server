@@ -14,6 +14,7 @@ defmodule JidoCodeServerTest do
     assert JidoCodeServer.Config.tool_timeout_ms() == 30_000
     assert JidoCodeServer.Config.llm_timeout_ms() == 120_000
     assert JidoCodeServer.Config.tool_max_concurrency() == 8
+    assert JidoCodeServer.Config.watcher_debounce_ms() == 250
   end
 
   test "temp project helper creates expected layout" do

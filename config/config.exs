@@ -5,4 +5,5 @@ config :jido_code_server,
   default_data_dir: ".jido",
   tool_timeout_ms: 30_000,
   llm_timeout_ms: 120_000,
-  tool_max_concurrency: 8
+  tool_max_concurrency: 8,
+  watcher_debounce_ms: 250
