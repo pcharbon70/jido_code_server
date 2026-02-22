@@ -4,9 +4,10 @@ Elixir runtime scaffold for the JidoCodeServer project.
 
 ## Status
 
-Phase 0 bootstrap is in place:
+Implemented phases:
 
 - OTP application entrypoint and top-level engine supervisor scaffold
+- Engine-level multi-project lifecycle (`start_project`, `stop_project`, `whereis_project`, `list_projects`)
 - Runtime namespace skeleton (`Engine`, `Project`, `Conversation`, `Protocol`, `Telemetry`, `Types`)
 - Core dependency wiring for Jido ecosystem libraries
 - Baseline test fixtures and fake adapters for upcoming phase work
