@@ -29,4 +29,9 @@ defmodule JidoCodeServer.Config do
   def tool_max_concurrency do
     Application.get_env(@app, :tool_max_concurrency, 8)
   end
+
+  @spec strict_asset_loading() :: boolean()
+  def strict_asset_loading do
+    Application.get_env(@app, :strict_asset_loading, false)
+  end
 end

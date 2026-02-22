@@ -103,6 +103,33 @@ defmodule JidoCodeServer.Engine do
     with_project(project_id, fn pid -> Project.reload_assets(pid) end)
   end
 
+  @spec list_assets(project_id(), atom() | String.t()) :: [map()]
+  def list_assets(project_id, type) do
+    case whereis_project(project_id) do
+      {:ok, pid} -> Project.list_assets(pid, type)
+      {:error, _reason} -> []
+    end
+  end
+
+  @spec get_asset(project_id(), atom() | String.t(), atom() | String.t()) ::
+          {:ok, term()} | :error | {:error, term()}
+  def get_asset(project_id, type, key) do
+    with_project(project_id, fn pid -> Project.get_asset(pid, type, key) end)
+  end
+
+  @spec search_assets(project_id(), atom() | String.t(), String.t()) :: [map()]
+  def search_assets(project_id, type, query) do
+    case whereis_project(project_id) do
+      {:ok, pid} -> Project.search_assets(pid, type, query)
+      {:error, _reason} -> []
+    end
+  end
+
+  @spec assets_diagnostics(project_id()) :: map() | {:error, term()}
+  def assets_diagnostics(project_id) do
+    with_project(project_id, fn pid -> Project.assets_diagnostics(pid) end)
+  end
+
   defp resolve_project_id(opts) do
     case Keyword.get(opts, :project_id) do
       nil ->

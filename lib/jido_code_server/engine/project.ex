@@ -67,6 +67,26 @@ defmodule JidoCodeServer.Engine.Project do
     GenServer.call(pid, :reload_assets)
   end
 
+  @spec list_assets(pid(), atom() | String.t()) :: [map()]
+  def list_assets(pid, type) when is_pid(pid) do
+    GenServer.call(pid, {:list_assets, type})
+  end
+
+  @spec get_asset(pid(), atom() | String.t(), atom() | String.t()) :: {:ok, term()} | :error
+  def get_asset(pid, type, key) when is_pid(pid) do
+    GenServer.call(pid, {:get_asset, type, key})
+  end
+
+  @spec search_assets(pid(), atom() | String.t(), String.t()) :: [map()]
+  def search_assets(pid, type, query) when is_pid(pid) and is_binary(query) do
+    GenServer.call(pid, {:search_assets, type, query})
+  end
+
+  @spec assets_diagnostics(pid()) :: map()
+  def assets_diagnostics(pid) when is_pid(pid) do
+    GenServer.call(pid, :assets_diagnostics)
+  end
+
   @impl true
   def init(opts) do
     project_id = Keyword.fetch!(opts, :project_id)
@@ -183,6 +203,38 @@ defmodule JidoCodeServer.Engine.Project do
     reply =
       delegate(fn -> Server.reload_assets(state.project_server) end)
       |> unwrap_delegate()
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:list_assets, type}, _from, state) do
+    reply =
+      delegate(fn -> Server.list_assets(state.project_server, type) end)
+      |> unwrap_delegate([])
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:get_asset, type, key}, _from, state) do
+    reply =
+      delegate(fn -> Server.get_asset(state.project_server, type, key) end)
+      |> unwrap_delegate(:error)
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:search_assets, type, query}, _from, state) do
+    reply =
+      delegate(fn -> Server.search_assets(state.project_server, type, query) end)
+      |> unwrap_delegate([])
+
+    {:reply, reply, state}
+  end
+
+  def handle_call(:assets_diagnostics, _from, state) do
+    reply =
+      delegate(fn -> Server.assets_diagnostics(state.project_server) end)
+      |> unwrap_delegate(%{})
 
     {:reply, reply, state}
   end

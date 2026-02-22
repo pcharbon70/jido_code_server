@@ -39,4 +39,17 @@ defmodule JidoCodeServer do
 
   @spec reload_assets(project_id()) :: :ok | {:error, term()}
   def reload_assets(project_id), do: Engine.reload_assets(project_id)
+
+  @spec list_assets(project_id(), atom() | String.t()) :: list(map())
+  def list_assets(project_id, type), do: Engine.list_assets(project_id, type)
+
+  @spec get_asset(project_id(), atom() | String.t(), atom() | String.t()) ::
+          {:ok, term()} | :error | {:error, term()}
+  def get_asset(project_id, type, key), do: Engine.get_asset(project_id, type, key)
+
+  @spec search_assets(project_id(), atom() | String.t(), String.t()) :: list(map())
+  def search_assets(project_id, type, query), do: Engine.search_assets(project_id, type, query)
+
+  @spec assets_diagnostics(project_id()) :: map() | {:error, term()}
+  def assets_diagnostics(project_id), do: Engine.assets_diagnostics(project_id)
 end
