@@ -1,6 +1,6 @@
 defmodule JidoCodeServer.Engine.ProjectSupervisor do
   @moduledoc """
-  Dynamic supervisor placeholder for project instances.
+  Dynamic supervisor for project runtime processes.
   """
 
   use DynamicSupervisor
@@ -13,5 +13,25 @@ defmodule JidoCodeServer.Engine.ProjectSupervisor do
   @impl true
   def init(_opts) do
     DynamicSupervisor.init(strategy: :one_for_one)
+  end
+
+  @spec start_project(keyword()) :: DynamicSupervisor.on_start_child()
+  def start_project(opts) do
+    DynamicSupervisor.start_child(__MODULE__, {JidoCodeServer.Engine.Project, opts})
+  end
+
+  @spec stop_project(pid()) :: :ok | {:error, :not_found | term()}
+  def stop_project(pid) when is_pid(pid) do
+    DynamicSupervisor.terminate_child(__MODULE__, pid)
+  end
+
+  @spec list_project_pids() :: [pid()]
+  def list_project_pids do
+    __MODULE__
+    |> DynamicSupervisor.which_children()
+    |> Enum.flat_map(fn
+      {_id, pid, _type, _modules} when is_pid(pid) -> [pid]
+      _other -> []
+    end)
   end
 end
