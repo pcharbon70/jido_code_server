@@ -11,9 +11,11 @@ defmodule JidoCodeServer.Project.Server do
   use GenServer
 
   alias JidoCodeServer.Conversation.Server, as: ConversationServer
+  alias JidoCodeServer.Project.AssetStore
   alias JidoCodeServer.Project.ConversationRegistry
   alias JidoCodeServer.Project.ConversationSupervisor
   alias JidoCodeServer.Project.Layout
+  alias JidoCodeServer.Project.Naming
   alias JidoCodeServer.Telemetry
 
   @type conversation_id :: String.t()
@@ -58,6 +60,27 @@ defmodule JidoCodeServer.Project.Server do
     GenServer.call(server, :reload_assets)
   end
 
+  @spec list_assets(GenServer.server(), atom() | String.t()) :: [map()]
+  def list_assets(server, type) do
+    GenServer.call(server, {:list_assets, type})
+  end
+
+  @spec get_asset(GenServer.server(), atom() | String.t(), atom() | String.t()) ::
+          {:ok, term()} | :error
+  def get_asset(server, type, key) do
+    GenServer.call(server, {:get_asset, type, key})
+  end
+
+  @spec search_assets(GenServer.server(), atom() | String.t(), String.t()) :: [map()]
+  def search_assets(server, type, query) when is_binary(query) do
+    GenServer.call(server, {:search_assets, type, query})
+  end
+
+  @spec assets_diagnostics(GenServer.server()) :: map()
+  def assets_diagnostics(server) do
+    GenServer.call(server, :assets_diagnostics)
+  end
+
   @spec summary(GenServer.server()) :: map()
   def summary(server) do
     GenServer.call(server, :summary)
@@ -68,11 +91,13 @@ defmodule JidoCodeServer.Project.Server do
     project_id = Keyword.fetch!(opts, :project_id)
     root_path = Keyword.fetch!(opts, :root_path)
     data_dir = Keyword.fetch!(opts, :data_dir)
+    asset_store = Naming.via(project_id, :asset_store)
     conversation_registry = Keyword.fetch!(opts, :conversation_registry)
     conversation_supervisor = Keyword.fetch!(opts, :conversation_supervisor)
 
     with {:ok, canonical_root} <- Layout.canonical_root(root_path),
-         {:ok, layout} <- Layout.ensure_layout(canonical_root, data_dir) do
+         {:ok, layout} <- Layout.ensure_layout(canonical_root, data_dir),
+         :ok <- AssetStore.load(asset_store, layout) do
       Telemetry.emit("project.started", %{
         project_id: project_id,
         root_path: canonical_root,
@@ -85,6 +110,7 @@ defmodule JidoCodeServer.Project.Server do
          root_path: canonical_root,
          data_dir: data_dir,
          layout: layout,
+         asset_store: asset_store,
          conversation_registry: conversation_registry,
          conversation_supervisor: conversation_supervisor,
          conversations: %{},
@@ -124,7 +150,8 @@ defmodule JidoCodeServer.Project.Server do
       :error ->
         conversation_opts = [
           project_id: state.project_id,
-          conversation_id: conversation_id
+          conversation_id: conversation_id,
+          asset_store: state.asset_store
         ]
 
         case ConversationSupervisor.start_conversation(
@@ -187,16 +214,35 @@ defmodule JidoCodeServer.Project.Server do
   end
 
   def handle_call(:reload_assets, _from, state) do
-    {:reply, :ok, state}
+    {:reply, AssetStore.reload(state.asset_store), state}
+  end
+
+  def handle_call({:list_assets, type}, _from, state) do
+    {:reply, AssetStore.list(state.asset_store, type), state}
+  end
+
+  def handle_call({:get_asset, type, key}, _from, state) do
+    {:reply, AssetStore.get(state.asset_store, type, key), state}
+  end
+
+  def handle_call({:search_assets, type, query}, _from, state) do
+    {:reply, AssetStore.search(state.asset_store, type, query), state}
+  end
+
+  def handle_call(:assets_diagnostics, _from, state) do
+    {:reply, AssetStore.diagnostics(state.asset_store), state}
   end
 
   def handle_call(:summary, _from, state) do
+    diagnostics = AssetStore.diagnostics(state.asset_store)
+
     summary = %{
       project_id: state.project_id,
       root_path: state.root_path,
       data_dir: state.data_dir,
       layout: state.layout,
-      conversation_count: map_size(state.conversations)
+      conversation_count: map_size(state.conversations),
+      asset_versions: diagnostics.versions
     }
 
     {:reply, summary, state}
