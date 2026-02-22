@@ -369,6 +369,57 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
     assert event_count(diagnostics, "security.network_denied") >= 1
   end
 
+  test "network egress allow denies high-risk protocols by default" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-network-protocol-deny",
+               network_egress_policy: :allow,
+               network_allowlist: ["example.com"]
+             )
+
+    assert {:error, %{status: :error, reason: :network_protocol_denied}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{
+                 "path" => ".jido/commands/example_command.md",
+                 "url" => "ftp://api.example.com/v1/status"
+               },
+               meta: %{"conversation_id" => "phase9-network-c3"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert event_count(diagnostics, "security.network_denied") >= 1
+  end
+
+  test "network allowed schemes option permits explicitly allowed protocol" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-network-protocol-allow",
+               network_egress_policy: :allow,
+               network_allowlist: ["example.com"],
+               network_allowed_schemes: ["https", "ftp"]
+             )
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{
+                 "path" => ".jido/commands/example_command.md",
+                 "url" => "ftp://api.example.com/v1/status"
+               },
+               meta: %{"conversation_id" => "phase9-network-c4"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert diagnostics.policy.network_allowed_schemes == ["ftp", "https"]
+  end
+
   test "telemetry redacts common secret patterns before persistence" do
     entry = emit_redaction_probe()
     assert entry

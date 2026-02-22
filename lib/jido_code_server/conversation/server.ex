@@ -69,6 +69,7 @@ defmodule Jido.Code.Server.Conversation.Server do
       tool_max_artifact_bytes: Keyword.get(opts, :tool_max_artifact_bytes),
       network_egress_policy: Keyword.get(opts, :network_egress_policy),
       network_allowlist: Keyword.get(opts, :network_allowlist),
+      network_allowed_schemes: Keyword.get(opts, :network_allowed_schemes),
       llm_timeout_ms: Keyword.get(opts, :llm_timeout_ms),
       orchestration_enabled: Keyword.get(opts, :orchestration_enabled, false),
       llm_adapter: Keyword.get(opts, :llm_adapter),

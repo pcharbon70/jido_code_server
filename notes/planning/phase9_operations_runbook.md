@@ -36,6 +36,7 @@
   - page immediately; indicates outside-root path attempt.
 - `security.network_denied`:
   - warning by default; page if repeated and unexpected for a project with enabled egress policy.
+  - includes endpoint-denied and protocol-denied (`network_protocol_denied`) policy outcomes.
 
 ### Asset lifecycle
 
