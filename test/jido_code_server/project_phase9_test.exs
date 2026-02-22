@@ -602,6 +602,33 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
     assert diagnostics.runtime_opts[:tool_max_output_bytes] == 64
   end
 
+  test "conversation-scoped concurrency quota blocks over-limit tool calls" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-conversation-cap",
+               tool_max_concurrency_per_conversation: 0
+             )
+
+    assert {:error, %{status: :error, reason: :conversation_max_concurrency_reached}} =
+             Runtime.run_tool(project_id, %{
+               name: "asset.list",
+               args: %{"type" => "skill"},
+               meta: %{"conversation_id" => "phase9-cap-c1"}
+             })
+
+    assert {:ok, %{status: :ok, tool: "asset.list"}} =
+             Runtime.run_tool(project_id, %{
+               name: "asset.list",
+               args: %{"type" => "skill"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert diagnostics.runtime_opts[:tool_max_concurrency_per_conversation] == 0
+  end
+
   test "asset reload captures loader parse failures without crashing project runtime" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
@@ -794,7 +821,9 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
       tool_timeout_alert_threshold: Keyword.get(opts, :tool_timeout_alert_threshold, 3),
       tool_max_output_bytes: Keyword.get(opts, :tool_max_output_bytes, 262_144),
       tool_max_artifact_bytes: Keyword.get(opts, :tool_max_artifact_bytes, 131_072),
-      tool_max_concurrency: Keyword.get(opts, :tool_max_concurrency, 8)
+      tool_max_concurrency: Keyword.get(opts, :tool_max_concurrency, 8),
+      tool_max_concurrency_per_conversation:
+        Keyword.get(opts, :tool_max_concurrency_per_conversation, 4)
     }
   end
 
