@@ -12,6 +12,7 @@
   - Bounded incident timeline extraction across conversation and telemetry streams
   - Explicit outside-root sandbox exceptions with reason-coded allowlisting and security telemetry
   - Conversation-scoped tool concurrency quotas
+  - Deterministic cancellation events for pending tool calls
 
 ## Implemented Controls
 
@@ -158,6 +159,17 @@
 - Runtime diagnostics include:
   - `runtime_opts[:tool_max_concurrency_per_conversation]`
 
+### 13. Deterministic pending-tool cancellation events
+
+- Conversation cancellation now emits deterministic tool cancellation events when pending calls exist:
+  - event type: `tool.cancelled`
+  - reason payload: `"conversation_cancelled"`
+- Correlation behavior:
+  - `tool.cancelled` events inherit correlation from the triggering `conversation.cancel` event.
+- State behavior:
+  - pending tool calls are cleared on `conversation.cancel`
+  - pending projection is consistent with emitted cancellation events (`pending_tool_calls == []` after cancel)
+
 ## Evidence (Automated Tests)
 
 - Added: `test/jido_code_server/project_phase9_test.exs`
@@ -172,6 +184,7 @@
   - sandbox violation security signal
   - allowlisted outside-root exception signal with reason code
   - conversation-scoped concurrency quota enforcement
+  - deterministic `tool.cancelled` events on conversation cancellation
   - sensitive path deny-by-default and explicit allowlist override
   - network deny-by-default and allowlist enforcement
   - protocol deny-by-default with explicit allow override

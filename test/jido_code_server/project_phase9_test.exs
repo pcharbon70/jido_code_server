@@ -337,6 +337,65 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
            end)
   end
 
+  test "conversation cancel emits deterministic tool.cancelled events for pending tool calls" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-conversation-cancel",
+               conversation_orchestration: true,
+               llm_adapter: :deterministic
+             )
+
+    assert {:ok, "phase9-cancel-c1"} =
+             Runtime.start_conversation(project_id, conversation_id: "phase9-cancel-c1")
+
+    assert :ok =
+             Runtime.send_event(project_id, "phase9-cancel-c1", %{
+               "type" => "conversation.cancel"
+             })
+
+    assert :ok =
+             Runtime.send_event(project_id, "phase9-cancel-c1", %{
+               "type" => "tool.requested",
+               "data" => %{
+                 "name" => "asset.list",
+                 "args" => %{"type" => "skill"}
+               }
+             })
+
+    assert {:ok, pending_before_cancel} =
+             Runtime.get_projection(project_id, "phase9-cancel-c1", :pending_tool_calls)
+
+    assert length(pending_before_cancel) == 1
+
+    correlation_id = "corr-phase9-cancel-c1"
+
+    assert :ok =
+             Runtime.send_event(project_id, "phase9-cancel-c1", %{
+               "type" => "conversation.cancel",
+               "meta" => %{"correlation_id" => correlation_id}
+             })
+
+    assert {:ok, timeline} = Runtime.get_projection(project_id, "phase9-cancel-c1", :timeline)
+
+    cancelled_event =
+      Enum.find(timeline, fn event ->
+        map_lookup(event, :type) == "tool.cancelled"
+      end)
+
+    assert cancelled_event
+    assert map_lookup(cancelled_event, :data) |> map_lookup(:name) == "asset.list"
+    assert map_lookup(cancelled_event, :data) |> map_lookup(:reason) == "conversation_cancelled"
+    assert map_lookup(cancelled_event, :meta) |> map_lookup(:correlation_id) == correlation_id
+
+    assert {:ok, []} = Runtime.get_projection(project_id, "phase9-cancel-c1", :pending_tool_calls)
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert event_count(diagnostics, "tool.cancelled") >= 1
+  end
+
   test "sensitive file paths are denied by default and emit security signal" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)

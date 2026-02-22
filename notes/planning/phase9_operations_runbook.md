@@ -24,6 +24,8 @@
 - `tool.failed`:
   - alert when sustained failure ratio exceeds 5% over 5 minutes.
   - if reason is `conversation_max_concurrency_reached`, treat as conversation-level saturation and tune `tool_max_concurrency_per_conversation` as needed.
+- `tool.cancelled`:
+  - expected after `conversation.cancel` when pending tool calls exist; alert only if cancellation volume is unexpectedly high.
 - `tool.timeout`:
   - investigate immediately if timeout count spikes > 10 in 5 minutes for any project.
 - `security.repeated_timeout_failures`:
