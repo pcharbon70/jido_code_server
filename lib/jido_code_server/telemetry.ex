@@ -6,6 +6,7 @@ defmodule Jido.Code.Server.Telemetry do
   @table __MODULE__
   @prefix [:jido_code_server]
   @max_recent_errors 25
+  @max_recent_events 200
   @redacted "[REDACTED]"
   @sensitive_key_fragments [
     "token",
@@ -47,6 +48,7 @@ defmodule Jido.Code.Server.Telemetry do
   def emit(name, payload) when is_binary(name) and is_map(payload) do
     ensure_table()
     sanitized_payload = sanitize_payload(payload)
+    project_key = normalize_project_id(sanitized_payload)
 
     metadata =
       sanitized_payload
@@ -54,8 +56,9 @@ defmodule Jido.Code.Server.Telemetry do
       |> Map.put_new(:emitted_at, DateTime.utc_now())
 
     :telemetry.execute(event_name(name), measurements(sanitized_payload), metadata)
-    increment_counter(normalize_project_id(sanitized_payload), name)
-    maybe_track_error(normalize_project_id(sanitized_payload), name, sanitized_payload)
+    increment_counter(project_key, name)
+    maybe_track_event(project_key, name, sanitized_payload, metadata.emitted_at)
+    maybe_track_error(project_key, name, sanitized_payload, metadata.emitted_at)
     :ok
   rescue
     _error ->
@@ -84,11 +87,18 @@ defmodule Jido.Code.Server.Telemetry do
         _ -> []
       end
 
+    recent_events =
+      case :ets.lookup(@table, {:recent_events, project_key}) do
+        [{{:recent_events, ^project_key}, events}] when is_list(events) -> events
+        _ -> []
+      end
+
     %{
       project_id: if(project_key == :global, do: nil, else: project_key),
       total_events: counters |> Map.values() |> Enum.sum(),
       event_counts: counters,
-      recent_errors: recent_errors
+      recent_errors: recent_errors,
+      recent_events: recent_events
     }
   end
 
@@ -150,13 +160,15 @@ defmodule Jido.Code.Server.Telemetry do
     end
   end
 
-  defp maybe_track_error(project_key, name, payload) do
+  defp maybe_track_error(project_key, name, payload, emitted_at) do
     if error_event?(name, payload) do
       entry = %{
         event: name,
+        conversation_id: extract_conversation_id(payload),
+        correlation_id: extract_correlation_id(payload),
         reason: Map.get(payload, :reason, Map.get(payload, "reason")),
         error: Map.get(payload, :error, Map.get(payload, "error")),
-        at: DateTime.utc_now()
+        at: emitted_at
       }
 
       errors =
@@ -174,10 +186,45 @@ defmodule Jido.Code.Server.Telemetry do
     _ -> :ok
   end
 
+  defp maybe_track_event(project_key, name, payload, emitted_at) do
+    entry = %{
+      event: name,
+      event_type: Map.get(payload, :event_type, Map.get(payload, "event_type")),
+      project_id: Map.get(payload, :project_id, Map.get(payload, "project_id")),
+      conversation_id: extract_conversation_id(payload),
+      correlation_id: extract_correlation_id(payload),
+      tool: Map.get(payload, :tool, Map.get(payload, "tool")),
+      reason: Map.get(payload, :reason, Map.get(payload, "reason")),
+      error: Map.get(payload, :error, Map.get(payload, "error")),
+      at: emitted_at
+    }
+
+    events =
+      case :ets.lookup(@table, {:recent_events, project_key}) do
+        [{{:recent_events, ^project_key}, existing}] when is_list(existing) -> existing
+        _ -> []
+      end
+
+    :ets.insert(
+      @table,
+      {{:recent_events, project_key}, [entry | events] |> Enum.take(@max_recent_events)}
+    )
+  rescue
+    _ -> :ok
+  end
+
   defp error_event?(name, payload) do
     String.ends_with?(name, ".failed") or
       Map.has_key?(payload, :error) or
       Map.has_key?(payload, "error")
+  end
+
+  defp extract_conversation_id(payload) when is_map(payload) do
+    Map.get(payload, :conversation_id) || Map.get(payload, "conversation_id")
+  end
+
+  defp extract_correlation_id(payload) when is_map(payload) do
+    Map.get(payload, :correlation_id) || Map.get(payload, "correlation_id")
   end
 
   defp ensure_table do

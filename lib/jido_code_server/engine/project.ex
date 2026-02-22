@@ -110,6 +110,12 @@ defmodule Jido.Code.Server.Engine.Project do
     GenServer.call(pid, {:conversation_diagnostics, conversation_id})
   end
 
+  @spec incident_timeline(pid(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  def incident_timeline(pid, conversation_id, opts \\ [])
+      when is_pid(pid) and is_binary(conversation_id) and is_list(opts) do
+    GenServer.call(pid, {:incident_timeline, conversation_id, opts})
+  end
+
   @spec diagnostics(pid()) :: map()
   def diagnostics(pid) when is_pid(pid) do
     GenServer.call(pid, :diagnostics)
@@ -317,6 +323,14 @@ defmodule Jido.Code.Server.Engine.Project do
   def handle_call({:conversation_diagnostics, conversation_id}, _from, state) do
     reply =
       delegate(fn -> Server.conversation_diagnostics(state.project_server, conversation_id) end)
+      |> unwrap_delegate({:error, :project_unavailable})
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:incident_timeline, conversation_id, opts}, _from, state) do
+    reply =
+      delegate(fn -> Server.incident_timeline(state.project_server, conversation_id, opts) end)
       |> unwrap_delegate({:error, :project_unavailable})
 
     {:reply, reply, state}

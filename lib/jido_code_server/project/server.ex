@@ -108,6 +108,12 @@ defmodule Jido.Code.Server.Project.Server do
     GenServer.call(server, {:conversation_diagnostics, conversation_id})
   end
 
+  @spec incident_timeline(GenServer.server(), conversation_id(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def incident_timeline(server, conversation_id, opts \\ []) when is_list(opts) do
+    GenServer.call(server, {:incident_timeline, conversation_id, opts})
+  end
+
   @spec diagnostics(GenServer.server()) :: map()
   def diagnostics(server) do
     GenServer.call(server, :diagnostics)
@@ -359,6 +365,11 @@ defmodule Jido.Code.Server.Project.Server do
     {:reply, reply, state}
   end
 
+  def handle_call({:incident_timeline, conversation_id, opts}, _from, state) do
+    reply = build_incident_timeline(state, conversation_id, opts)
+    {:reply, reply, state}
+  end
+
   def handle_call(:diagnostics, _from, state) do
     diagnostics = diagnostics_snapshot(state)
     {:reply, diagnostics, state}
@@ -456,6 +467,48 @@ defmodule Jido.Code.Server.Project.Server do
     }
   end
 
+  defp build_incident_timeline(state, conversation_id, opts)
+       when is_binary(conversation_id) and is_list(opts) do
+    with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
+         {:ok, timeline} <- ConversationServer.get_projection(pid, :timeline) do
+      limit = incident_timeline_limit(opts)
+      correlation_id = incident_timeline_correlation_id(opts)
+      telemetry = Telemetry.snapshot(state.project_id)
+
+      conversation_entries =
+        incident_conversation_entries(timeline, conversation_id, correlation_id)
+
+      telemetry_entries =
+        telemetry.recent_events
+        |> List.wrap()
+        |> incident_telemetry_entries(conversation_id, correlation_id)
+
+      total_entries = length(conversation_entries) + length(telemetry_entries)
+
+      entries =
+        conversation_entries
+        |> Kernel.++(telemetry_entries)
+        |> Enum.sort_by(&incident_sort_key/1)
+        |> take_recent(limit)
+
+      {:ok,
+       %{
+         project_id: state.project_id,
+         conversation_id: conversation_id,
+         correlation_id: correlation_id,
+         limit: limit,
+         total_entries: total_entries,
+         entries: entries
+       }}
+    else
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp build_incident_timeline(_state, _conversation_id, _opts),
+    do: {:error, :invalid_incident_timeline_request}
+
   defp runtime_opt(state, key, default) do
     Keyword.get(state.runtime_opts, key, default)
   end
@@ -503,6 +556,126 @@ defmodule Jido.Code.Server.Project.Server do
       conversations: conversation_snapshots
     }
   end
+
+  defp incident_timeline_limit(opts) do
+    case Keyword.get(opts, :limit, 100) do
+      value when is_integer(value) and value > 0 ->
+        min(value, 500)
+
+      _ ->
+        100
+    end
+  end
+
+  defp incident_timeline_correlation_id(opts) do
+    case Keyword.get(opts, :correlation_id) do
+      id when is_binary(id) ->
+        trimmed = String.trim(id)
+        if trimmed == "", do: nil, else: trimmed
+
+      _ ->
+        nil
+    end
+  end
+
+  defp incident_conversation_entries(timeline, conversation_id, correlation_id)
+       when is_list(timeline) do
+    timeline
+    |> Enum.map(fn event ->
+      event_correlation = incident_event_correlation(event)
+
+      %{
+        source: :conversation,
+        at: incident_event_at(event),
+        event: incident_map_get(event, :type),
+        conversation_id: conversation_id,
+        correlation_id: event_correlation,
+        payload: event
+      }
+    end)
+    |> maybe_filter_correlation(correlation_id)
+  end
+
+  defp incident_conversation_entries(_timeline, _conversation_id, _correlation_id), do: []
+
+  defp incident_telemetry_entries(events, conversation_id, correlation_id) when is_list(events) do
+    events
+    |> Enum.filter(fn event ->
+      event_conversation_id =
+        Map.get(event, :conversation_id) || Map.get(event, "conversation_id")
+
+      event_conversation_id == conversation_id
+    end)
+    |> Enum.map(fn event ->
+      event_correlation = Map.get(event, :correlation_id) || Map.get(event, "correlation_id")
+
+      %{
+        source: :telemetry,
+        at: Map.get(event, :at) || Map.get(event, "at"),
+        event: Map.get(event, :event) || Map.get(event, "event"),
+        conversation_id: conversation_id,
+        correlation_id: event_correlation,
+        payload: event
+      }
+    end)
+    |> maybe_filter_correlation(correlation_id)
+  end
+
+  defp incident_telemetry_entries(_events, _conversation_id, _correlation_id), do: []
+
+  defp maybe_filter_correlation(entries, nil), do: entries
+
+  defp maybe_filter_correlation(entries, correlation_id) do
+    Enum.filter(entries, fn entry -> entry.correlation_id == correlation_id end)
+  end
+
+  defp incident_event_correlation(event) do
+    event
+    |> incident_map_get(:meta)
+    |> incident_map_get(:correlation_id)
+  end
+
+  defp incident_event_at(event) do
+    incident_map_get(event, :at)
+  end
+
+  defp incident_map_get(map, key) when is_map(map) do
+    Map.get(map, key) || Map.get(map, Atom.to_string(key))
+  end
+
+  defp incident_map_get(_map, _key), do: nil
+
+  defp incident_sort_key(entry) do
+    {
+      incident_timestamp(entry.at),
+      incident_source_rank(entry.source)
+    }
+  end
+
+  defp incident_timestamp(%DateTime{} = at), do: DateTime.to_unix(at, :millisecond)
+
+  defp incident_timestamp(at) when is_binary(at) do
+    case DateTime.from_iso8601(at) do
+      {:ok, date_time, _offset} -> DateTime.to_unix(date_time, :millisecond)
+      _ -> -1
+    end
+  end
+
+  defp incident_timestamp(at) when is_integer(at), do: at
+  defp incident_timestamp(_at), do: -1
+
+  defp incident_source_rank(:conversation), do: 0
+  defp incident_source_rank(:telemetry), do: 1
+  defp incident_source_rank(_source), do: 2
+
+  defp take_recent(entries, limit) when is_list(entries) and is_integer(limit) and limit > 0 do
+    entries
+    |> Enum.reverse()
+    |> Enum.take(limit)
+    |> Enum.reverse()
+  end
+
+  defp take_recent(entries, _limit), do: entries
 
   defp conversation_snapshots(state) do
     state.conversations

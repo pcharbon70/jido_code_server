@@ -69,6 +69,11 @@ defmodule Jido.Code.Server do
   def conversation_diagnostics(project_id, conversation_id),
     do: Engine.conversation_diagnostics(project_id, conversation_id)
 
+  @spec incident_timeline(project_id(), conversation_id(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def incident_timeline(project_id, conversation_id, opts \\ []),
+    do: Engine.incident_timeline(project_id, conversation_id, opts)
+
   @spec diagnostics(project_id()) :: map() | {:error, term()}
   def diagnostics(project_id), do: Engine.diagnostics(project_id)
 end
