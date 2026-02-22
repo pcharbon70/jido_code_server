@@ -19,6 +19,7 @@ defmodule Jido.Code.ServerTest do
     assert Config.tool_max_artifact_bytes() == 131_072
     assert Config.network_egress_policy() == :deny
     assert Config.network_allowlist() == []
+    assert Config.outside_root_allowlist() == []
     assert Config.llm_timeout_ms() == 120_000
     assert Config.tool_max_concurrency() == 8
     assert Config.watcher_debounce_ms() == 250

@@ -144,7 +144,8 @@ defmodule Jido.Code.Server.Engine.Project do
              :network_allowlist,
              :network_allowed_schemes,
              :sensitive_path_denylist,
-             :sensitive_path_allowlist
+             :sensitive_path_allowlist,
+             :outside_root_allowlist
            ]) do
         [] -> supervisor_opts
         policy_opts -> Keyword.put(supervisor_opts, :policy, policy_opts)

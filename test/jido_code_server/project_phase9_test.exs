@@ -283,6 +283,60 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
     assert event_count(diagnostics, "security.sandbox_violation") >= 1
   end
 
+  test "outside-root allowlist permits explicit exceptions and emits reason-coded security signal" do
+    root = TempProject.create!(with_seed_files: true)
+
+    outside_root =
+      Path.join(
+        System.tmp_dir!(),
+        "jido_code_server_phase9_allowlisted_#{System.unique_integer([:positive])}"
+      )
+
+    outside_path = Path.join(outside_root, "allowlisted.md")
+
+    File.mkdir_p!(outside_root)
+    File.write!(outside_path, "# outside root path\n")
+
+    on_exit(fn -> TempProject.cleanup(root) end)
+    on_exit(fn -> File.rm_rf(outside_root) end)
+
+    reason_code = "OPS-OUTSIDE-001"
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-sandbox-allow",
+               network_egress_policy: :allow,
+               outside_root_allowlist: [
+                 %{"path" => outside_path},
+                 %{"path" => outside_path, "reason_code" => reason_code}
+               ]
+             )
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"path" => outside_path},
+               meta: %{"conversation_id" => "phase9-c2-allow"}
+             })
+
+    assert {:ok, expected_pattern} = Policy.normalize_path("/", outside_path)
+    expected_pattern = String.replace(expected_pattern, "\\", "/")
+    diagnostics = Runtime.diagnostics(project_id)
+
+    assert diagnostics.policy.outside_root_allowlist == [
+             %{pattern: expected_pattern, reason_code: reason_code}
+           ]
+
+    assert event_count(diagnostics, "security.sandbox_exception_used") >= 1
+
+    assert Enum.any?(diagnostics.policy.recent_decisions, fn decision ->
+             decision.conversation_id == "phase9-c2-allow" and
+               decision.tool_name == "command.run.example_command" and
+               decision.reason == :allowed and
+               reason_code in List.wrap(decision.outside_root_exception_reason_codes)
+           end)
+  end
+
   test "sensitive file paths are denied by default and emit security signal" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)

@@ -21,6 +21,8 @@ defmodule Jido.Code.Server.Project.Policy do
 
   @impl true
   def init(opts) do
+    root_path = Keyword.get(opts, :root_path)
+
     allow_tools =
       opts
       |> Keyword.get(:allow_tools)
@@ -33,7 +35,7 @@ defmodule Jido.Code.Server.Project.Policy do
 
     state = %{
       project_id: Keyword.get(opts, :project_id),
-      root_path: Keyword.get(opts, :root_path),
+      root_path: root_path,
       allow_tools: allow_tools,
       deny_tools: deny_tools,
       network_egress_policy: normalize_network_policy(Keyword.get(opts, :network_egress_policy)),
@@ -50,6 +52,11 @@ defmodule Jido.Code.Server.Project.Policy do
         normalize_path_patterns(
           Keyword.get(opts, :sensitive_path_allowlist, Config.sensitive_path_allowlist())
         ),
+      outside_root_allowlist:
+        normalize_outside_root_allowlist(
+          Keyword.get(opts, :outside_root_allowlist, Config.outside_root_allowlist()),
+          root_path
+        ),
       recent_decisions: []
     }
 
@@ -59,20 +66,16 @@ defmodule Jido.Code.Server.Project.Policy do
   @spec normalize_path(String.t(), String.t()) ::
           {:ok, String.t()} | {:error, :outside_root | :invalid_root_path}
   def normalize_path(root_path, user_path) do
-    root = root_path |> Path.expand() |> resolve_symlinks()
-    candidate = expand_user_path(user_path, root)
-    resolved = resolve_symlinks(candidate)
-
-    case File.stat(root) do
-      {:ok, %File.Stat{type: :directory}} ->
+    case resolve_path(root_path, user_path) do
+      {:ok, root, resolved} ->
         if inside_root?(root, resolved) do
           {:ok, resolved}
         else
           {:error, :outside_root}
         end
 
-      _ ->
-        {:error, :invalid_root_path}
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -134,14 +137,17 @@ defmodule Jido.Code.Server.Project.Policy do
 
   @impl true
   def handle_call({:authorize_tool, tool_name, args, meta, tool_safety, ctx}, _from, state) do
-    {reply, reason} =
+    {reply, reason, authorization_meta} =
       case authorize_with_reason(state, tool_name, args, tool_safety) do
-        :ok ->
-          {:ok, :allowed}
+        {:ok, authorization_meta} ->
+          {:ok, :allowed, authorization_meta}
 
         {:error, denied_reason} ->
-          {{:error, denied_reason}, denied_reason}
+          {{:error, denied_reason}, denied_reason, default_authorization_meta()}
       end
+
+    outside_root_exception_reason_codes =
+      Map.get(authorization_meta, :outside_root_exception_reason_codes, [])
 
     decision = %{
       project_id: state.project_id || Map.get(ctx, :project_id),
@@ -150,6 +156,7 @@ defmodule Jido.Code.Server.Project.Policy do
       tool_name: tool_name,
       reason: reason,
       decision: if(reply == :ok, do: :allow, else: :deny),
+      outside_root_exception_reason_codes: outside_root_exception_reason_codes,
       at: DateTime.utc_now()
     }
 
@@ -180,52 +187,104 @@ defmodule Jido.Code.Server.Project.Policy do
       network_allowed_schemes: state.network_allowed_schemes,
       sensitive_path_denylist: state.sensitive_path_denylist,
       sensitive_path_allowlist: state.sensitive_path_allowlist,
+      outside_root_allowlist: state.outside_root_allowlist,
       recent_decisions: state.recent_decisions
     }
 
     {:reply, diagnostics, state}
   end
 
-  defp validate_arg_paths(%{root_path: nil}, _args), do: :ok
+  defp validate_arg_paths(%{root_path: nil}, _args), do: {:ok, default_authorization_meta()}
 
   defp validate_arg_paths(state, args) when is_map(state) and is_map(args) do
-    args
-    |> Map.to_list()
-    |> Enum.reduce_while(:ok, fn
-      {key, value}, :ok when is_binary(key) ->
-        maybe_validate_path(state, key, value)
+    result =
+      args
+      |> Map.to_list()
+      |> Enum.reduce_while(default_authorization_meta(), fn
+        {key, value}, acc when is_binary(key) ->
+          maybe_validate_path(state, key, value, acc)
 
-      {key, value}, :ok when is_atom(key) ->
-        maybe_validate_path(state, Atom.to_string(key), value)
+        {key, value}, acc when is_atom(key) ->
+          maybe_validate_path(state, Atom.to_string(key), value, acc)
 
-      {_key, _value}, :ok ->
-        {:cont, :ok}
-    end)
+        {_key, _value}, acc ->
+          {:cont, acc}
+      end)
+
+    case result do
+      {:error, _reason} = error -> error
+      authorization_meta -> {:ok, authorization_meta}
+    end
   end
 
-  defp maybe_validate_path(state, key, value) when is_binary(value) do
+  defp maybe_validate_path(state, key, value, authorization_meta) when is_binary(value) do
     if String.contains?(String.downcase(key), "path") do
       case validate_path_arg(state, value) do
-        :ok ->
-          {:cont, :ok}
+        {:ok, reason_code} ->
+          {:cont, put_outside_root_reason_code(authorization_meta, reason_code)}
 
         {:error, reason} ->
           {:halt, {:error, reason}}
       end
     else
-      {:cont, :ok}
+      {:cont, authorization_meta}
     end
   end
 
-  defp maybe_validate_path(_state, _key, _value), do: {:cont, :ok}
+  defp maybe_validate_path(_state, _key, _value, authorization_meta),
+    do: {:cont, authorization_meta}
 
   defp validate_path_arg(state, value) do
     case normalize_path(state.root_path, value) do
-      {:ok, resolved} -> validate_sensitive_path(state, resolved)
+      {:ok, resolved} ->
+        case validate_sensitive_path(state, resolved) do
+          :ok -> {:ok, nil}
+          {:error, reason} -> {:error, reason}
+        end
+
+      {:error, :outside_root} ->
+        maybe_allow_outside_root_path(state, value)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp maybe_allow_outside_root_path(state, value) do
+    with {:ok, _root, resolved} <- resolve_path(state.root_path, value),
+         {:ok, reason_code} <- outside_root_reason_code(state.outside_root_allowlist, resolved) do
+      {:ok, reason_code}
+    else
       {:error, :outside_root} -> {:error, :outside_root}
       {:error, reason} -> {:error, reason}
     end
   end
+
+  defp outside_root_reason_code(allowlist, resolved_path) when is_list(allowlist) do
+    normalized_path = String.replace(resolved_path, "\\", "/")
+
+    case Enum.find(allowlist, fn entry ->
+           outside_root_allowlist_match?(entry, normalized_path)
+         end) do
+      %{reason_code: reason_code} ->
+        {:ok, reason_code}
+
+      _ ->
+        {:error, :outside_root}
+    end
+  end
+
+  defp outside_root_reason_code(_allowlist, _resolved_path), do: {:error, :outside_root}
+
+  defp outside_root_allowlist_match?(
+         %{pattern: pattern, reason_code: reason_code},
+         normalized_path
+       )
+       when is_binary(pattern) and is_binary(reason_code) and reason_code != "" do
+    path_pattern_match?(pattern, normalized_path)
+  end
+
+  defp outside_root_allowlist_match?(_entry, _normalized_path), do: false
 
   defp authorize_with_reason(state, tool_name, args, tool_safety) do
     if tool_allowed?(state, tool_name) do
@@ -430,6 +489,76 @@ defmodule Jido.Code.Server.Project.Policy do
 
   defp normalize_path_patterns(_), do: []
 
+  defp normalize_outside_root_allowlist(list, root_path)
+       when is_list(list) and is_binary(root_path) do
+    root = root_path |> Path.expand() |> resolve_symlinks()
+
+    list
+    |> Enum.map(&normalize_outside_root_allowlist_entry(&1, root))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.sort_by(fn %{pattern: pattern, reason_code: reason_code} ->
+      {pattern, reason_code}
+    end)
+  end
+
+  defp normalize_outside_root_allowlist(list, _root_path) when is_list(list) do
+    list
+    |> Enum.map(&normalize_outside_root_allowlist_entry(&1, nil))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.sort_by(fn %{pattern: pattern, reason_code: reason_code} ->
+      {pattern, reason_code}
+    end)
+  end
+
+  defp normalize_outside_root_allowlist(_list, _root_path), do: []
+
+  defp normalize_outside_root_allowlist_entry(entry, root) when is_map(entry) do
+    pattern =
+      Map.get(entry, :pattern) ||
+        Map.get(entry, "pattern") ||
+        Map.get(entry, :path) ||
+        Map.get(entry, "path")
+
+    reason_code = Map.get(entry, :reason_code) || Map.get(entry, "reason_code")
+
+    with {:ok, normalized_pattern} <- normalize_outside_root_pattern(pattern, root),
+         {:ok, normalized_reason_code} <- normalize_reason_code(reason_code) do
+      %{pattern: normalized_pattern, reason_code: normalized_reason_code}
+    else
+      :error -> nil
+    end
+  end
+
+  defp normalize_outside_root_allowlist_entry(_entry, _root), do: nil
+
+  defp normalize_outside_root_pattern(pattern, root) when is_binary(pattern) do
+    trimmed = String.trim(pattern)
+
+    if trimmed == "" do
+      :error
+    else
+      expanded =
+        case root do
+          root when is_binary(root) -> expand_user_path(trimmed, root)
+          _ -> Path.expand(trimmed)
+        end
+
+      normalized_pattern = expanded |> resolve_symlinks() |> String.replace("\\", "/")
+      {:ok, normalized_pattern}
+    end
+  end
+
+  defp normalize_outside_root_pattern(_pattern, _root), do: :error
+
+  defp normalize_reason_code(reason_code) when is_binary(reason_code) do
+    trimmed = String.trim(reason_code)
+    if trimmed == "", do: :error, else: {:ok, trimmed}
+  end
+
+  defp normalize_reason_code(_reason_code), do: :error
+
   defp tool_set_to_list(nil), do: []
 
   defp tool_set_to_list(set) do
@@ -510,6 +639,17 @@ defmodule Jido.Code.Server.Project.Policy do
     end
   end
 
+  defp resolve_path(root_path, user_path) do
+    root = root_path |> Path.expand() |> resolve_symlinks()
+    candidate = expand_user_path(user_path, root)
+    resolved = resolve_symlinks(candidate)
+
+    case File.stat(root) do
+      {:ok, %File.Stat{type: :directory}} -> {:ok, root, resolved}
+      _ -> {:error, :invalid_root_path}
+    end
+  end
+
   defp resolve_symlinks(path) do
     absolute = Path.expand(path)
 
@@ -568,8 +708,19 @@ defmodule Jido.Code.Server.Project.Policy do
 
       :deny ->
         Telemetry.emit("policy.denied", decision)
-        maybe_emit_security_signal(decision)
     end
+
+    maybe_emit_security_signal(decision)
+  end
+
+  defp maybe_emit_security_signal(%{outside_root_exception_reason_codes: reason_codes} = decision)
+       when is_list(reason_codes) and reason_codes != [] do
+    Enum.each(reason_codes, fn reason_code ->
+      Telemetry.emit(
+        "security.sandbox_exception_used",
+        Map.put(decision, :reason_code, reason_code)
+      )
+    end)
   end
 
   defp maybe_emit_security_signal(%{reason: :outside_root} = decision) do
@@ -593,6 +744,23 @@ defmodule Jido.Code.Server.Project.Policy do
   end
 
   defp maybe_emit_security_signal(_decision), do: :ok
+
+  defp default_authorization_meta do
+    %{outside_root_exception_reason_codes: []}
+  end
+
+  defp put_outside_root_reason_code(authorization_meta, reason_code)
+       when is_binary(reason_code) and reason_code != "" do
+    reason_codes =
+      authorization_meta
+      |> Map.get(:outside_root_exception_reason_codes, [])
+      |> Kernel.++([reason_code])
+      |> Enum.uniq()
+
+    Map.put(authorization_meta, :outside_root_exception_reason_codes, reason_codes)
+  end
+
+  defp put_outside_root_reason_code(authorization_meta, _reason_code), do: authorization_meta
 
   defp extract_conversation_id(meta, ctx) do
     Map.get(meta, :conversation_id) ||

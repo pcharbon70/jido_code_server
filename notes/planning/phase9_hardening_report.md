@@ -10,6 +10,7 @@
   - Telemetry secret redaction for diagnostics persistence
   - Correlation ID propagation across ingest, LLM, tool execution, and policy decisions
   - Bounded incident timeline extraction across conversation and telemetry streams
+  - Explicit outside-root sandbox exceptions with reason-coded allowlisting and security telemetry
 
 ## Implemented Controls
 
@@ -129,6 +130,20 @@
   - `total_entries` before limit trim
   - bounded `entries` sorted by event time
 
+### 11. Outside-root allowlist exceptions with reason codes
+
+- Policy now supports explicit outside-root path exceptions through:
+  - `outside_root_allowlist`
+  - entry shape: `%{path | pattern, reason_code}`
+- Exception behavior:
+  - outside-root paths remain deny-by-default
+  - exception only applies when path pattern matches and `reason_code` is non-empty
+  - malformed entries (missing `reason_code`) are ignored
+- Allowed exception attempts remain auditable via policy decision metadata:
+  - `outside_root_exception_reason_codes`
+- Security telemetry emits:
+  - `security.sandbox_exception_used` with `reason_code`
+
 ## Evidence (Automated Tests)
 
 - Added: `test/jido_code_server/project_phase9_test.exs`
@@ -141,6 +156,7 @@
   - generated correlation ID fallback when ingest events omit one
   - sensitive artifact detection signal on risky tool outputs
   - sandbox violation security signal
+  - allowlisted outside-root exception signal with reason code
   - sensitive path deny-by-default and explicit allowlist override
   - network deny-by-default and allowlist enforcement
   - protocol deny-by-default with explicit allow override
