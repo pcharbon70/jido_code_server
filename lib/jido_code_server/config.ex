@@ -47,6 +47,16 @@ defmodule Jido.Code.Server.Config do
     |> Enum.filter(&is_binary/1)
   end
 
+  @spec network_allowed_schemes() :: [String.t()]
+  def network_allowed_schemes do
+    Application.get_env(@app, :network_allowed_schemes, ["http", "https"])
+    |> List.wrap()
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&(&1 |> String.trim() |> String.downcase()))
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+  end
+
   @spec llm_timeout_ms() :: pos_integer()
   def llm_timeout_ms do
     Application.get_env(@app, :llm_timeout_ms, 120_000)

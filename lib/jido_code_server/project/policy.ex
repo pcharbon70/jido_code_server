@@ -5,6 +5,7 @@ defmodule Jido.Code.Server.Project.Policy do
 
   use GenServer
 
+  alias Jido.Code.Server.Config
   alias Jido.Code.Server.Correlation
   alias Jido.Code.Server.Telemetry
 
@@ -37,6 +38,10 @@ defmodule Jido.Code.Server.Project.Policy do
       deny_tools: deny_tools,
       network_egress_policy: normalize_network_policy(Keyword.get(opts, :network_egress_policy)),
       network_allowlist: normalize_network_allowlist(Keyword.get(opts, :network_allowlist, [])),
+      network_allowed_schemes:
+        normalize_network_schemes(
+          Keyword.get(opts, :network_allowed_schemes, Config.network_allowed_schemes())
+        ),
       recent_decisions: []
     }
 
@@ -66,7 +71,12 @@ defmodule Jido.Code.Server.Project.Policy do
   @spec authorize_tool(GenServer.server(), String.t(), map(), map()) ::
           :ok
           | {:error,
-             :denied | :outside_root | :network_denied | :network_endpoint_denied | term()}
+             :denied
+             | :outside_root
+             | :network_denied
+             | :network_endpoint_denied
+             | :network_protocol_denied
+             | term()}
   def authorize_tool(server, tool_name, args, ctx)
       when is_binary(tool_name) and is_map(args) and is_map(ctx) do
     authorize_tool(server, tool_name, args, %{}, ctx)
@@ -75,7 +85,12 @@ defmodule Jido.Code.Server.Project.Policy do
   @spec authorize_tool(GenServer.server(), String.t(), map(), map(), map()) ::
           :ok
           | {:error,
-             :denied | :outside_root | :network_denied | :network_endpoint_denied | term()}
+             :denied
+             | :outside_root
+             | :network_denied
+             | :network_endpoint_denied
+             | :network_protocol_denied
+             | term()}
   def authorize_tool(server, tool_name, args, meta, ctx)
       when is_binary(tool_name) and is_map(args) and is_map(meta) and is_map(ctx) do
     authorize_tool(server, tool_name, args, meta, %{}, ctx)
@@ -84,7 +99,12 @@ defmodule Jido.Code.Server.Project.Policy do
   @spec authorize_tool(GenServer.server(), String.t(), map(), map(), map(), map()) ::
           :ok
           | {:error,
-             :denied | :outside_root | :network_denied | :network_endpoint_denied | term()}
+             :denied
+             | :outside_root
+             | :network_denied
+             | :network_endpoint_denied
+             | :network_protocol_denied
+             | term()}
   def authorize_tool(server, tool_name, args, meta, tool_safety, ctx)
       when is_binary(tool_name) and is_map(args) and is_map(meta) and is_map(tool_safety) and
              is_map(ctx) do
@@ -146,6 +166,7 @@ defmodule Jido.Code.Server.Project.Policy do
       deny_tools: tool_set_to_list(state.deny_tools),
       network_egress_policy: state.network_egress_policy,
       network_allowlist: state.network_allowlist,
+      network_allowed_schemes: state.network_allowed_schemes,
       recent_decisions: state.recent_decisions
     }
 
@@ -195,18 +216,19 @@ defmodule Jido.Code.Server.Project.Policy do
   end
 
   defp network_allowed_with_reason(state, args, tool_safety) do
-    if network_access_required?(tool_safety) do
-      case state.network_egress_policy do
-        :allow ->
-          validate_network_allowlist(state.network_allowlist, args)
+    if network_access_required?(tool_safety),
+      do: network_allowed_for_capable_tool(state, args),
+      else: :ok
+  end
 
-        _deny ->
-          {:error, :network_denied}
-      end
-    else
-      :ok
+  defp network_allowed_for_capable_tool(%{network_egress_policy: :allow} = state, args) do
+    case validate_network_schemes(state.network_allowed_schemes, args) do
+      :ok -> validate_network_allowlist(state.network_allowlist, args)
+      {:error, _reason} = error -> error
     end
   end
+
+  defp network_allowed_for_capable_tool(_state, _args), do: {:error, :network_denied}
 
   defp validate_network_allowlist([], _args), do: :ok
 
@@ -221,6 +243,45 @@ defmodule Jido.Code.Server.Project.Policy do
       end
     end)
   end
+
+  defp validate_network_schemes(allowed_schemes, args) do
+    args
+    |> extract_network_schemes()
+    |> Enum.reduce_while(:ok, fn scheme, :ok ->
+      if scheme in allowed_schemes do
+        {:cont, :ok}
+      else
+        {:halt, {:error, :network_protocol_denied}}
+      end
+    end)
+  end
+
+  defp extract_network_schemes(args) when is_map(args) do
+    args
+    |> Map.to_list()
+    |> Enum.reduce([], fn {key, value}, acc ->
+      case network_scheme_for_arg(key, value) do
+        nil -> acc
+        scheme -> [scheme | acc]
+      end
+    end)
+    |> Enum.uniq()
+  end
+
+  defp extract_network_schemes(_args), do: []
+
+  defp network_scheme_for_arg(key, value)
+       when is_binary(value) and (is_binary(key) or is_atom(key)) do
+    normalized_key = key |> to_string() |> String.downcase()
+
+    if network_target_key?(normalized_key) do
+      normalize_network_scheme(URI.parse(String.trim(value)).scheme)
+    else
+      nil
+    end
+  end
+
+  defp network_scheme_for_arg(_key, _value), do: nil
 
   defp extract_network_targets(args) when is_map(args) do
     args
@@ -316,6 +377,24 @@ defmodule Jido.Code.Server.Project.Policy do
   end
 
   defp normalize_network_allowlist(_), do: []
+
+  defp normalize_network_schemes(list) when is_list(list) do
+    list
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&normalize_network_scheme/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp normalize_network_schemes(_), do: Config.network_allowed_schemes()
+
+  defp normalize_network_scheme(scheme) when is_binary(scheme) do
+    normalized = scheme |> String.trim() |> String.downcase()
+    if normalized == "", do: nil, else: normalized
+  end
+
+  defp normalize_network_scheme(_scheme), do: nil
 
   defp tool_set_to_list(nil), do: []
 
@@ -424,6 +503,10 @@ defmodule Jido.Code.Server.Project.Policy do
   end
 
   defp maybe_emit_security_signal(%{reason: :network_endpoint_denied} = decision) do
+    Telemetry.emit("security.network_denied", decision)
+  end
+
+  defp maybe_emit_security_signal(%{reason: :network_protocol_denied} = decision) do
     Telemetry.emit("security.network_denied", decision)
   end
 

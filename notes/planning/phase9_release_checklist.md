@@ -14,6 +14,7 @@
 - [ ] Sandbox escape attempts emit `security.sandbox_violation`.
 - [ ] Network-capable tools are deny-by-default and emit `security.network_denied` when blocked.
 - [ ] `network_allowlist` filtering is validated for allowlisted and non-allowlisted endpoints.
+- [ ] High-risk network protocols are deny-by-default unless explicitly allowlisted via `network_allowed_schemes`.
 - [ ] Telemetry redaction masks secret/token patterns in recent errors.
 - [ ] Repeated timeout escalation emits `security.repeated_timeout_failures`.
 

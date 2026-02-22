@@ -75,6 +75,9 @@
   - default deny (`network_egress_policy: :deny`)
   - explicit enable (`:allow`)
   - optional `network_allowlist` endpoint/domain filtering when enabled
+  - protocol allowlist guardrail via `network_allowed_schemes` (default `["http", "https"]`)
+- Disallowed protocols are denied with:
+  - `:network_protocol_denied`
 - Policy telemetry now emits security signal on denied network attempts:
   - `security.network_denied`
 
@@ -114,6 +117,7 @@
   - generated correlation ID fallback when ingest events omit one
   - sandbox violation security signal
   - network deny-by-default and allowlist enforcement
+  - protocol deny-by-default with explicit allow override
   - secret redaction behavior
   - repeated timeout escalation signal
 
