@@ -160,6 +160,14 @@ defmodule Jido.Code.Server.Engine do
     end)
   end
 
+  @spec incident_timeline(project_id(), conversation_id(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def incident_timeline(project_id, conversation_id, opts \\ []) when is_list(opts) do
+    with_project(project_id, fn pid ->
+      Project.incident_timeline(pid, conversation_id, opts)
+    end)
+  end
+
   @spec diagnostics(project_id()) :: map() | {:error, term()}
   def diagnostics(project_id) do
     with_project(project_id, fn pid -> Project.diagnostics(pid) end)

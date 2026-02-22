@@ -198,6 +198,70 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
     assert String.starts_with?(generated_correlation_id, "corr-")
   end
 
+  test "incident timeline API returns bounded merged conversation and telemetry entries" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+    correlation_id = "corr-phase9-incident-c1"
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-incident-timeline",
+               conversation_orchestration: true,
+               llm_adapter: :deterministic
+             )
+
+    assert {:ok, "phase9-incident-c1"} =
+             Runtime.start_conversation(project_id, conversation_id: "phase9-incident-c1")
+
+    assert :ok =
+             Runtime.send_event(project_id, "phase9-incident-c1", %{
+               "type" => "user.message",
+               "content" => "please list skills",
+               "meta" => %{"correlation_id" => correlation_id}
+             })
+
+    assert {:ok, timeline} =
+             Runtime.incident_timeline(project_id, "phase9-incident-c1",
+               limit: 50,
+               correlation_id: correlation_id
+             )
+
+    assert timeline.project_id == project_id
+    assert timeline.conversation_id == "phase9-incident-c1"
+    assert timeline.correlation_id == correlation_id
+    assert timeline.limit == 50
+    assert timeline.total_entries >= length(timeline.entries)
+    assert length(timeline.entries) <= 50
+
+    assert Enum.all?(timeline.entries, fn entry ->
+             entry.conversation_id == "phase9-incident-c1" and
+               entry.correlation_id == correlation_id
+           end)
+
+    sources =
+      timeline.entries
+      |> Enum.map(& &1.source)
+      |> MapSet.new()
+
+    assert MapSet.member?(sources, :conversation)
+    assert MapSet.member?(sources, :telemetry)
+
+    assert Enum.any?(timeline.entries, fn entry ->
+             entry.source == :telemetry and entry.event == "tool.completed"
+           end)
+  end
+
+  test "incident timeline API returns conversation-not-found error for unknown conversation" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root, project_id: "phase9-incident-not-found")
+
+    assert {:error, {:conversation_not_found, "missing-c1"}} =
+             Runtime.incident_timeline(project_id, "missing-c1")
+  end
+
   test "sandbox violations emit security telemetry signals" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)

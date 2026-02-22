@@ -9,6 +9,7 @@
   - Policy decision auditability and telemetry
   - Telemetry secret redaction for diagnostics persistence
   - Correlation ID propagation across ingest, LLM, tool execution, and policy decisions
+  - Bounded incident timeline extraction across conversation and telemetry streams
 
 ## Implemented Controls
 
@@ -87,6 +88,20 @@
   - policy decision records (`recent_decisions`, `policy.allowed`, `policy.denied`)
 - This enables end-to-end incident stitching by `project_id` + `conversation_id` + `correlation_id`.
 
+### 8. Incident timeline extraction for response workflows
+
+- Runtime API now exposes:
+  - `Jido.Code.Server.incident_timeline(project_id, conversation_id, opts \\ [])`
+- Timeline payload merges:
+  - conversation timeline events
+  - recent telemetry events for the same conversation
+- Bound and filters:
+  - `limit` option (default `100`, capped at `500`)
+  - optional `correlation_id` filter for focused incident slicing
+- Response payload includes:
+  - `total_entries` before limit trim
+  - bounded `entries` sorted by event time
+
 ## Evidence (Automated Tests)
 
 - Added: `test/jido_code_server/project_phase9_test.exs`
@@ -95,6 +110,7 @@
   - output cap enforcement
   - policy audit + telemetry events
   - correlation ID propagation through conversation + tool + policy paths
+  - bounded incident timeline extraction (conversation + telemetry merge)
   - generated correlation ID fallback when ingest events omit one
   - sandbox violation security signal
   - network deny-by-default and allowlist enforcement

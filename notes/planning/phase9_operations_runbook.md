@@ -48,8 +48,8 @@
 
 1. Identify affected `project_id`, `conversation_id`, and `correlation_id` from telemetry payload.
 2. Pull bounded timeline:
-   - conversation projection: `Jido.Code.Server.get_projection(project_id, conversation_id, :timeline)`
-   - project diagnostics: `Jido.Code.Server.diagnostics(project_id)`
+   - incident API: `Jido.Code.Server.incident_timeline(project_id, conversation_id, correlation_id: correlation_id, limit: 200)`
+   - project diagnostics: `Jido.Code.Server.diagnostics(project_id)` for aggregate counters and health
 3. Classify incident:
    - policy denial spike
    - sandbox violation
