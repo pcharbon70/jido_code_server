@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Project.Server do
+defmodule Jido.Code.Server.Project.Server do
   @moduledoc """
   Project control-plane process.
 
@@ -10,17 +10,17 @@ defmodule JidoCodeServer.Project.Server do
 
   use GenServer
 
-  alias JidoCodeServer.Config
-  alias JidoCodeServer.Conversation.Server, as: ConversationServer
-  alias JidoCodeServer.Project.AssetStore
-  alias JidoCodeServer.Project.ConversationRegistry
-  alias JidoCodeServer.Project.ConversationSupervisor
-  alias JidoCodeServer.Project.Layout
-  alias JidoCodeServer.Project.Naming
-  alias JidoCodeServer.Project.Policy
-  alias JidoCodeServer.Project.ToolCatalog
-  alias JidoCodeServer.Project.ToolRunner
-  alias JidoCodeServer.Telemetry
+  alias Jido.Code.Server.Config
+  alias Jido.Code.Server.Conversation.Server, as: ConversationServer
+  alias Jido.Code.Server.Project.AssetStore
+  alias Jido.Code.Server.Project.ConversationRegistry
+  alias Jido.Code.Server.Project.ConversationSupervisor
+  alias Jido.Code.Server.Project.Layout
+  alias Jido.Code.Server.Project.Naming
+  alias Jido.Code.Server.Project.Policy
+  alias Jido.Code.Server.Project.ToolCatalog
+  alias Jido.Code.Server.Project.ToolRunner
+  alias Jido.Code.Server.Telemetry
 
   @type conversation_id :: String.t()
 

@@ -1,9 +1,9 @@
-# JidoCodeServer Phase 9 Hardening Report
+# Jido.Code.Server Phase 9 Hardening Report
 
 ## Scope
 
 - Phase: `9 - Hardening, Performance, and Release Readiness`
-- Runtime namespace: `JidoCodeServer`
+- Runtime namespace: `Jido.Code.Server`
 - Focus areas implemented in this change:
   - Tool input/output safety guards
   - Policy decision auditability and telemetry
@@ -27,7 +27,7 @@
 - Tool runner now enforces:
   - `tool_max_output_bytes`
   - `tool_max_artifact_bytes`
-  - configured via `JidoCodeServer.Config`
+  - configured via `Jido.Code.Server.Config`
 - Default values:
   - output: `262_144` bytes
   - artifact: `131_072` bytes

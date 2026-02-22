@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Engine do
+defmodule Jido.Code.Server.Engine do
   @moduledoc """
   Internal multi-project runtime API.
 
@@ -7,10 +7,10 @@ defmodule JidoCodeServer.Engine do
   - project-scoped conversation shell routing through `Project.Server`
   """
 
-  alias JidoCodeServer.Config
-  alias JidoCodeServer.Engine.Project
-  alias JidoCodeServer.Engine.ProjectRegistry
-  alias JidoCodeServer.Engine.ProjectSupervisor
+  alias Jido.Code.Server.Config
+  alias Jido.Code.Server.Engine.Project
+  alias Jido.Code.Server.Engine.ProjectRegistry
+  alias Jido.Code.Server.Engine.ProjectSupervisor
 
   @type project_id :: String.t()
   @type conversation_id :: String.t()

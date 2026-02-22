@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.TestSupport.FakeLLM do
+defmodule Jido.Code.Server.TestSupport.FakeLLM do
   @moduledoc """
   Minimal fake LLM adapter that returns deterministic completions for tests.
   """

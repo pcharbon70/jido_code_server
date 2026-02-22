@@ -1,14 +1,16 @@
-defmodule JidoCodeServer.ProjectPhase3Test do
+defmodule Jido.Code.Server.ProjectPhase3Test do
   use ExUnit.Case, async: false
 
-  alias JidoCodeServer.Project.AssetStore
-  alias JidoCodeServer.Project.Layout
-  alias JidoCodeServer.TestSupport.TempProject
+  alias Jido.Code.Server, as: Runtime
+
+  alias Jido.Code.Server.Project.AssetStore
+  alias Jido.Code.Server.Project.Layout
+  alias Jido.Code.Server.TestSupport.TempProject
 
   setup do
     on_exit(fn ->
-      Enum.each(JidoCodeServer.list_projects(), fn %{project_id: project_id} ->
-        _ = JidoCodeServer.stop_project(project_id)
+      Enum.each(Runtime.list_projects(), fn %{project_id: project_id} ->
+        _ = Runtime.stop_project(project_id)
       end)
     end)
 
@@ -19,28 +21,28 @@ defmodule JidoCodeServer.ProjectPhase3Test do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
 
-    assert {:ok, project_id} = JidoCodeServer.start_project(root, project_id: "phase3-assets")
+    assert {:ok, project_id} = Runtime.start_project(root, project_id: "phase3-assets")
 
-    skills = JidoCodeServer.list_assets(project_id, :skill)
-    commands = JidoCodeServer.list_assets(project_id, :command)
-    workflows = JidoCodeServer.list_assets(project_id, :workflow)
+    skills = Runtime.list_assets(project_id, :skill)
+    commands = Runtime.list_assets(project_id, :command)
+    workflows = Runtime.list_assets(project_id, :workflow)
 
     assert Enum.map(skills, & &1.name) == ["example_skill"]
     assert Enum.map(commands, & &1.name) == ["example_command"]
     assert Enum.map(workflows, & &1.name) == ["example_workflow"]
 
-    assert {:ok, skill} = JidoCodeServer.get_asset(project_id, :skill, "example_skill")
+    assert {:ok, skill} = Runtime.get_asset(project_id, :skill, "example_skill")
     assert skill.relative_path == "example_skill.md"
 
-    assert {:ok, skill_graph} = JidoCodeServer.get_asset(project_id, :skill_graph, :snapshot)
+    assert {:ok, skill_graph} = Runtime.get_asset(project_id, :skill_graph, :snapshot)
     assert Enum.any?(skill_graph.nodes, &(&1.id == "index"))
 
     assert [%{name: "example_skill"}] =
-             JidoCodeServer.search_assets(project_id, :skill, "example")
+             Runtime.search_assets(project_id, :skill, "example")
 
-    assert [] == JidoCodeServer.search_assets(project_id, :skill, "missing")
+    assert [] == Runtime.search_assets(project_id, :skill, "missing")
 
-    diagnostics = JidoCodeServer.assets_diagnostics(project_id)
+    diagnostics = Runtime.assets_diagnostics(project_id)
     assert diagnostics.loaded?
     assert diagnostics.generation == 1
     assert diagnostics.versions.skill == 1
@@ -55,21 +57,21 @@ defmodule JidoCodeServer.ProjectPhase3Test do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
 
-    assert {:ok, project_id} = JidoCodeServer.start_project(root, project_id: "phase3-reload")
-    before = JidoCodeServer.assets_diagnostics(project_id)
+    assert {:ok, project_id} = Runtime.start_project(root, project_id: "phase3-reload")
+    before = Runtime.assets_diagnostics(project_id)
 
     File.write!(Path.join(root, ".jido/skills/new_skill.md"), "# New Skill\ncontent\n")
 
-    assert :ok = JidoCodeServer.reload_assets(project_id)
+    assert :ok = Runtime.reload_assets(project_id)
 
-    after_reload = JidoCodeServer.assets_diagnostics(project_id)
+    after_reload = Runtime.assets_diagnostics(project_id)
     assert after_reload.generation == before.generation + 1
     assert after_reload.versions.skill == before.versions.skill + 1
     assert after_reload.counts.skill == 2
 
     assert ["example_skill", "new_skill"] ==
              project_id
-             |> JidoCodeServer.list_assets(:skill)
+             |> Runtime.list_assets(:skill)
              |> Enum.map(& &1.name)
   end
 

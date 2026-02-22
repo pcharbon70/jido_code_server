@@ -1,16 +1,18 @@
-defmodule JidoCodeServer.ProjectPhase4Test do
+defmodule Jido.Code.Server.ProjectPhase4Test do
   use ExUnit.Case, async: false
 
-  alias JidoCodeServer.Project.AssetStore
-  alias JidoCodeServer.Project.Layout
-  alias JidoCodeServer.Project.Policy
-  alias JidoCodeServer.Project.ToolRunner
-  alias JidoCodeServer.TestSupport.TempProject
+  alias Jido.Code.Server, as: Runtime
+
+  alias Jido.Code.Server.Project.AssetStore
+  alias Jido.Code.Server.Project.Layout
+  alias Jido.Code.Server.Project.Policy
+  alias Jido.Code.Server.Project.ToolRunner
+  alias Jido.Code.Server.TestSupport.TempProject
 
   setup do
     on_exit(fn ->
-      Enum.each(JidoCodeServer.list_projects(), fn %{project_id: project_id} ->
-        _ = JidoCodeServer.stop_project(project_id)
+      Enum.each(Runtime.list_projects(), fn %{project_id: project_id} ->
+        _ = Runtime.stop_project(project_id)
       end)
     end)
 
@@ -22,14 +24,14 @@ defmodule JidoCodeServer.ProjectPhase4Test do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:ok, project_id} =
-             JidoCodeServer.start_project(root,
+             Runtime.start_project(root,
                project_id: "phase4-tools",
                network_egress_policy: :allow
              )
 
     tool_names =
       project_id
-      |> JidoCodeServer.list_tools()
+      |> Runtime.list_tools()
       |> Enum.map(& &1.name)
       |> Enum.sort()
 
@@ -45,13 +47,13 @@ defmodule JidoCodeServer.ProjectPhase4Test do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:ok, project_id} =
-             JidoCodeServer.start_project(root,
+             Runtime.start_project(root,
                project_id: "phase4-runner",
                network_egress_policy: :allow
              )
 
     assert {:ok, %{status: :ok, tool: "asset.list", result: %{items: skills}}} =
-             JidoCodeServer.run_tool(project_id, %{
+             Runtime.run_tool(project_id, %{
                name: "asset.list",
                args: %{"type" => "skill"}
              })
@@ -59,7 +61,7 @@ defmodule JidoCodeServer.ProjectPhase4Test do
     assert Enum.any?(skills, &(&1.name == "example_skill"))
 
     assert {:ok, %{status: :ok, tool: "command.run.example_command", result: result}} =
-             JidoCodeServer.run_tool(project_id, %{
+             Runtime.run_tool(project_id, %{
                name: "command.run.example_command",
                args: %{"path" => ".jido/commands/example_command.md"}
              })
@@ -67,7 +69,7 @@ defmodule JidoCodeServer.ProjectPhase4Test do
     assert result.asset.name == "example_command"
 
     assert {:error, %{status: :error, tool: "command.run.example_command", reason: :outside_root}} =
-             JidoCodeServer.run_tool(project_id, %{
+             Runtime.run_tool(project_id, %{
                name: "command.run.example_command",
                args: %{"path" => "../outside.md"}
              })
@@ -78,21 +80,24 @@ defmodule JidoCodeServer.ProjectPhase4Test do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:ok, project_id} =
-             JidoCodeServer.start_project(root,
+             Runtime.start_project(root,
                project_id: "phase4-allow",
                allow_tools: ["asset.list"]
              )
 
     assert ["asset.list"] ==
              project_id
-             |> JidoCodeServer.list_tools()
+             |> Runtime.list_tools()
              |> Enum.map(& &1.name)
 
     assert {:ok, %{status: :ok, tool: "asset.list"}} =
-             JidoCodeServer.run_tool(project_id, %{name: "asset.list", args: %{"type" => "skill"}})
+             Runtime.run_tool(project_id, %{
+               name: "asset.list",
+               args: %{"type" => "skill"}
+             })
 
     assert {:error, %{status: :error, tool: "asset.search", reason: :denied}} =
-             JidoCodeServer.run_tool(project_id, %{
+             Runtime.run_tool(project_id, %{
                name: "asset.search",
                args: %{"type" => "skill", "query" => "example"}
              })

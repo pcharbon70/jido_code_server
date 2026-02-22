@@ -1,11 +1,11 @@
-defmodule JidoCodeServer.Project.Policy do
+defmodule Jido.Code.Server.Project.Policy do
   @moduledoc """
   Project-scoped sandbox and authorization policy.
   """
 
   use GenServer
 
-  alias JidoCodeServer.Telemetry
+  alias Jido.Code.Server.Telemetry
 
   @max_decisions 200
 

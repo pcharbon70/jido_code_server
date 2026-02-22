@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Types.ToolSpec do
+defmodule Jido.Code.Server.Types.ToolSpec do
   @moduledoc """
   Tool specification type used for LLM and protocol exposure.
   """

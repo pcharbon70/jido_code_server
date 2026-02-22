@@ -1,9 +1,9 @@
-defmodule JidoCodeServer.Project.Loaders.Command do
+defmodule Jido.Code.Server.Project.Loaders.Command do
   @moduledoc """
   Loads markdown command specifications from the project data directory.
   """
 
-  alias JidoCodeServer.Project.Loaders.Common
+  alias Jido.Code.Server.Project.Loaders.Common
 
   @spec load(map()) :: {:ok, %{assets: list(map()), errors: list(map())}} | {:error, term()}
   def load(layout) when is_map(layout) do

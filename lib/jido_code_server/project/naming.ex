@@ -1,9 +1,9 @@
-defmodule JidoCodeServer.Project.Naming do
+defmodule Jido.Code.Server.Project.Naming do
   @moduledoc """
   Name helpers for project-scoped processes registered in the engine registry.
   """
 
-  alias JidoCodeServer.Engine.ProjectRegistry
+  alias Jido.Code.Server.Engine.ProjectRegistry
 
   @type component ::
           :project_supervisor

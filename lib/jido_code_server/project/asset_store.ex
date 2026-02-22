@@ -1,16 +1,16 @@
-defmodule JidoCodeServer.Project.AssetStore do
+defmodule Jido.Code.Server.Project.AssetStore do
   @moduledoc """
   ETS-backed asset store shared by all conversations in a project.
   """
 
   use GenServer
 
-  alias JidoCodeServer.Config
-  alias JidoCodeServer.Project.Loaders.Command
-  alias JidoCodeServer.Project.Loaders.Skill
-  alias JidoCodeServer.Project.Loaders.SkillGraph
-  alias JidoCodeServer.Project.Loaders.Workflow
-  alias JidoCodeServer.Telemetry
+  alias Jido.Code.Server.Config
+  alias Jido.Code.Server.Project.Loaders.Command
+  alias Jido.Code.Server.Project.Loaders.Skill
+  alias Jido.Code.Server.Project.Loaders.SkillGraph
+  alias Jido.Code.Server.Project.Loaders.Workflow
+  alias Jido.Code.Server.Telemetry
 
   @asset_types [:skill, :command, :workflow, :skill_graph]
 

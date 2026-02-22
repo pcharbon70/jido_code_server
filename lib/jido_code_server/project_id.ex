@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.ProjectId do
+defmodule Jido.Code.Server.ProjectId do
   @moduledoc """
   Generates project identifiers for runtime project instances.
   """

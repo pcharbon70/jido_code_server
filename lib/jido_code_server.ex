@@ -1,9 +1,9 @@
-defmodule JidoCodeServer do
+defmodule Jido.Code.Server do
   @moduledoc """
   Public facade for runtime lifecycle and conversation operations.
   """
 
-  alias JidoCodeServer.Engine
+  alias Jido.Code.Server.Engine
 
   @type project_id :: String.t()
   @type conversation_id :: String.t()

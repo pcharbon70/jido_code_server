@@ -1,9 +1,9 @@
-defmodule JidoCodeServer.Project.ToolCatalog do
+defmodule Jido.Code.Server.Project.ToolCatalog do
   @moduledoc """
   Tool inventory composition for each project instance.
   """
 
-  alias JidoCodeServer.Project.AssetStore
+  alias Jido.Code.Server.Project.AssetStore
 
   @spec all_tools(map()) :: list(map())
   def all_tools(project_ctx) when is_map(project_ctx) do

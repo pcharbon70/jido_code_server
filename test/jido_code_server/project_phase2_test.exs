@@ -1,12 +1,14 @@
-defmodule JidoCodeServer.ProjectPhase2Test do
+defmodule Jido.Code.Server.ProjectPhase2Test do
   use ExUnit.Case, async: false
 
-  alias JidoCodeServer.TestSupport.TempProject
+  alias Jido.Code.Server, as: Runtime
+
+  alias Jido.Code.Server.TestSupport.TempProject
 
   setup do
     on_exit(fn ->
-      Enum.each(JidoCodeServer.list_projects(), fn %{project_id: project_id} ->
-        _ = JidoCodeServer.stop_project(project_id)
+      Enum.each(Runtime.list_projects(), fn %{project_id: project_id} ->
+        _ = Runtime.stop_project(project_id)
       end)
     end)
 
@@ -27,7 +29,10 @@ defmodule JidoCodeServer.ProjectPhase2Test do
     end)
 
     assert {:ok, "phase2-layout"} =
-             JidoCodeServer.start_project(root, project_id: "phase2-layout", data_dir: ".runtime")
+             Runtime.start_project(root,
+               project_id: "phase2-layout",
+               data_dir: ".runtime"
+             )
 
     assert File.dir?(Path.join(root, ".runtime"))
     assert File.dir?(Path.join(root, ".runtime/skills"))
@@ -36,7 +41,7 @@ defmodule JidoCodeServer.ProjectPhase2Test do
     assert File.dir?(Path.join(root, ".runtime/skill_graph"))
     assert File.dir?(Path.join(root, ".runtime/state"))
 
-    [summary] = Enum.filter(JidoCodeServer.list_projects(), &(&1.project_id == "phase2-layout"))
+    [summary] = Enum.filter(Runtime.list_projects(), &(&1.project_id == "phase2-layout"))
     assert summary.root_path == Path.expand(root)
     assert summary.data_dir == ".runtime"
   end
@@ -46,26 +51,26 @@ defmodule JidoCodeServer.ProjectPhase2Test do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:ok, project_id} =
-             JidoCodeServer.start_project(root, project_id: "phase2-conversations")
+             Runtime.start_project(root, project_id: "phase2-conversations")
 
     assert {:ok, "conversation-a"} =
-             JidoCodeServer.start_conversation(project_id, conversation_id: "conversation-a")
+             Runtime.start_conversation(project_id, conversation_id: "conversation-a")
 
     assert {:error, {:conversation_already_started, "conversation-a"}} =
-             JidoCodeServer.start_conversation(project_id, conversation_id: "conversation-a")
+             Runtime.start_conversation(project_id, conversation_id: "conversation-a")
 
     event = %{"type" => "user.message", "content" => "hello"}
-    assert :ok = JidoCodeServer.send_event(project_id, "conversation-a", event)
+    assert :ok = Runtime.send_event(project_id, "conversation-a", event)
 
     assert {:ok, [^event]} =
-             JidoCodeServer.get_projection(project_id, "conversation-a", :timeline)
+             Runtime.get_projection(project_id, "conversation-a", :timeline)
 
     assert {:ok, %{project_id: ^project_id, conversation_id: "conversation-a", events: [^event]}} =
-             JidoCodeServer.get_projection(project_id, "conversation-a", :llm_context)
+             Runtime.get_projection(project_id, "conversation-a", :llm_context)
 
-    assert :ok = JidoCodeServer.stop_conversation(project_id, "conversation-a")
+    assert :ok = Runtime.stop_conversation(project_id, "conversation-a")
 
     assert {:error, {:conversation_not_found, "conversation-a"}} =
-             JidoCodeServer.get_projection(project_id, "conversation-a", :timeline)
+             Runtime.get_projection(project_id, "conversation-a", :timeline)
   end
 end

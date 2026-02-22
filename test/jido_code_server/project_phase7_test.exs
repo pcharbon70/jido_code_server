@@ -1,16 +1,18 @@
-defmodule JidoCodeServer.ProjectPhase7Test do
+defmodule Jido.Code.Server.ProjectPhase7Test do
   use ExUnit.Case, async: false
 
-  alias JidoCodeServer.Engine.ProjectRegistry
-  alias JidoCodeServer.Telemetry
-  alias JidoCodeServer.TestSupport.TempProject
+  alias Jido.Code.Server, as: Runtime
+
+  alias Jido.Code.Server.Engine.ProjectRegistry
+  alias Jido.Code.Server.Telemetry
+  alias Jido.Code.Server.TestSupport.TempProject
 
   setup do
     Telemetry.reset()
 
     on_exit(fn ->
-      Enum.each(JidoCodeServer.list_projects(), fn %{project_id: project_id} ->
-        _ = JidoCodeServer.stop_project(project_id)
+      Enum.each(Runtime.list_projects(), fn %{project_id: project_id} ->
+        _ = Runtime.stop_project(project_id)
       end)
     end)
 
@@ -22,22 +24,22 @@ defmodule JidoCodeServer.ProjectPhase7Test do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:ok, project_id} =
-             JidoCodeServer.start_project(root,
+             Runtime.start_project(root,
                project_id: "phase7-diag",
                conversation_orchestration: true,
                llm_adapter: :deterministic
              )
 
     assert {:ok, "diag-c1"} =
-             JidoCodeServer.start_conversation(project_id, conversation_id: "diag-c1")
+             Runtime.start_conversation(project_id, conversation_id: "diag-c1")
 
     assert :ok =
-             JidoCodeServer.send_event(project_id, "diag-c1", %{
+             Runtime.send_event(project_id, "diag-c1", %{
                "type" => "user.message",
                "content" => "hello"
              })
 
-    diagnostics = JidoCodeServer.diagnostics(project_id)
+    diagnostics = Runtime.diagnostics(project_id)
 
     assert diagnostics.project_id == project_id
     assert diagnostics.health.status == :ok
@@ -51,7 +53,7 @@ defmodule JidoCodeServer.ProjectPhase7Test do
     assert conversation_diag.event_count >= 1
     assert conversation_diag.pending_tool_call_count == 0
 
-    direct_diag = JidoCodeServer.conversation_diagnostics(project_id, "diag-c1")
+    direct_diag = Runtime.conversation_diagnostics(project_id, "diag-c1")
     assert direct_diag.conversation_id == "diag-c1"
     assert direct_diag.status == :idle
     assert direct_diag.event_count == conversation_diag.event_count
@@ -62,7 +64,7 @@ defmodule JidoCodeServer.ProjectPhase7Test do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:ok, project_id} =
-             JidoCodeServer.start_project(root,
+             Runtime.start_project(root,
                project_id: "phase7-watcher",
                watcher: true,
                watcher_debounce_ms: 40
@@ -77,11 +79,11 @@ defmodule JidoCodeServer.ProjectPhase7Test do
     send(watcher_pid, {:file_event, self(), {new_skill_path, [:modified]}})
 
     assert_eventually(fn ->
-      JidoCodeServer.list_assets(project_id, :skill)
+      Runtime.list_assets(project_id, :skill)
       |> Enum.any?(&(&1.name == "new_skill"))
     end)
 
-    diagnostics = JidoCodeServer.diagnostics(project_id)
+    diagnostics = Runtime.diagnostics(project_id)
     assert diagnostics.assets.counts.skill == 2
     assert event_count(diagnostics, "project.watcher_reload_completed") >= 1
     assert event_count(diagnostics, "project.assets_reloaded") >= 1
@@ -92,7 +94,7 @@ defmodule JidoCodeServer.ProjectPhase7Test do
     on_exit(fn -> TempProject.cleanup(root) end)
 
     assert {:ok, project_id} =
-             JidoCodeServer.start_project(root,
+             Runtime.start_project(root,
                project_id: "phase7-errors",
                conversation_orchestration: true,
                llm_adapter: :deterministic,
@@ -100,10 +102,10 @@ defmodule JidoCodeServer.ProjectPhase7Test do
              )
 
     assert {:ok, "errors-c1"} =
-             JidoCodeServer.start_conversation(project_id, conversation_id: "errors-c1")
+             Runtime.start_conversation(project_id, conversation_id: "errors-c1")
 
     assert :ok =
-             JidoCodeServer.send_event(project_id, "errors-c1", %{
+             Runtime.send_event(project_id, "errors-c1", %{
                "type" => "user.message",
                "content" => "run command",
                "llm" => %{
@@ -112,10 +114,10 @@ defmodule JidoCodeServer.ProjectPhase7Test do
              })
 
     assert_eventually(fn ->
-      event_count(JidoCodeServer.diagnostics(project_id), "tool.failed") >= 1
+      event_count(Runtime.diagnostics(project_id), "tool.failed") >= 1
     end)
 
-    diagnostics = JidoCodeServer.diagnostics(project_id)
+    diagnostics = Runtime.diagnostics(project_id)
 
     assert diagnostics.health.status == :degraded
     assert event_count(diagnostics, "tool.failed") >= 1

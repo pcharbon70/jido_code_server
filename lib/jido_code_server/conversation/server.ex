@@ -1,13 +1,13 @@
-defmodule JidoCodeServer.Conversation.Server do
+defmodule Jido.Code.Server.Conversation.Server do
   @moduledoc """
   Thin GenServer wrapper around conversation runtime state.
   """
 
   use GenServer
 
-  alias JidoCodeServer.Conversation.Loop
-  alias JidoCodeServer.Telemetry
-  alias JidoCodeServer.Types.Event
+  alias Jido.Code.Server.Conversation.Loop
+  alias Jido.Code.Server.Telemetry
+  alias Jido.Code.Server.Types.Event
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do

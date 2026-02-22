@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Engine.ProtocolSupervisor do
+defmodule Jido.Code.Server.Engine.ProtocolSupervisor do
   @moduledoc """
   Supervisor for global protocol adapter listeners.
   """
@@ -15,8 +15,8 @@ defmodule JidoCodeServer.Engine.ProtocolSupervisor do
     children =
       if Keyword.get(opts, :enabled, true) do
         [
-          {JidoCodeServer.Protocol.MCP.Gateway, [name: JidoCodeServer.Protocol.MCP.Gateway]},
-          {JidoCodeServer.Protocol.A2A.Gateway, [name: JidoCodeServer.Protocol.A2A.Gateway]}
+          {Jido.Code.Server.Protocol.MCP.Gateway, [name: Jido.Code.Server.Protocol.MCP.Gateway]},
+          {Jido.Code.Server.Protocol.A2A.Gateway, [name: Jido.Code.Server.Protocol.A2A.Gateway]}
         ]
       else
         []

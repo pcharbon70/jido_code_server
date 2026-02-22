@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Project.TaskSupervisor do
+defmodule Jido.Code.Server.Project.TaskSupervisor do
   @moduledoc """
   Named `Task.Supervisor` child-spec wrapper for project-scoped execution.
   """

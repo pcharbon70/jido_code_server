@@ -1,4 +1,4 @@
-defmodule JidoCodeServer.Types.Event do
+defmodule Jido.Code.Server.Types.Event do
   @moduledoc """
   Canonical event envelope type and normalization helpers.
   """
