@@ -6,6 +6,7 @@ defmodule Jido.Code.Server.Protocol.MCP.Gateway do
   use GenServer
 
   alias Jido.Code.Server.Engine
+  alias Jido.Code.Server.Telemetry
   alias Jido.Code.Server.Types.ToolCall
 
   @type project_id :: String.t()
@@ -43,7 +44,7 @@ defmodule Jido.Code.Server.Protocol.MCP.Gateway do
   @impl true
   def handle_call({:tools_list, project_id}, _from, state) do
     reply =
-      with :ok <- ensure_project(project_id) do
+      with :ok <- ensure_protocol_access(project_id, "mcp", "tools.list") do
         {:ok, Engine.list_tools(project_id)}
       end
 
@@ -52,7 +53,7 @@ defmodule Jido.Code.Server.Protocol.MCP.Gateway do
 
   def handle_call({:tools_call, project_id, tool_call}, _from, state) do
     reply =
-      with :ok <- ensure_project(project_id),
+      with :ok <- ensure_protocol_access(project_id, "mcp", "tools.call"),
            {:ok, normalized} <- ToolCall.from_map(tool_call) do
         Engine.run_tool(project_id, ToolCall.to_map(normalized))
       end
@@ -62,7 +63,7 @@ defmodule Jido.Code.Server.Protocol.MCP.Gateway do
 
   def handle_call({:send_message, project_id, conversation_id, content, opts}, _from, state) do
     reply =
-      with :ok <- ensure_project(project_id),
+      with :ok <- ensure_protocol_access(project_id, "mcp", "message.send"),
            :ok <- validate_content(content) do
         event = message_event(content, opts)
         Engine.send_event(project_id, conversation_id, event)
@@ -71,10 +72,22 @@ defmodule Jido.Code.Server.Protocol.MCP.Gateway do
     {:reply, reply, state}
   end
 
-  defp ensure_project(project_id) do
-    case Engine.whereis_project(project_id) do
-      {:ok, _pid} -> :ok
-      {:error, reason} -> {:error, reason}
+  defp ensure_protocol_access(project_id, protocol, operation) do
+    case Engine.protocol_allowed?(project_id, protocol) do
+      :ok ->
+        :ok
+
+      {:error, :protocol_denied} ->
+        Telemetry.emit("security.protocol_denied", %{
+          project_id: project_id,
+          protocol: protocol,
+          operation: operation
+        })
+
+        {:error, {:protocol_denied, protocol}}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

@@ -27,6 +27,7 @@ defmodule Jido.Code.Server.Telemetry do
     "tool" => :tool,
     "llm" => :llm,
     "policy" => :policy,
+    "protocol" => :protocol,
     "security" => :security,
     "assets" => :assets,
     "started" => :started,

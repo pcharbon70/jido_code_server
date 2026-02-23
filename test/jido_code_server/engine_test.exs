@@ -91,6 +91,9 @@ defmodule Jido.Code.Server.EngineTest do
     assert {:error, {:invalid_runtime_opt, :tool_env_allowlist, :expected_list_of_strings}} =
              Runtime.start_project(root, tool_env_allowlist: ["PATH", 123])
 
+    assert {:error, {:invalid_runtime_opt, :protocol_allowlist, :expected_list_of_strings}} =
+             Runtime.start_project(root, protocol_allowlist: ["mcp", 123])
+
     assert {:error, {:invalid_runtime_opt, :llm_model, :expected_string_or_nil}} =
              Runtime.start_project(root, llm_model: 123)
 
@@ -117,12 +120,14 @@ defmodule Jido.Code.Server.EngineTest do
     assert {:ok, "engine-runtime-normalize"} =
              Runtime.start_project(root,
                project_id: "engine-runtime-normalize",
-               network_egress_policy: "allow"
+               network_egress_policy: "allow",
+               protocol_allowlist: ["MCP"]
              )
 
     diagnostics = Runtime.diagnostics("engine-runtime-normalize")
 
     assert diagnostics.runtime_opts[:network_egress_policy] == :allow
+    assert diagnostics.runtime_opts[:protocol_allowlist] == ["MCP"]
     assert diagnostics.policy.network_egress_policy == :allow
   end
 

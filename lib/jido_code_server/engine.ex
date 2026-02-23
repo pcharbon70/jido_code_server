@@ -29,7 +29,8 @@ defmodule Jido.Code.Server.Engine do
     :network_allowed_schemes,
     :sensitive_path_denylist,
     :sensitive_path_allowlist,
-    :tool_env_allowlist
+    :tool_env_allowlist,
+    :protocol_allowlist
   ]
   @passthrough_runtime_opts [:project_id, :data_dir, :llm_adapter]
 
@@ -195,6 +196,13 @@ defmodule Jido.Code.Server.Engine do
   def diagnostics(project_id) do
     with_project(project_id, fn pid -> Project.diagnostics(pid) end)
   end
+
+  @spec protocol_allowed?(project_id(), String.t()) :: :ok | {:error, term()}
+  def protocol_allowed?(project_id, protocol) when is_binary(protocol) do
+    with_project(project_id, fn pid -> Project.protocol_allowed?(pid, protocol) end)
+  end
+
+  def protocol_allowed?(_project_id, _protocol), do: {:error, :invalid_protocol}
 
   defp resolve_project_id(opts) do
     case Keyword.get(opts, :project_id) do

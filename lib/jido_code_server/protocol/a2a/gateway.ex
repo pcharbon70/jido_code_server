@@ -6,6 +6,7 @@ defmodule Jido.Code.Server.Protocol.A2A.Gateway do
   use GenServer
 
   alias Jido.Code.Server.Engine
+  alias Jido.Code.Server.Telemetry
 
   @type project_id :: String.t()
   @type task_id :: String.t()
@@ -63,7 +64,7 @@ defmodule Jido.Code.Server.Protocol.A2A.Gateway do
   @impl true
   def handle_call({:agent_card, project_id}, _from, state) do
     reply =
-      with :ok <- ensure_project(project_id) do
+      with :ok <- ensure_protocol_access(project_id, "a2a", "agent.card") do
         tools = Engine.list_tools(project_id)
         skills = Engine.list_assets(project_id, :skill)
         commands = Engine.list_assets(project_id, :command)
@@ -91,7 +92,7 @@ defmodule Jido.Code.Server.Protocol.A2A.Gateway do
 
   def handle_call({:task_create, project_id, content, opts}, _from, state) do
     reply =
-      with :ok <- ensure_project(project_id),
+      with :ok <- ensure_protocol_access(project_id, "a2a", "task.create"),
            :ok <- validate_content(content),
            {:ok, conversation_id} <- Engine.start_conversation(project_id, start_opts(opts)),
            :ok <-
@@ -114,7 +115,7 @@ defmodule Jido.Code.Server.Protocol.A2A.Gateway do
 
   def handle_call({:message_send, project_id, task_id, content, opts}, _from, state) do
     reply =
-      with :ok <- ensure_project(project_id),
+      with :ok <- ensure_protocol_access(project_id, "a2a", "message.send"),
            :ok <- validate_content(content) do
         Engine.send_event(
           project_id,
@@ -130,7 +131,7 @@ defmodule Jido.Code.Server.Protocol.A2A.Gateway do
     reason = Keyword.get(opts, :reason, :cancelled)
 
     reply =
-      with :ok <- ensure_project(project_id) do
+      with :ok <- ensure_protocol_access(project_id, "a2a", "task.cancel") do
         Engine.send_event(project_id, task_id, %{
           "type" => "conversation.cancel",
           "meta" => %{
@@ -146,7 +147,7 @@ defmodule Jido.Code.Server.Protocol.A2A.Gateway do
 
   def handle_call({:subscribe_task, project_id, task_id, pid}, _from, state) do
     reply =
-      with :ok <- ensure_project(project_id) do
+      with :ok <- ensure_protocol_access(project_id, "a2a", "task.subscribe") do
         Engine.subscribe_conversation(project_id, task_id, pid)
       end
 
@@ -155,17 +156,29 @@ defmodule Jido.Code.Server.Protocol.A2A.Gateway do
 
   def handle_call({:unsubscribe_task, project_id, task_id, pid}, _from, state) do
     reply =
-      with :ok <- ensure_project(project_id) do
+      with :ok <- ensure_protocol_access(project_id, "a2a", "task.unsubscribe") do
         Engine.unsubscribe_conversation(project_id, task_id, pid)
       end
 
     {:reply, reply, state}
   end
 
-  defp ensure_project(project_id) do
-    case Engine.whereis_project(project_id) do
-      {:ok, _pid} -> :ok
-      {:error, reason} -> {:error, reason}
+  defp ensure_protocol_access(project_id, protocol, operation) do
+    case Engine.protocol_allowed?(project_id, protocol) do
+      :ok ->
+        :ok
+
+      {:error, :protocol_denied} ->
+        Telemetry.emit("security.protocol_denied", %{
+          project_id: project_id,
+          protocol: protocol,
+          operation: operation
+        })
+
+        {:error, {:protocol_denied, protocol}}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

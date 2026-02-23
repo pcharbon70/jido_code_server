@@ -121,6 +121,11 @@ defmodule Jido.Code.Server.Engine.Project do
     GenServer.call(pid, :diagnostics)
   end
 
+  @spec protocol_allowed?(pid(), String.t()) :: :ok | {:error, term()}
+  def protocol_allowed?(pid, protocol) when is_pid(pid) and is_binary(protocol) do
+    GenServer.call(pid, {:protocol_allowed?, protocol})
+  end
+
   @impl true
   def init(opts) do
     project_id = Keyword.fetch!(opts, :project_id)
@@ -344,6 +349,14 @@ defmodule Jido.Code.Server.Engine.Project do
     reply =
       delegate(fn -> Server.diagnostics(state.project_server) end)
       |> unwrap_delegate(%{})
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:protocol_allowed?, protocol}, _from, state) do
+    reply =
+      delegate(fn -> Server.protocol_allowed?(state.project_server, protocol) end)
+      |> unwrap_delegate({:error, :project_unavailable})
 
     {:reply, reply, state}
   end

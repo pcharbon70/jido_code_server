@@ -52,6 +52,9 @@
 - `security.env_denied`:
   - warning by default; indicates disallowed or malformed `env` passthrough on command/workflow tools.
   - tune `tool_env_allowlist` only for explicitly approved environment variable keys.
+- `security.protocol_denied`:
+  - warning by default; indicates blocked MCP/A2A adapter access due project `protocol_allowlist`.
+  - review payload context (`protocol`, `operation`) and update per-project `protocol_allowlist` only when exposure is intentional.
 
 ### Asset lifecycle
 

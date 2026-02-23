@@ -119,6 +119,11 @@ defmodule Jido.Code.Server.Project.Server do
     GenServer.call(server, :diagnostics)
   end
 
+  @spec protocol_allowed?(GenServer.server(), String.t()) :: :ok | {:error, :protocol_denied}
+  def protocol_allowed?(server, protocol) when is_binary(protocol) do
+    GenServer.call(server, {:protocol_allowed?, protocol})
+  end
+
   @spec summary(GenServer.server()) :: map()
   def summary(server) do
     GenServer.call(server, :summary)
@@ -391,6 +396,17 @@ defmodule Jido.Code.Server.Project.Server do
     {:reply, diagnostics, state}
   end
 
+  def handle_call({:protocol_allowed?, protocol}, _from, state) do
+    reply =
+      if protocol_allowed_for_project?(state, protocol) do
+        :ok
+      else
+        {:error, :protocol_denied}
+      end
+
+    {:reply, reply, state}
+  end
+
   def handle_call(:summary, _from, state) do
     diagnostics = AssetStore.diagnostics(state.asset_store)
 
@@ -544,6 +560,39 @@ defmodule Jido.Code.Server.Project.Server do
     Keyword.get(state.runtime_opts, key, default)
   end
 
+  defp protocol_allowed_for_project?(state, protocol) do
+    case normalize_protocol_name(protocol) do
+      nil ->
+        false
+
+      normalized_protocol ->
+        allowlist =
+          state
+          |> runtime_opt(:protocol_allowlist, Config.protocol_allowlist())
+          |> normalize_protocol_allowlist()
+
+        "*" in allowlist or normalized_protocol in allowlist
+    end
+  end
+
+  defp normalize_protocol_allowlist(allowlist) when is_list(allowlist) do
+    allowlist
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&normalize_protocol_name/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp normalize_protocol_allowlist(_allowlist), do: Config.protocol_allowlist()
+
+  defp normalize_protocol_name(protocol) when is_binary(protocol) do
+    normalized = protocol |> String.trim() |> String.downcase()
+    if normalized == "", do: nil, else: normalized
+  end
+
+  defp normalize_protocol_name(_protocol), do: nil
+
   defp conversation_orchestration_enabled?(runtime_opts) when is_list(runtime_opts) do
     Keyword.get(runtime_opts, :conversation_orchestration, false) == true
   end
@@ -581,6 +630,7 @@ defmodule Jido.Code.Server.Project.Server do
           :sensitive_path_allowlist,
           :outside_root_allowlist,
           :tool_env_allowlist,
+          :protocol_allowlist,
           :llm_timeout_ms
         ]),
       health: %{
