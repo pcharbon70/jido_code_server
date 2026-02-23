@@ -284,13 +284,23 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     end
   end
 
-  defp execute_asset_tool(_project_ctx, :workflow, asset, call) do
-    {:ok,
-     preview_asset_tool_result(
-       asset,
-       call.args,
-       "Workflow execution bridge to jido_workflow is introduced in a later implementation slice."
-     )}
+  defp execute_asset_tool(project_ctx, :workflow, asset, call) do
+    case execute_workflow_asset_tool(project_ctx, asset, call) do
+      {:ok, result} ->
+        {:ok, result}
+
+      {:error, {:invalid_workflow_definition, reason}} ->
+        {:ok,
+         preview_asset_tool_result(
+           asset,
+           call.args,
+           "Workflow definition is invalid for jido_workflow runtime; running in preview compatibility mode.",
+           reason
+         )}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp execute_command_asset_tool(project_ctx, asset, call) do
@@ -319,6 +329,32 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     end
   end
 
+  defp execute_workflow_asset_tool(project_ctx, asset, call) do
+    with {:ok, definition} <- parse_workflow_definition(asset),
+         {:ok, execution} <-
+           execute_workflow_definition(
+             definition,
+             workflow_inputs_from_call(call.args),
+             workflow_execution_opts(project_ctx, call, definition)
+           ) do
+      {:ok,
+       %{
+         asset: asset,
+         args: call.args,
+         mode: :executed,
+         runtime: :jido_workflow,
+         workflow: definition.name,
+         execution: execution
+       }}
+    else
+      {:error, {:invalid_workflow_definition, _reason}} = error ->
+        error
+
+      {:error, reason} ->
+        {:error, {:workflow_execution_failed, reason}}
+    end
+  end
+
   defp parse_command_definition(%{body: body, path: path})
        when is_binary(body) and is_binary(path) do
     case parse_command_frontmatter(body, path) do
@@ -329,6 +365,16 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
   defp parse_command_definition(_asset),
     do: {:error, {:invalid_command_definition, :invalid_asset}}
+
+  defp parse_workflow_definition(%{body: body}) when is_binary(body) do
+    case parse_workflow_markdown(body) do
+      {:ok, definition} -> {:ok, definition}
+      {:error, reason} -> {:error, {:invalid_workflow_definition, reason}}
+    end
+  end
+
+  defp parse_workflow_definition(_asset),
+    do: {:error, {:invalid_workflow_definition, :invalid_asset}}
 
   defp command_params_from_call(args) when is_map(args) do
     case map_get_value(args, "params") do
@@ -341,6 +387,18 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   end
 
   defp command_params_from_call(_args), do: %{}
+
+  defp workflow_inputs_from_call(args) when is_map(args) do
+    case map_get_value(args, "inputs") do
+      inputs when is_map(inputs) ->
+        inputs
+
+      _other ->
+        Map.drop(args, ["inputs", :inputs, "simulate_delay_ms", :simulate_delay_ms, "env", :env])
+    end
+  end
+
+  defp workflow_inputs_from_call(_args), do: %{}
 
   defp command_execution_context(project_ctx, call) do
     %{
@@ -361,6 +419,17 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
   defp maybe_put_command_executor(context, _executor_module), do: context
 
+  defp workflow_execution_opts(project_ctx, call, definition) do
+    []
+    |> Keyword.put(:workflow_id, definition.name)
+    |> Keyword.put(:run_id, workflow_run_id(call))
+    |> Keyword.put(:bus, :jido_code_bus)
+    |> maybe_put_opt(:backend, Map.get(project_ctx, :workflow_backend))
+  end
+
+  defp maybe_put_opt(opts, _key, nil), do: opts
+  defp maybe_put_opt(opts, key, value), do: Keyword.put(opts, key, value)
+
   defp command_invocation_id(call) do
     case correlation_id_from_call(call) do
       correlation_id when is_binary(correlation_id) and correlation_id != "" ->
@@ -371,7 +440,17 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     end
   end
 
-  defp preview_asset_tool_result(asset, args, note, reason \\ nil) when is_binary(note) do
+  defp workflow_run_id(call) do
+    case correlation_id_from_call(call) do
+      correlation_id when is_binary(correlation_id) and correlation_id != "" ->
+        correlation_id
+
+      _other ->
+        "wf-#{System.unique_integer([:positive, :monotonic])}"
+    end
+  end
+
+  defp preview_asset_tool_result(asset, args, note, reason) when is_binary(note) do
     base = %{
       asset: asset,
       args: args,
@@ -398,6 +477,22 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     end
   end
 
+  defp parse_workflow_markdown(body) when is_binary(body) do
+    loader_module = JidoWorkflow.Workflow.Loader
+
+    case Code.ensure_loaded(loader_module) do
+      {:module, _loaded} ->
+        if function_exported?(loader_module, :load_markdown, 1) do
+          loader_module.load_markdown(body)
+        else
+          {:error, :workflow_loader_unavailable}
+        end
+
+      _other ->
+        {:error, :workflow_loader_unavailable}
+    end
+  end
+
   defp execute_command_definition(definition, params, context)
        when is_map(params) and is_map(context) do
     runtime_module = JidoCommand.Extensibility.CommandRuntime
@@ -412,6 +507,23 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
       _other ->
         {:error, :command_runtime_unavailable}
+    end
+  end
+
+  defp execute_workflow_definition(definition, inputs, opts)
+       when is_map(inputs) and is_list(opts) do
+    runtime_module = JidoWorkflow.Workflow.Engine
+
+    case Code.ensure_loaded(runtime_module) do
+      {:module, _loaded} ->
+        if function_exported?(runtime_module, :execute_definition, 3) do
+          runtime_module.execute_definition(definition, inputs, opts)
+        else
+          {:error, :workflow_runtime_unavailable}
+        end
+
+      _other ->
+        {:error, :workflow_runtime_unavailable}
     end
   end
 
