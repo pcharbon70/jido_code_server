@@ -17,6 +17,7 @@
   - Runtime option validation and normalization at project start
   - Environment-passthrough controls for command/workflow tools
   - Configurable alert routing for escalation telemetry signals
+  - Per-project strict asset loading fail-fast mode
 
 ## Implemented Controls
 
@@ -193,7 +194,7 @@
 - Validation covers:
   - positive integer guards (`tool_timeout_ms`, `tool_max_output_bytes`, etc.)
   - non-negative integer guards (`tool_max_concurrency_per_conversation`)
-  - boolean guards (`watcher`, `conversation_orchestration`)
+  - boolean guards (`watcher`, `conversation_orchestration`, `strict_asset_loading`)
   - list-of-string guards for allow/deny and path/network list options
   - `network_egress_policy` value validation with normalization from `"allow"/"deny"` to atoms
   - optional LLM option type checks (`llm_model`, `llm_system_prompt`, `llm_temperature`, `llm_max_tokens`)
@@ -228,6 +229,16 @@
   - `{module, function, extra_args}` receiving `(event_name, payload, metadata, ...extra_args)`
 - Dispatch is best-effort and non-fatal; router failures do not crash runtime telemetry emission.
 
+### 18. Strict asset loading runtime mode
+
+- Runtime startup now supports project-level strict loader behavior:
+  - `strict_asset_loading` runtime option (boolean)
+- In strict mode:
+  - startup fails fast when loader parse errors are present (`:asset_load_failed`)
+- In lenient mode:
+  - project starts with diagnostics errors captured, preserving runtime availability
+- This makes loader strictness an explicit per-project reliability/safety control.
+
 ## Evidence (Automated Tests)
 
 - Added: `test/jido_code_server/project_phase9_test.exs`
@@ -250,6 +261,7 @@
   - network deny-by-default and allowlist enforcement
   - protocol deny-by-default with explicit allow override
   - configurable escalation alert routing from security/timeout telemetry signals
+  - strict asset-loading startup failure mode with lenient fallback behavior
   - secret redaction behavior
   - repeated timeout escalation signal
 

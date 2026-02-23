@@ -16,4 +16,5 @@ config :jido_code_server,
   llm_timeout_ms: 120_000,
   tool_max_concurrency: 8,
   tool_max_concurrency_per_conversation: 4,
+  strict_asset_loading: false,
   watcher_debounce_ms: 250

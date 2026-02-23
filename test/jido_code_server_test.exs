@@ -31,6 +31,7 @@ defmodule Jido.Code.ServerTest do
     assert Config.llm_timeout_ms() == 120_000
     assert Config.tool_max_concurrency() == 8
     assert Config.tool_max_concurrency_per_conversation() == 4
+    assert Config.strict_asset_loading() == false
     assert Config.watcher_debounce_ms() == 250
   end
 

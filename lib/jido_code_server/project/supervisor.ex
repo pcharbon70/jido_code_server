@@ -33,10 +33,16 @@ defmodule Jido.Code.Server.Project.Supervisor do
     runtime_opts = Keyword.get(opts, :runtime_opts, [])
     watcher_opts = Keyword.get(opts, :watcher_opts, [])
 
+    asset_store_opts =
+      case Keyword.fetch(runtime_opts, :strict_asset_loading) do
+        {:ok, strict} -> [name: asset_store, project_id: project_id, strict: strict]
+        :error -> [name: asset_store, project_id: project_id]
+      end
+
     children = [
       {Jido.Code.Server.Project.ConversationRegistry, name: conversation_registry},
       {Jido.Code.Server.Project.ConversationSupervisor, name: conversation_supervisor},
-      {Jido.Code.Server.Project.AssetStore, [name: asset_store, project_id: project_id]},
+      {Jido.Code.Server.Project.AssetStore, asset_store_opts},
       {Jido.Code.Server.Project.Policy,
        Keyword.merge([name: policy, project_id: project_id, root_path: root_path], policy_opts)},
       {Jido.Code.Server.Project.TaskSupervisor, name: task_supervisor},

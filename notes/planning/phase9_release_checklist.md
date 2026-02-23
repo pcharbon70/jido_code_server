@@ -31,6 +31,7 @@
 ## Reliability Gates
 
 - [ ] Loader parse failure paths are tested and non-crashing.
+- [ ] `strict_asset_loading` fail-fast startup mode is validated for loader parse errors.
 - [ ] LLM adapter failure path emits `llm.failed` and keeps conversation runtime available.
 - [ ] Watcher storm behavior remains debounced and stable.
 - [ ] Multi-project concurrent conversation workload validates isolation.
