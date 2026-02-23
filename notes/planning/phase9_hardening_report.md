@@ -277,17 +277,24 @@
 - Security telemetry emits:
   - `security.protocol_denied` with protocol and operation context for triage.
 
-### 21. Command runtime bridge with compatibility fallback
+### 21. Command and workflow runtime bridges with compatibility fallback
 
-- Command-backed tools now attempt real command execution through `jido_command` when the
-  markdown asset is a valid command definition with YAML frontmatter.
+- Asset-backed command/workflow tools now attempt real execution when markdown assets contain
+  valid runtime definitions:
+  - commands via `jido_command`
+  - workflows via `jido_workflow`
 - Execution behavior:
-  - parse command markdown definition from asset content
-  - execute through `JidoCommand.Extensibility.CommandRuntime`
-  - return structured runtime metadata under tool result (`mode: :executed`, `runtime: :jido_command`)
+  - parse command markdown frontmatter into command definitions
+  - parse workflow markdown into validated workflow definitions
+  - execute through runtime engines:
+    - `JidoCommand.Extensibility.CommandRuntime`
+    - `JidoWorkflow.Workflow.Engine`
+  - return structured runtime metadata under tool result:
+    - command: `mode: :executed`, `runtime: :jido_command`
+    - workflow: `mode: :executed`, `runtime: :jido_workflow`
 - Compatibility behavior:
-  - invalid/legacy command markdown assets now degrade to preview mode rather than failing tool calls
-  - preview fallback includes parse reason context for operator debugging
+  - invalid/legacy command/workflow markdown assets degrade to preview mode rather than failing tool calls
+  - preview fallback includes parse/validation reason context for operator debugging
 
 ## Evidence (Automated Tests)
 
@@ -324,10 +331,10 @@
   - timeout/cancellation child-process cleanup signal (`tool.child_processes_terminated`)
   - per-project protocol boundary enforcement across MCP/A2A adapters with security telemetry
   - command runtime execution via `jido_command` for valid command markdown and compatibility fallback for invalid definitions
+  - workflow runtime execution via `jido_workflow` for valid workflow markdown and compatibility fallback for invalid definitions
 
 ## Residual Constraints
 
 - Child-process termination controls require execution bridges to register spawned child processes; untracked external processes remain outside this guardrail.
-- Workflow-backed tools remain on preview execution path pending `jido_workflow` bridge wiring.
 - Opaque payload enforcement is heuristic-based and may miss deeply encoded or encrypted endpoint data.
 - Benchmark harness is synthetic/in-process; production sign-off should still include environment-specific external load profiles.

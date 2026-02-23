@@ -1,3 +1,16 @@
+defmodule Jido.Code.Server.ToolRuntimePolicyTest.WorkflowEchoAction do
+  use Jido.Action,
+    name: "tool_runtime_policy_workflow_echo_action",
+    schema: [
+      file_path: [type: :string, required: true]
+    ]
+
+  @impl true
+  def run(%{file_path: file_path}, _context) do
+    {:ok, %{"file_path" => file_path}}
+  end
+end
+
 defmodule Jido.Code.Server.ToolRuntimePolicyTest do
   use ExUnit.Case, async: false
 
@@ -126,6 +139,59 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
     assert result.note =~ "preview compatibility mode"
   end
 
+  test "workflow tool executes valid markdown definitions through jido_workflow runtime" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    workflow_path = Path.join(root, ".jido/workflows/example_workflow.md")
+
+    File.write!(workflow_path, valid_workflow_markdown())
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase4-workflow-runtime",
+               network_egress_policy: :allow
+             )
+
+    assert {:ok, %{status: :ok, tool: "workflow.run.example_workflow", result: result}} =
+             Runtime.run_tool(project_id, %{
+               name: "workflow.run.example_workflow",
+               args: %{
+                 "inputs" => %{"file_path" => "lib/example.ex"}
+               }
+             })
+
+    assert result.mode == :executed
+    assert result.runtime == :jido_workflow
+    assert result.workflow == "example_workflow"
+    assert result.asset.name == "example_workflow"
+    assert get_in(result, [:execution, :status]) == :completed
+    assert get_in(result, [:execution, :workflow_id]) == "example_workflow"
+    assert get_in(result, [:execution, :result, "file_path"]) == "lib/example.ex"
+  end
+
+  test "workflow tool falls back to preview mode when workflow markdown is invalid" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase4-workflow-preview-fallback",
+               network_egress_policy: :allow
+             )
+
+    assert {:ok, %{status: :ok, tool: "workflow.run.example_workflow", result: result}} =
+             Runtime.run_tool(project_id, %{
+               name: "workflow.run.example_workflow",
+               args: %{}
+             })
+
+    assert result.mode == :preview
+    assert result.asset.name == "example_workflow"
+    assert is_binary(result.note)
+    assert result.note =~ "preview compatibility mode"
+  end
+
   test "project allow_tools policy limits inventory and execution surface" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
@@ -205,6 +271,33 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
       - asset.list
     ---
     Execute path={{path}} query={{query}}
+    """
+  end
+
+  defp valid_workflow_markdown do
+    """
+    ---
+    name: example_workflow
+    version: "1.0.0"
+    description: Example workflow fixture for runtime execution tests
+    enabled: true
+    inputs:
+      - name: file_path
+        type: string
+        required: true
+    ---
+    # Example Workflow
+
+    ## Steps
+
+    ### echo
+    - **type**: action
+    - **module**: Jido.Code.Server.ToolRuntimePolicyTest.WorkflowEchoAction
+    - **inputs**:
+      - file_path: `input:file_path`
+
+    ## Return
+    - **value**: echo
     """
   end
 end
