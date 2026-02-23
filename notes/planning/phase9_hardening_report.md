@@ -194,6 +194,7 @@
 - Cancellable behavior:
   - pending async task PIDs are tracked per `{project_id, conversation_id}`
   - `conversation.cancel` terminates tracked in-flight tasks and suppresses stale late-arriving task results
+  - timeout and cancellation paths terminate registered child processes and emit `tool.child_processes_terminated`
 - Test coverage validates:
   - async completion updates timeline and clears `pending_tool_calls`
   - cancellation path emits `tool.cancelled` and avoids stale `tool.completed` after cancel
@@ -307,10 +308,11 @@
   - synthetic load/soak benchmark harness with structured report output
   - secret redaction behavior
   - repeated timeout escalation signal
+  - timeout/cancellation child-process cleanup signal (`tool.child_processes_terminated`)
   - per-project protocol boundary enforcement across MCP/A2A adapters with security telemetry
 
 ## Residual Constraints
 
-- Tool timeout handling currently terminates the task process; child OS process group termination is not yet implemented.
+- Child-process termination controls require execution bridges to register spawned child processes; untracked external processes remain outside this guardrail.
 - Opaque payload enforcement is heuristic-based and may miss deeply encoded or encrypted endpoint data.
 - Benchmark harness is synthetic/in-process; production sign-off should still include environment-specific external load profiles.

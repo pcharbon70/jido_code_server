@@ -11,6 +11,8 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
   alias Jido.Code.Server.Telemetry
   alias Jido.Code.Server.TestSupport.TempProject
 
+  @pending_task_table Module.concat(Jido.Code.Server.Conversation.ToolBridge, PendingTasks)
+
   setup do
     Telemetry.reset()
 
@@ -478,6 +480,16 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
                }
              })
 
+    pending_task_pid = wait_for_pending_task_pid(project_id, "phase9-async-c2")
+    child_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+    on_exit(fn ->
+      if Process.alive?(child_pid), do: Process.exit(child_pid, :kill)
+      :ok
+    end)
+
+    :ok = ToolRunner.register_child_process(pending_task_pid, child_pid)
+
     assert :ok =
              Runtime.send_event(project_id, "phase9-async-c2", %{
                "type" => "conversation.cancel",
@@ -503,8 +515,11 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
                map_lookup(event, :meta) |> map_lookup(:correlation_id) == request_correlation_id
            end)
 
+    assert_eventually(fn -> not Process.alive?(child_pid) end)
+
     diagnostics = Runtime.diagnostics(project_id)
     assert event_count(diagnostics, "tool.cancelled") >= 1
+    assert event_count(diagnostics, "tool.child_processes_terminated") >= 1
   end
 
   test "sensitive file paths are denied by default and emit security signal" do
@@ -1104,6 +1119,34 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
     assert event_count(diagnostics, "security.repeated_timeout_failures") >= 1
   end
 
+  test "timeouts terminate registered child processes and emit cleanup telemetry" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    project_ctx =
+      direct_project_ctx(root,
+        project_id: "phase9-timeout-child-termination",
+        tool_timeout_ms: 0
+      )
+
+    child_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+    on_exit(fn ->
+      if Process.alive?(child_pid), do: Process.exit(child_pid, :kill)
+      :ok
+    end)
+
+    :ok = ToolRunner.register_child_process(self(), child_pid)
+
+    assert {:error, %{status: :error, reason: :timeout}} =
+             ToolRunner.run(project_ctx, %{name: "asset.list", args: %{"type" => "skill"}})
+
+    assert_eventually(fn -> not Process.alive?(child_pid) end)
+
+    diagnostics = %{telemetry: Telemetry.snapshot("phase9-timeout-child-termination")}
+    assert event_count(diagnostics, "tool.child_processes_terminated") >= 1
+  end
+
   test "project runtime options tune tool guardrails" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
@@ -1397,6 +1440,39 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
   defp event_count(diagnostics, event_name) do
     diagnostics.telemetry.event_counts
     |> Map.get(event_name, 0)
+  end
+
+  defp wait_for_pending_task_pid(project_id, conversation_id, attempts \\ 40)
+
+  defp wait_for_pending_task_pid(_project_id, _conversation_id, 0) do
+    flunk("pending async task pid was not registered in time")
+  end
+
+  defp wait_for_pending_task_pid(project_id, conversation_id, attempts) do
+    case lookup_pending_task_pid(project_id, conversation_id) do
+      {:ok, task_pid} ->
+        task_pid
+
+      :error ->
+        Process.sleep(25)
+        wait_for_pending_task_pid(project_id, conversation_id, attempts - 1)
+    end
+  end
+
+  defp lookup_pending_task_pid(project_id, conversation_id) do
+    case :ets.whereis(@pending_task_table) do
+      :undefined ->
+        :error
+
+      _ ->
+        case :ets.match_object(@pending_task_table, {{project_id, conversation_id, :"$1"}, :"$2"}) do
+          [{{^project_id, ^conversation_id, task_pid}, _call} | _rest] when is_pid(task_pid) ->
+            {:ok, task_pid}
+
+          _ ->
+            :error
+        end
+    end
   end
 
   defp assert_eventually(fun, attempts \\ 40)

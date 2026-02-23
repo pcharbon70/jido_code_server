@@ -30,6 +30,9 @@
   - async requests (`meta.run_mode = "async"`) should transition to `tool.completed`/`tool.failed` unless conversation cancellation occurs first.
 - `tool.timeout`:
   - investigate immediately if timeout count spikes > 10 in 5 minutes for any project.
+- `tool.child_processes_terminated`:
+  - expected during timeout/cancel cleanup when tools spawn registered child processes.
+  - investigate if frequent under normal load; indicates persistent long-running or stuck child execution.
 - `security.repeated_timeout_failures`:
   - page on first occurrence per project; indicates repeated timeout threshold reached.
 
@@ -89,6 +92,7 @@
    - sandbox violation
    - sandbox exception usage anomaly
    - repeated timeout failures
+   - abnormal child-process termination volume
    - loader/watcher degradation
 4. Apply containment:
    - stop high-error conversations with `Jido.Code.Server.stop_conversation/2`
