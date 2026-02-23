@@ -739,6 +739,51 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
     assert event_count(diagnostics, "security.network_denied") >= 1
   end
 
+  test "network allowlist inspects nested endpoint targets and host values" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-network-allowlist-nested",
+               network_egress_policy: :allow,
+               network_allowlist: ["example.com"]
+             )
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{
+                 "path" => ".jido/commands/example_command.md",
+                 "request" => %{"endpoint" => "https://api.example.com/v1/status"}
+               },
+               meta: %{"conversation_id" => "phase9-network-c2-nested"}
+             })
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{
+                 "path" => ".jido/commands/example_command.md",
+                 "connection" => %{"host" => "api.example.com:443"}
+               },
+               meta: %{"conversation_id" => "phase9-network-c2-nested"}
+             })
+
+    assert {:error, %{status: :error, reason: :network_endpoint_denied}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{
+                 "path" => ".jido/commands/example_command.md",
+                 "requests" => [%{"endpoint" => "https://evil.test/payload"}]
+               },
+               meta: %{"conversation_id" => "phase9-network-c2-nested"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert event_count(diagnostics, "security.network_denied") >= 1
+  end
+
   test "network egress allow denies high-risk protocols by default" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
@@ -758,6 +803,31 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
                  "url" => "ftp://api.example.com/v1/status"
                },
                meta: %{"conversation_id" => "phase9-network-c3"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert event_count(diagnostics, "security.network_denied") >= 1
+  end
+
+  test "network scheme guardrails inspect nested URL targets" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-network-protocol-nested",
+               network_egress_policy: :allow,
+               network_allowlist: ["example.com"]
+             )
+
+    assert {:error, %{status: :error, reason: :network_protocol_denied}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{
+                 "path" => ".jido/commands/example_command.md",
+                 "request" => %{"endpoint" => "ftp://api.example.com/v1/status"}
+               },
+               meta: %{"conversation_id" => "phase9-network-c3-nested"}
              })
 
     diagnostics = Runtime.diagnostics(project_id)

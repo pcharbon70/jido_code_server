@@ -108,6 +108,8 @@
   - explicit enable (`:allow`)
   - optional `network_allowlist` endpoint/domain filtering when enabled
   - protocol allowlist guardrail via `network_allowed_schemes` (default `["http", "https"]`)
+- Network target extraction now traverses nested map/list payloads for network target keys
+  (`url`/`uri`/`host`/`domain`/`endpoint`) instead of only top-level args.
 - Disallowed protocols are denied with:
   - `:network_protocol_denied`
 - Policy telemetry now emits security signal on denied network attempts:
@@ -259,6 +261,7 @@
   - environment passthrough deny-by-default with explicit allowlist control
   - sensitive path deny-by-default and explicit allowlist override
   - network deny-by-default and allowlist enforcement
+  - nested network target extraction for allowlist/protocol enforcement
   - protocol deny-by-default with explicit allow override
   - configurable escalation alert routing from security/timeout telemetry signals
   - strict asset-loading startup failure mode with lenient fallback behavior
@@ -268,5 +271,5 @@
 ## Residual Constraints
 
 - Tool timeout handling currently terminates the task process; child OS process group termination is not yet implemented.
-- Network allowlist enforcement depends on tool argument metadata (`url`/`host`/`domain`/`endpoint`) and is advisory for opaque command/workflow payloads.
+- Network allowlist enforcement now traverses nested payloads for recognized network keys, but remains advisory for fully opaque serialized blobs.
 - External benchmark harness beyond test-suite load scenarios remains pending for full operational sign-off.
