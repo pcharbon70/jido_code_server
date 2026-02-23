@@ -10,6 +10,8 @@ defmodule Jido.Code.Server.Project.Policy do
   alias Jido.Code.Server.Telemetry
 
   @max_decisions 200
+  @opaque_url_pattern ~r/(?:^|[^A-Za-z0-9+.\-])([A-Za-z][A-Za-z0-9+\-.]{1,20}:\/\/[^\s"'<>()[\]{}]+)/u
+  @opaque_keyed_value_pattern ~r/(url|uri|host|domain|endpoint)\s*(?:=|:|=>)\s*["']?([^\s"',}>]+)/iu
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -381,6 +383,19 @@ defmodule Jido.Code.Server.Project.Policy do
     |> collect_network_values(acc)
   end
 
+  defp collect_network_values(args, acc) when is_binary(args) do
+    trimmed = String.trim(args)
+
+    if trimmed == "" do
+      acc
+    else
+      case decode_network_payload(trimmed) do
+        {:ok, decoded} -> collect_network_values(decoded, acc)
+        :error -> collect_opaque_network_blob_values(acc, trimmed)
+      end
+    end
+  end
+
   defp collect_network_values(_args, acc), do: acc
 
   defp collect_network_values_for_target_value(value, acc) when is_binary(value) do
@@ -417,9 +432,46 @@ defmodule Jido.Code.Server.Project.Policy do
         collect_network_values_for_target_value(decoded, acc)
 
       :error ->
-        [original_value | acc]
+        acc
+        |> prepend_network_value(original_value)
+        |> collect_opaque_network_blob_values(trimmed_value)
     end
   end
+
+  defp prepend_network_value(acc, value) when is_binary(value), do: [value | acc]
+
+  defp collect_opaque_network_blob_values(acc, value) when is_binary(value) do
+    value
+    |> extract_opaque_network_blob_values()
+    |> Enum.reduce(acc, fn candidate, inner_acc ->
+      [candidate | inner_acc]
+    end)
+  end
+
+  defp extract_opaque_network_blob_values(value) when is_binary(value) do
+    url_values =
+      @opaque_url_pattern
+      |> Regex.scan(value, capture: :all_but_first)
+      |> Enum.map(&match_capture/1)
+      |> Enum.reject(&is_nil/1)
+
+    keyed_values =
+      @opaque_keyed_value_pattern
+      |> Regex.scan(value, capture: :all_but_first)
+      |> Enum.map(&keyed_value_capture/1)
+      |> Enum.reject(&is_nil/1)
+
+    (url_values ++ keyed_values)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+  end
+
+  defp match_capture([candidate]) when is_binary(candidate), do: candidate
+  defp match_capture(_match), do: nil
+
+  defp keyed_value_capture([_key, value]) when is_binary(value), do: value
+  defp keyed_value_capture(_match), do: nil
 
   defp decode_network_payload(value) when is_binary(value) do
     if network_payload_json?(value) do

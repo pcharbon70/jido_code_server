@@ -48,7 +48,7 @@
 - `security.network_denied`:
   - warning by default; page if repeated and unexpected for a project with enabled egress policy.
   - includes endpoint-denied and protocol-denied (`network_protocol_denied`) policy outcomes.
-  - evaluate nested and JSON-encoded request payloads too (`url`/`uri`/`host`/`domain`/`endpoint`) when triaging denials.
+  - evaluate nested payloads, JSON-encoded values, JSON wrapper fields, and opaque serialized blobs (`url`/`uri`/`host`/`domain`/`endpoint`) when triaging denials.
 - `security.env_denied`:
   - warning by default; indicates disallowed or malformed `env` passthrough on command/workflow tools.
   - tune `tool_env_allowlist` only for explicitly approved environment variable keys.
