@@ -784,6 +784,51 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
     assert event_count(diagnostics, "security.network_denied") >= 1
   end
 
+  test "network allowlist inspects JSON-encoded endpoint payloads" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-network-allowlist-json",
+               network_egress_policy: :allow,
+               network_allowlist: ["example.com"]
+             )
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{
+                 "path" => ".jido/commands/example_command.md",
+                 "endpoint" => ~s({"url":"https://api.example.com/v1/status"})
+               },
+               meta: %{"conversation_id" => "phase9-network-c2-json"}
+             })
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{
+                 "path" => ".jido/commands/example_command.md",
+                 "endpoint" => ~s({"host":"api.example.com:443"})
+               },
+               meta: %{"conversation_id" => "phase9-network-c2-json"}
+             })
+
+    assert {:error, %{status: :error, reason: :network_endpoint_denied}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{
+                 "path" => ".jido/commands/example_command.md",
+                 "endpoint" => ~s({"url":"https://evil.test/payload"})
+               },
+               meta: %{"conversation_id" => "phase9-network-c2-json"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert event_count(diagnostics, "security.network_denied") >= 1
+  end
+
   test "network egress allow denies high-risk protocols by default" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
@@ -828,6 +873,31 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
                  "request" => %{"endpoint" => "ftp://api.example.com/v1/status"}
                },
                meta: %{"conversation_id" => "phase9-network-c3-nested"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert event_count(diagnostics, "security.network_denied") >= 1
+  end
+
+  test "network scheme guardrails inspect JSON-encoded endpoint payloads" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-network-protocol-json",
+               network_egress_policy: :allow,
+               network_allowlist: ["example.com"]
+             )
+
+    assert {:error, %{status: :error, reason: :network_protocol_denied}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{
+                 "path" => ".jido/commands/example_command.md",
+                 "endpoint" => ~s({"url":"ftp://api.example.com/v1/status"})
+               },
+               meta: %{"conversation_id" => "phase9-network-c3-json"}
              })
 
     diagnostics = Runtime.diagnostics(project_id)
