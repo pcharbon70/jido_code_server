@@ -24,6 +24,7 @@
 - [ ] `conversation.cancel` emits deterministic `tool.cancelled` events with reason `conversation_cancelled` when pending tool calls exist.
 - [ ] Async tool requests (`meta.run_mode = "async"`) emit completion/failure events via conversation runtime and are cancellable by `conversation.cancel`.
 - [ ] Project startup rejects malformed runtime options with deterministic `{:invalid_runtime_opt, key, reason}` errors.
+- [ ] Command/workflow `env` passthrough is deny-by-default, allowlisted via `tool_env_allowlist`, and denied attempts emit `security.env_denied`.
 
 ## Reliability Gates
 

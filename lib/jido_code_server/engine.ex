@@ -28,7 +28,8 @@ defmodule Jido.Code.Server.Engine do
     :network_allowlist,
     :network_allowed_schemes,
     :sensitive_path_denylist,
-    :sensitive_path_allowlist
+    :sensitive_path_allowlist,
+    :tool_env_allowlist
   ]
 
   @type project_id :: String.t()

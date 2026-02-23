@@ -77,6 +77,7 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
     with {:ok, spec} <- ToolCatalog.get_tool(project_ctx, call.name),
          :ok <- validate_tool_args(spec, call.args),
+         :ok <- enforce_env_controls(project_ctx, spec, call.args),
          :ok <-
            Policy.authorize_tool(
              project_ctx.policy,
@@ -122,6 +123,7 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     duration_ms = System.monotonic_time(:millisecond) - started_at
     error = error_response(tool_call, duration_ms, reason)
     maybe_emit_timeout_signals(project_ctx, tool_call, reason)
+    maybe_emit_env_signals(project_ctx, tool_call, reason)
     Telemetry.emit("tool.failed", error)
     {:error, error}
   end
@@ -197,6 +199,102 @@ defmodule Jido.Code.Server.Project.ToolRunner do
         {:error, :asset_not_found}
     end
   end
+
+  defp enforce_env_controls(_project_ctx, %{kind: kind}, _args)
+       when kind not in [:command_run, :workflow_run],
+       do: :ok
+
+  defp enforce_env_controls(project_ctx, _spec, args) when is_map(args) do
+    case env_payload(args) do
+      :missing ->
+        :ok
+
+      {:ok, payload} when is_map(payload) ->
+        case normalize_env_keys(payload) do
+          {:ok, env_keys} -> authorize_env_keys(project_ctx, env_keys)
+          {:error, _reason} = error -> error
+        end
+
+      {:ok, _invalid_payload} ->
+        {:error, :invalid_env_payload}
+    end
+  end
+
+  defp enforce_env_controls(_project_ctx, _spec, _args), do: :ok
+
+  defp env_payload(args) when is_map(args) do
+    case Enum.find(args, fn
+           {"env", _value} -> true
+           {:env, _value} -> true
+           _ -> false
+         end) do
+      nil -> :missing
+      {_key, payload} -> {:ok, payload}
+    end
+  end
+
+  defp normalize_env_keys(payload) when is_map(payload) do
+    payload
+    |> Map.keys()
+    |> Enum.reduce_while([], fn key, acc ->
+      case normalize_env_key(key) do
+        {:ok, normalized} -> {:cont, [normalized | acc]}
+        :error -> {:halt, :error}
+      end
+    end)
+    |> case do
+      :error ->
+        {:error, :invalid_env_payload}
+
+      keys ->
+        normalized =
+          keys
+          |> Enum.uniq()
+          |> Enum.sort()
+
+        {:ok, normalized}
+    end
+  end
+
+  defp normalize_env_key(key) when is_binary(key) do
+    normalized = String.trim(key)
+    if normalized == "", do: :error, else: {:ok, normalized}
+  end
+
+  defp normalize_env_key(key) when is_atom(key), do: normalize_env_key(Atom.to_string(key))
+  defp normalize_env_key(_key), do: :error
+
+  defp authorize_env_keys(_project_ctx, []), do: :ok
+
+  defp authorize_env_keys(project_ctx, env_keys) do
+    allowlist =
+      project_ctx
+      |> Map.get(:tool_env_allowlist, Config.tool_env_allowlist())
+      |> normalize_env_allowlist()
+
+    denied =
+      env_keys
+      |> Enum.reject(&(&1 in allowlist))
+      |> Enum.uniq()
+      |> Enum.sort()
+
+    if denied == [] do
+      :ok
+    else
+      {:error, {:env_vars_not_allowed, denied}}
+    end
+  end
+
+  defp normalize_env_allowlist(allowlist) when is_list(allowlist) do
+    allowlist
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp normalize_env_allowlist(_allowlist), do: []
 
   defp maybe_simulate_delay(call) do
     case simulate_delay_ms(call) do
@@ -726,6 +824,29 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   end
 
   defp maybe_emit_timeout_signals(_project_ctx, _tool_call, _reason), do: :ok
+
+  defp maybe_emit_env_signals(project_ctx, tool_call, {:env_vars_not_allowed, denied_env_keys}) do
+    Telemetry.emit("security.env_denied", %{
+      project_id: project_ctx.project_id,
+      conversation_id: conversation_id_from_call(tool_call),
+      correlation_id: correlation_id_from_call(tool_call),
+      tool: tool_name(tool_call),
+      reason: :env_vars_not_allowed,
+      denied_env_keys: denied_env_keys
+    })
+  end
+
+  defp maybe_emit_env_signals(project_ctx, tool_call, :invalid_env_payload) do
+    Telemetry.emit("security.env_denied", %{
+      project_id: project_ctx.project_id,
+      conversation_id: conversation_id_from_call(tool_call),
+      correlation_id: correlation_id_from_call(tool_call),
+      tool: tool_name(tool_call),
+      reason: :invalid_env_payload
+    })
+  end
+
+  defp maybe_emit_env_signals(_project_ctx, _tool_call, _reason), do: :ok
 
   defp increment_timeout_counter(project_id, tool) do
     ensure_timeout_table()

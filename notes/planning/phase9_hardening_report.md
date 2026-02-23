@@ -15,6 +15,7 @@
   - Deterministic cancellation events for pending tool calls
   - Async tool execution bridge with cancellable in-flight task tracking
   - Runtime option validation and normalization at project start
+  - Environment-passthrough controls for command/workflow tools
 
 ## Implemented Controls
 
@@ -198,6 +199,18 @@
   - `{:invalid_runtime_opt, key, reason}`
 - This prevents silent misconfiguration from weakening runtime guardrails (for example nil/invalid list overrides).
 
+### 16. Environment inheritance guardrails
+
+- Command/workflow tool calls now enforce explicit env passthrough controls:
+  - `env` payload is denied by default
+  - allowlist override via runtime option `tool_env_allowlist`
+- Enforcement behavior:
+  - only `command.run.*` and `workflow.run.*` tools apply this control
+  - `env` must be a map when provided; non-map payloads are rejected
+  - env keys not in allowlist are rejected with `{:env_vars_not_allowed, denied_keys}`
+- Security telemetry emits:
+  - `security.env_denied` for denied env-key usage and invalid env payload shapes
+
 ## Evidence (Automated Tests)
 
 - Added: `test/jido_code_server/project_phase9_test.exs`
@@ -215,6 +228,7 @@
   - deterministic `tool.cancelled` events on conversation cancellation
   - cancellable async tool bridge execution path
   - runtime option validation and normalization
+  - environment passthrough deny-by-default with explicit allowlist control
   - sensitive path deny-by-default and explicit allowlist override
   - network deny-by-default and allowlist enforcement
   - protocol deny-by-default with explicit allow override
