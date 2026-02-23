@@ -84,6 +84,13 @@ defmodule Jido.Code.Server.Config do
     |> List.wrap()
   end
 
+  @spec tool_env_allowlist() :: [String.t()]
+  def tool_env_allowlist do
+    Application.get_env(@app, :tool_env_allowlist, [])
+    |> List.wrap()
+    |> Enum.filter(&is_binary/1)
+  end
+
   @spec llm_timeout_ms() :: pos_integer()
   def llm_timeout_ms do
     Application.get_env(@app, :llm_timeout_ms, 120_000)

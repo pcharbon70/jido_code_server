@@ -20,6 +20,7 @@ defmodule Jido.Code.ServerTest do
     assert Config.network_egress_policy() == :deny
     assert Config.network_allowlist() == []
     assert Config.outside_root_allowlist() == []
+    assert Config.tool_env_allowlist() == []
     assert Config.llm_timeout_ms() == 120_000
     assert Config.tool_max_concurrency() == 8
     assert Config.tool_max_concurrency_per_conversation() == 4

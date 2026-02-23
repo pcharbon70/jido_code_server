@@ -228,6 +228,8 @@ defmodule Jido.Code.Server.Project.Server do
             runtime_opt(state, :sensitive_path_allowlist, Config.sensitive_path_allowlist()),
           outside_root_allowlist:
             runtime_opt(state, :outside_root_allowlist, Config.outside_root_allowlist()),
+          tool_env_allowlist:
+            runtime_opt(state, :tool_env_allowlist, Config.tool_env_allowlist()),
           llm_timeout_ms: runtime_opt(state, :llm_timeout_ms, Config.llm_timeout_ms()),
           orchestration_enabled: conversation_orchestration_enabled?(state.runtime_opts),
           llm_adapter: Keyword.get(state.runtime_opts, :llm_adapter),
@@ -491,7 +493,8 @@ defmodule Jido.Code.Server.Project.Server do
       sensitive_path_allowlist:
         runtime_opt(state, :sensitive_path_allowlist, Config.sensitive_path_allowlist()),
       outside_root_allowlist:
-        runtime_opt(state, :outside_root_allowlist, Config.outside_root_allowlist())
+        runtime_opt(state, :outside_root_allowlist, Config.outside_root_allowlist()),
+      tool_env_allowlist: runtime_opt(state, :tool_env_allowlist, Config.tool_env_allowlist())
     }
   end
 
@@ -576,6 +579,7 @@ defmodule Jido.Code.Server.Project.Server do
           :sensitive_path_denylist,
           :sensitive_path_allowlist,
           :outside_root_allowlist,
+          :tool_env_allowlist,
           :llm_timeout_ms
         ]),
       health: %{

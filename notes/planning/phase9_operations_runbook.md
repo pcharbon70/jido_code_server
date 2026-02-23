@@ -48,6 +48,9 @@
 - `security.network_denied`:
   - warning by default; page if repeated and unexpected for a project with enabled egress policy.
   - includes endpoint-denied and protocol-denied (`network_protocol_denied`) policy outcomes.
+- `security.env_denied`:
+  - warning by default; indicates disallowed or malformed `env` passthrough on command/workflow tools.
+  - tune `tool_env_allowlist` only for explicitly approved environment variable keys.
 
 ### Asset lifecycle
 

@@ -84,6 +84,9 @@ defmodule Jido.Code.Server.EngineTest do
 
     assert {:error, {:invalid_runtime_opt, :sensitive_path_denylist, :expected_list_of_strings}} =
              Runtime.start_project(root, sensitive_path_denylist: nil)
+
+    assert {:error, {:invalid_runtime_opt, :tool_env_allowlist, :expected_list_of_strings}} =
+             Runtime.start_project(root, tool_env_allowlist: ["PATH", 123])
   end
 
   test "normalizes accepted runtime options before project start" do

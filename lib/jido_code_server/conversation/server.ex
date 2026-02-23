@@ -77,6 +77,7 @@ defmodule Jido.Code.Server.Conversation.Server do
       sensitive_path_denylist: Keyword.get(opts, :sensitive_path_denylist),
       sensitive_path_allowlist: Keyword.get(opts, :sensitive_path_allowlist),
       outside_root_allowlist: Keyword.get(opts, :outside_root_allowlist),
+      tool_env_allowlist: Keyword.get(opts, :tool_env_allowlist),
       llm_timeout_ms: Keyword.get(opts, :llm_timeout_ms),
       orchestration_enabled: Keyword.get(opts, :orchestration_enabled, false),
       llm_adapter: Keyword.get(opts, :llm_adapter),

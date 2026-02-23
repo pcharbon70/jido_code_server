@@ -529,6 +529,79 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
     assert event_count(diagnostics, "security.sensitive_path_denied") >= 1
   end
 
+  test "tool env passthrough is denied by default and emits security signal" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-env-deny",
+               network_egress_policy: :allow
+             )
+
+    assert {:error, %{status: :error, reason: {:env_vars_not_allowed, ["OPENAI_API_KEY"]}}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{
+                 "path" => ".jido/commands/example_command.md",
+                 "env" => %{"OPENAI_API_KEY" => "sk-test"}
+               },
+               meta: %{"conversation_id" => "phase9-env-c1"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert event_count(diagnostics, "security.env_denied") >= 1
+  end
+
+  test "tool env allowlist permits explicit environment keys" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-env-allow",
+               network_egress_policy: :allow,
+               tool_env_allowlist: ["LANG", "OPENAI_API_KEY"]
+             )
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{
+                 "path" => ".jido/commands/example_command.md",
+                 "env" => %{"LANG" => "en_US.UTF-8", "OPENAI_API_KEY" => "sk-test"}
+               },
+               meta: %{"conversation_id" => "phase9-env-c2"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert diagnostics.runtime_opts[:tool_env_allowlist] == ["LANG", "OPENAI_API_KEY"]
+  end
+
+  test "tool env payload must be a map when provided" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-env-invalid",
+               network_egress_policy: :allow
+             )
+
+    assert {:error, %{status: :error, reason: :invalid_env_payload}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{
+                 "path" => ".jido/commands/example_command.md",
+                 "env" => ["OPENAI_API_KEY=sk-test"]
+               },
+               meta: %{"conversation_id" => "phase9-env-c3"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert event_count(diagnostics, "security.env_denied") >= 1
+  end
+
   test "sensitive path allowlist can explicitly permit denylisted paths" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
@@ -994,7 +1067,8 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
       tool_max_artifact_bytes: Keyword.get(opts, :tool_max_artifact_bytes, 131_072),
       tool_max_concurrency: Keyword.get(opts, :tool_max_concurrency, 8),
       tool_max_concurrency_per_conversation:
-        Keyword.get(opts, :tool_max_concurrency_per_conversation, 4)
+        Keyword.get(opts, :tool_max_concurrency_per_conversation, 4),
+      tool_env_allowlist: Keyword.get(opts, :tool_env_allowlist, [])
     }
   end
 
