@@ -18,6 +18,23 @@
 4. Verify recent error queue is bounded and redacted:
    - `diagnostics.telemetry.recent_errors`
 
+## Runtime Guardrail Overrides
+
+- Runtime guardrails can be tuned per project via `Jido.Code.Server.start_project/2` options.
+- Primary override knobs:
+  - `tool_timeout_ms` (default `30_000`)
+  - `tool_timeout_alert_threshold` (default `3`)
+  - `tool_max_output_bytes` (default `262_144`)
+  - `tool_max_artifact_bytes` (default `131_072`)
+  - `tool_max_concurrency` (default `8`)
+  - `tool_max_concurrency_per_conversation` (default `4`)
+- Verification steps after override:
+  - check effective runtime opts via `Jido.Code.Server.diagnostics(project_id).runtime_opts`
+  - trigger a representative tool call and confirm expected guardrail behavior (`:timeout`, `:output_too_large`, `:artifact_too_large`, `:max_concurrency_reached`, or `:conversation_max_concurrency_reached`)
+- Notes:
+  - artifact caps apply to nested execution payload artifacts (including command/workflow execution result structures), not only top-level tool result keys.
+  - keep `tool_max_output_bytes >= tool_max_artifact_bytes` unless intentionally testing stricter output truncation behavior.
+
 ## Primary Signals and Alert Thresholds
 
 ### Tool execution

@@ -21,6 +21,7 @@
   - Per-project strict asset loading fail-fast mode
   - Synthetic benchmark harness for repeatable load/soak validation
   - Command runtime bridge via `jido_command` for valid command markdown definitions
+  - Nested artifact guardrail enforcement for command/workflow runtime execution payloads
 
 ## Implemented Controls
 
@@ -307,6 +308,18 @@
   - fallback remains permissive when definitions are invalid or unavailable
 - This improves LLM/tool-call argument quality without introducing a second tool execution path.
 
+### 23. Nested artifact guardrails + runtime override coverage
+
+- Artifact guardrails now inspect nested result payloads for `artifacts` lists, including runtime bridge outputs:
+  - command execution payloads (`execution.result.artifacts`)
+  - workflow execution payloads with nested artifact collections
+- Guardrail behavior:
+  - `tool_max_artifact_bytes` applies across all discovered artifact entries, not just top-level tool result keys
+  - failure reason remains deterministic: `{:artifact_too_large, index, size, max}`
+- Runtime override coverage:
+  - project-wide concurrency guardrail (`tool_max_concurrency`) is validated under concurrent `ToolRunner` load
+  - operations runbook now documents runtime guardrail override knobs and verification steps.
+
 ## Evidence (Automated Tests)
 
 - Added:
@@ -344,6 +357,8 @@
   - command runtime execution via `jido_command` for valid command markdown and compatibility fallback for invalid definitions
   - workflow runtime execution via `jido_workflow` for valid workflow markdown and compatibility fallback for invalid definitions
   - definition-aware command/workflow tool input schemas exposed via `Runtime.list_tools/1`
+  - nested artifact guardrails for command/workflow runtime bridge payloads
+  - concurrent project-wide `tool_max_concurrency` guardrail enforcement coverage
 
 ## Residual Constraints
 
