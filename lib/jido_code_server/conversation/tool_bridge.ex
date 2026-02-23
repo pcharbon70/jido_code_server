@@ -7,20 +7,15 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
   alias Jido.Code.Server.Project.ToolRunner
   alias Jido.Code.Server.Types.ToolCall
 
+  @task_table __MODULE__.PendingTasks
+
   @spec handle_tool_requested(map(), String.t(), map()) :: {:ok, [map()]}
   def handle_tool_requested(project_ctx, conversation_id, tool_call)
       when is_map(project_ctx) and is_binary(conversation_id) and is_map(tool_call) do
     case ToolCall.from_map(tool_call) do
       {:ok, normalized_call} ->
         call_with_meta = call_with_meta(normalized_call, conversation_id, project_ctx)
-
-        case ToolRunner.run(project_ctx, call_with_meta) do
-          {:ok, result} ->
-            {:ok, [tool_completed_event(call_with_meta, result)]}
-
-          {:error, reason} ->
-            {:ok, [tool_failed_event(call_with_meta, reason)]}
-        end
+        run_tool_request(project_ctx, conversation_id, call_with_meta)
 
       {:error, reason} ->
         {:ok, [invalid_tool_call_event(reason, tool_call)]}
@@ -31,7 +26,49 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
     {:ok, [invalid_tool_call_event(:invalid_tool_call, %{})]}
   end
 
+  @spec handle_tool_result(map(), String.t(), pid(), map(), {:ok, map()} | {:error, term()}) ::
+          {:ok, [map()]}
+  def handle_tool_result(project_ctx, conversation_id, task_pid, _tool_call, result)
+      when is_map(project_ctx) and is_binary(conversation_id) and is_pid(task_pid) do
+    project_id = project_id_from_ctx(project_ctx)
+
+    case pop_pending_task(project_id, conversation_id, task_pid) do
+      {:ok, call} ->
+        case result do
+          {:ok, payload} ->
+            {:ok, [tool_completed_event(call, payload)]}
+
+          {:error, reason} ->
+            {:ok, [tool_failed_event(call, reason)]}
+        end
+
+      :error ->
+        # Ignore stale task results that were already cancelled or consumed.
+        {:ok, []}
+    end
+  end
+
+  def handle_tool_result(_project_ctx, _conversation_id, _task_pid, _tool_call, _result) do
+    {:ok, []}
+  end
+
   @spec cancel_pending(map(), String.t()) :: :ok
+  def cancel_pending(project_ctx, conversation_id)
+      when is_map(project_ctx) and is_binary(conversation_id) do
+    project_id = project_id_from_ctx(project_ctx)
+
+    list_pending_tasks(project_id, conversation_id)
+    |> Enum.each(fn {task_pid, _call} ->
+      if Process.alive?(task_pid) do
+        Process.exit(task_pid, :kill)
+      end
+
+      delete_pending_task(project_id, conversation_id, task_pid)
+    end)
+
+    :ok
+  end
+
   def cancel_pending(_project_ctx, _conversation_id), do: :ok
 
   defp call_with_meta(%ToolCall{} = call, conversation_id, project_ctx) do
@@ -43,6 +80,50 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
       |> maybe_put_correlation(correlation_id)
 
     %{name: call.name, args: call.args, meta: meta}
+  end
+
+  defp run_tool_request(project_ctx, conversation_id, call_with_meta) do
+    if async_request?(call_with_meta) and is_pid(Map.get(project_ctx, :conversation_server)) do
+      run_tool_request_async(project_ctx, conversation_id, call_with_meta)
+    else
+      run_tool_request_sync(project_ctx, call_with_meta)
+    end
+  end
+
+  defp run_tool_request_sync(project_ctx, call_with_meta) do
+    case ToolRunner.run(project_ctx, call_with_meta) do
+      {:ok, result} ->
+        {:ok, [tool_completed_event(call_with_meta, result)]}
+
+      {:error, reason} ->
+        {:ok, [tool_failed_event(call_with_meta, reason)]}
+    end
+  end
+
+  defp run_tool_request_async(project_ctx, conversation_id, call_with_meta) do
+    notify = Map.get(project_ctx, :conversation_server)
+
+    case ToolRunner.run_async(project_ctx, call_with_meta, notify: notify) do
+      {:ok, task_pid} ->
+        track_pending_task(
+          project_id_from_ctx(project_ctx),
+          conversation_id,
+          task_pid,
+          call_with_meta
+        )
+
+        {:ok, []}
+
+      {:error, reason} ->
+        {:ok, [tool_failed_event(call_with_meta, reason)]}
+    end
+  end
+
+  defp async_request?(%{meta: meta}) when is_map(meta) do
+    run_mode = Map.get(meta, "run_mode") || Map.get(meta, :run_mode)
+    async_flag = Map.get(meta, "async") || Map.get(meta, :async)
+
+    run_mode == "async" or async_flag == true
   end
 
   defp tool_completed_event(call, result) do
@@ -107,4 +188,80 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
   end
 
   defp event_meta(_meta), do: %{}
+
+  defp project_id_from_ctx(project_ctx) when is_map(project_ctx) do
+    Map.get(project_ctx, :project_id) || "global"
+  end
+
+  defp track_pending_task(project_id, conversation_id, task_pid, call)
+       when is_binary(project_id) and is_binary(conversation_id) and is_pid(task_pid) and
+              is_map(call) do
+    ensure_task_table()
+    :ets.insert(@task_table, {{project_id, conversation_id, task_pid}, call})
+    :ok
+  rescue
+    _error ->
+      :ok
+  end
+
+  defp list_pending_tasks(project_id, conversation_id)
+       when is_binary(project_id) and is_binary(conversation_id) do
+    ensure_task_table()
+
+    @task_table
+    |> :ets.match_object({{project_id, conversation_id, :"$1"}, :"$2"})
+    |> Enum.map(fn {{^project_id, ^conversation_id, task_pid}, call} -> {task_pid, call} end)
+  rescue
+    _error ->
+      []
+  end
+
+  defp pop_pending_task(project_id, conversation_id, task_pid)
+       when is_binary(project_id) and is_binary(conversation_id) and is_pid(task_pid) do
+    ensure_task_table()
+    key = {project_id, conversation_id, task_pid}
+
+    case :ets.lookup(@task_table, key) do
+      [{^key, call}] ->
+        :ets.delete(@task_table, key)
+        {:ok, call}
+
+      _ ->
+        :error
+    end
+  rescue
+    _error ->
+      :error
+  end
+
+  defp delete_pending_task(project_id, conversation_id, task_pid)
+       when is_binary(project_id) and is_binary(conversation_id) and is_pid(task_pid) do
+    ensure_task_table()
+    :ets.delete(@task_table, {project_id, conversation_id, task_pid})
+    :ok
+  rescue
+    _error ->
+      :ok
+  end
+
+  defp ensure_task_table do
+    case :ets.whereis(@task_table) do
+      :undefined ->
+        :ets.new(@task_table, [
+          :named_table,
+          :public,
+          :set,
+          read_concurrency: true,
+          write_concurrency: true
+        ])
+
+        :ok
+
+      _ ->
+        :ok
+    end
+  rescue
+    ArgumentError ->
+      :ok
+  end
 end

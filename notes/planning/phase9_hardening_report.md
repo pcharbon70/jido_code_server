@@ -13,6 +13,7 @@
   - Explicit outside-root sandbox exceptions with reason-coded allowlisting and security telemetry
   - Conversation-scoped tool concurrency quotas
   - Deterministic cancellation events for pending tool calls
+  - Async tool execution bridge with cancellable in-flight task tracking
 
 ## Implemented Controls
 
@@ -170,6 +171,19 @@
   - pending tool calls are cleared on `conversation.cancel`
   - pending projection is consistent with emitted cancellation events (`pending_tool_calls == []` after cancel)
 
+### 14. Async bridge task tracking and cancellation
+
+- Tool bridge now supports async request mode (`meta.run_mode = "async"`) for `tool.requested` events.
+- Async execution model:
+  - `ToolBridge` starts background tool tasks through `ToolRunner.run_async/3`
+  - `Conversation.Server` ingests async result messages and emits `tool.completed` / `tool.failed` events
+- Cancellable behavior:
+  - pending async task PIDs are tracked per `{project_id, conversation_id}`
+  - `conversation.cancel` terminates tracked in-flight tasks and suppresses stale late-arriving task results
+- Test coverage validates:
+  - async completion updates timeline and clears `pending_tool_calls`
+  - cancellation path emits `tool.cancelled` and avoids stale `tool.completed` after cancel
+
 ## Evidence (Automated Tests)
 
 - Added: `test/jido_code_server/project_phase9_test.exs`
@@ -185,6 +199,7 @@
   - allowlisted outside-root exception signal with reason code
   - conversation-scoped concurrency quota enforcement
   - deterministic `tool.cancelled` events on conversation cancellation
+  - cancellable async tool bridge execution path
   - sensitive path deny-by-default and explicit allowlist override
   - network deny-by-default and allowlist enforcement
   - protocol deny-by-default with explicit allow override

@@ -26,6 +26,7 @@
   - if reason is `conversation_max_concurrency_reached`, treat as conversation-level saturation and tune `tool_max_concurrency_per_conversation` as needed.
 - `tool.cancelled`:
   - expected after `conversation.cancel` when pending tool calls exist; alert only if cancellation volume is unexpectedly high.
+  - async requests (`meta.run_mode = "async"`) should transition to `tool.completed`/`tool.failed` unless conversation cancellation occurs first.
 - `tool.timeout`:
   - investigate immediately if timeout count spikes > 10 in 5 minutes for any project.
 - `security.repeated_timeout_failures`:
