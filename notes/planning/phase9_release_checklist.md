@@ -29,6 +29,7 @@
 - [ ] Project startup rejects malformed runtime options with deterministic `{:invalid_runtime_opt, key, reason}` errors.
 - [ ] Project startup rejects unknown runtime option keys (strict startup option allowlist).
 - [ ] Command/workflow `env` passthrough is deny-by-default, allowlisted via `tool_env_allowlist`, and denied attempts emit `security.env_denied`.
+- [ ] Command-backed tools execute valid markdown definitions through `jido_command`; invalid command markdown degrades to preview compatibility mode.
 - [ ] Protocol adapters enforce per-project `protocol_allowlist` boundaries and denied access emits `security.protocol_denied`.
 
 ## Reliability Gates
