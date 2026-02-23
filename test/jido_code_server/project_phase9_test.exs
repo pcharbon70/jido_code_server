@@ -895,6 +895,40 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
              })
   end
 
+  test "strict asset loading runtime option fails startup on loader parse errors" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    invalid_skill = Path.join(root, ".jido/skills/broken.md")
+    File.write!(invalid_skill, <<255, 0, 255>>)
+
+    assert {:error, {:start_project_failed, reason}} =
+             Runtime.start_project(root,
+               project_id: "phase9-loader-strict",
+               strict_asset_loading: true
+             )
+
+    reason_text = inspect(reason)
+    assert reason_text =~ "asset_load_failed"
+    assert reason_text =~ "invalid_utf8"
+
+    assert {:ok, lenient_project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-loader-lenient",
+               strict_asset_loading: false
+             )
+
+    diagnostics = Runtime.assets_diagnostics(lenient_project_id)
+    assert diagnostics.loaded?
+    assert Enum.any?(diagnostics.errors, &(&1.reason == :invalid_utf8))
+
+    assert {:ok, %{status: :ok}} =
+             Runtime.run_tool(lenient_project_id, %{
+               name: "asset.list",
+               args: %{"type" => "skill"}
+             })
+  end
+
   test "invalid llm adapter emits llm.failed while conversation remains available" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)

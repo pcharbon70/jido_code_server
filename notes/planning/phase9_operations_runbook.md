@@ -58,6 +58,9 @@
   - warning on first event, page if repeated 3 times in 10 minutes.
 - `project.assets_reloaded` with non-zero `error_count`:
   - open incident ticket if persistent across 3 successive reloads.
+- `strict_asset_loading`:
+  - enable for fail-fast startup behavior when loader parse errors are present.
+  - disable for degraded-but-available startup when parse errors should be tolerated temporarily.
 
 ## Alert Router Configuration
 

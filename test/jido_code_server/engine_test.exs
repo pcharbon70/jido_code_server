@@ -79,6 +79,9 @@ defmodule Jido.Code.Server.EngineTest do
     assert {:error, {:invalid_runtime_opt, :watcher, :expected_boolean}} =
              Runtime.start_project(root, watcher: :enabled)
 
+    assert {:error, {:invalid_runtime_opt, :strict_asset_loading, :expected_boolean}} =
+             Runtime.start_project(root, strict_asset_loading: :enabled)
+
     assert {:error, {:invalid_runtime_opt, :network_egress_policy, :expected_allow_or_deny}} =
              Runtime.start_project(root, network_egress_policy: :blocked)
 
@@ -121,6 +124,20 @@ defmodule Jido.Code.Server.EngineTest do
 
     assert diagnostics.runtime_opts[:network_egress_policy] == :allow
     assert diagnostics.policy.network_egress_policy == :allow
+  end
+
+  test "accepts strict_asset_loading runtime option and surfaces it in diagnostics" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, "engine-runtime-strict-assets"} =
+             Runtime.start_project(root,
+               project_id: "engine-runtime-strict-assets",
+               strict_asset_loading: true
+             )
+
+    diagnostics = Runtime.diagnostics("engine-runtime-strict-assets")
+    assert diagnostics.runtime_opts[:strict_asset_loading] == true
   end
 
   test "stop_project returns not found error for unknown project" do

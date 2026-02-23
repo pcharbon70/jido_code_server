@@ -566,6 +566,7 @@ defmodule Jido.Code.Server.Project.Server do
           :conversation_orchestration,
           :llm_adapter,
           :watcher,
+          :strict_asset_loading,
           :watcher_debounce_ms,
           :tool_timeout_ms,
           :tool_max_concurrency,
