@@ -16,6 +16,7 @@
   - Async tool execution bridge with cancellable in-flight task tracking
   - Runtime option validation and normalization at project start
   - Environment-passthrough controls for command/workflow tools
+  - Configurable alert routing for escalation telemetry signals
 
 ## Implemented Controls
 
@@ -214,6 +215,19 @@
 - Security telemetry emits:
   - `security.env_denied` for denied env-key usage and invalid env payload shapes
 
+### 17. Alert routing for escalation telemetry
+
+- Telemetry now supports routing selected high-severity signals to an external handler:
+  - `alert_signal_events`
+  - `alert_router`
+- Default escalation signal set:
+  - `security.sandbox_violation`
+  - `security.repeated_timeout_failures`
+- Router contract supports:
+  - `{module, function}` receiving `(event_name, payload, metadata)`
+  - `{module, function, extra_args}` receiving `(event_name, payload, metadata, ...extra_args)`
+- Dispatch is best-effort and non-fatal; router failures do not crash runtime telemetry emission.
+
 ## Evidence (Automated Tests)
 
 - Added: `test/jido_code_server/project_phase9_test.exs`
@@ -235,6 +249,7 @@
   - sensitive path deny-by-default and explicit allowlist override
   - network deny-by-default and allowlist enforcement
   - protocol deny-by-default with explicit allow override
+  - configurable escalation alert routing from security/timeout telemetry signals
   - secret redaction behavior
   - repeated timeout escalation signal
 

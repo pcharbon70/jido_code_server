@@ -15,6 +15,13 @@ defmodule Jido.Code.ServerTest do
     assert Config.default_data_dir() == ".jido"
     assert Config.tool_timeout_ms() == 30_000
     assert Config.tool_timeout_alert_threshold() == 3
+
+    assert Config.alert_signal_events() == [
+             "security.sandbox_violation",
+             "security.repeated_timeout_failures"
+           ]
+
+    assert Config.alert_router() == nil
     assert Config.tool_max_output_bytes() == 262_144
     assert Config.tool_max_artifact_bytes() == 131_072
     assert Config.network_egress_policy() == :deny

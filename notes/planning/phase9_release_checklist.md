@@ -41,7 +41,7 @@
 - [ ] Hardening report is current: `notes/planning/phase9_hardening_report.md`.
 - [ ] Runtime guardrail overrides (`tool_timeout_ms`, `tool_max_output_bytes`, etc.) are documented and test-covered.
 - [ ] Incident timeline extraction (`Jido.Code.Server.incident_timeline/3`) is validated with bounded and correlation-filtered queries.
-- [ ] Alert routing is configured for security and timeout escalation signals.
+- [ ] Alert routing is configured for security and timeout escalation signals (`alert_signal_events`, `alert_router`).
 
 ## Sign-Off
 

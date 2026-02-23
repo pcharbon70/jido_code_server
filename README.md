@@ -46,3 +46,10 @@ Roadmap source:
 - `mix ci` - format check, compile warnings-as-errors, credo, tests
 - `mix quality` - `mix ci` plus dialyzer
 - `mix q` - shorthand for `mix quality`
+
+## Alert Routing
+
+Configure escalation alert dispatch for security and timeout signals:
+
+- `:alert_signal_events` (default: `["security.sandbox_violation", "security.repeated_timeout_failures"]`)
+- `:alert_router` (optional callback tuple `{module, function}` or `{module, function, extra_args}`)

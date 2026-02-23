@@ -25,6 +25,34 @@ defmodule Jido.Code.Server.Config do
     Application.get_env(@app, :tool_timeout_alert_threshold, 3)
   end
 
+  @spec alert_signal_events() :: [String.t()]
+  def alert_signal_events do
+    Application.get_env(@app, :alert_signal_events, [
+      "security.sandbox_violation",
+      "security.repeated_timeout_failures"
+    ])
+    |> List.wrap()
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&(&1 |> String.trim() |> String.downcase()))
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+  end
+
+  @spec alert_router() :: nil | {module(), atom()} | {module(), atom(), [term()]}
+  def alert_router do
+    case Application.get_env(@app, :alert_router, nil) do
+      {module, function} = router when is_atom(module) and is_atom(function) ->
+        router
+
+      {module, function, args} = router
+      when is_atom(module) and is_atom(function) and is_list(args) ->
+        router
+
+      _ ->
+        nil
+    end
+  end
+
   @spec tool_max_output_bytes() :: pos_integer()
   def tool_max_output_bytes do
     Application.get_env(@app, :tool_max_output_bytes, 262_144)
