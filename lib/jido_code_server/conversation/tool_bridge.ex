@@ -58,10 +58,8 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
     project_id = project_id_from_ctx(project_ctx)
 
     list_pending_tasks(project_id, conversation_id)
-    |> Enum.each(fn {task_pid, _call} ->
-      if Process.alive?(task_pid) do
-        Process.exit(task_pid, :kill)
-      end
+    |> Enum.each(fn {task_pid, call} ->
+      _ = ToolRunner.cancel_task(project_ctx, task_pid, call)
 
       delete_pending_task(project_id, conversation_id, task_pid)
     end)

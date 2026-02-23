@@ -13,6 +13,7 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
   @timeout_table __MODULE__.Timeouts
   @concurrency_table __MODULE__.Concurrency
+  @child_process_table __MODULE__.ChildProcesses
   @schema_atom_keys %{
     "type" => :type,
     "required" => :required,
@@ -68,6 +69,70 @@ defmodule Jido.Code.Server.Project.ToolRunner do
         {:error, reason}
     end
   end
+
+  @spec cancel_task(map(), pid(), map()) :: :ok
+  def cancel_task(project_ctx, task_pid, tool_call \\ %{})
+
+  def cancel_task(project_ctx, task_pid, tool_call)
+      when is_map(project_ctx) and is_pid(task_pid) and is_map(tool_call) do
+    terminated_count = terminate_registered_child_processes(task_pid)
+
+    maybe_emit_child_process_termination(
+      project_ctx,
+      tool_call,
+      :conversation_cancelled,
+      terminated_count
+    )
+
+    if Process.alive?(task_pid) do
+      Process.exit(task_pid, :kill)
+    end
+
+    :ok
+  end
+
+  def cancel_task(_project_ctx, task_pid, _tool_call) when is_pid(task_pid) do
+    _terminated_count = terminate_registered_child_processes(task_pid)
+
+    if Process.alive?(task_pid) do
+      Process.exit(task_pid, :kill)
+    end
+
+    :ok
+  end
+
+  def cancel_task(_project_ctx, _task_pid, _tool_call), do: :ok
+
+  @spec register_child_process(pid(), pid()) :: :ok
+  def register_child_process(owner_pid, child_pid)
+      when is_pid(owner_pid) and is_pid(child_pid) and owner_pid != child_pid do
+    ensure_child_process_table()
+
+    :ets.insert(
+      @child_process_table,
+      {{owner_pid, child_pid}, System.monotonic_time(:millisecond)}
+    )
+
+    :ok
+  rescue
+    _error ->
+      :ok
+  end
+
+  def register_child_process(_owner_pid, _child_pid), do: :ok
+
+  @spec unregister_child_process(pid(), pid()) :: :ok
+  def unregister_child_process(owner_pid, child_pid)
+      when is_pid(owner_pid) and is_pid(child_pid) do
+    ensure_child_process_table()
+    :ets.delete(@child_process_table, {owner_pid, child_pid})
+    :ok
+  rescue
+    _error ->
+      :ok
+  end
+
+  def unregister_child_process(_owner_pid, _child_pid), do: :ok
 
   defp execute_run(project_ctx, call, started_at) do
     run_ctx =
@@ -130,24 +195,31 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
   defp execute_within_task(project_ctx, spec, call) do
     timeout_ms = Map.get(project_ctx, :tool_timeout_ms, Config.tool_timeout_ms())
+    owner_pid = self()
 
     task =
       Task.Supervisor.async_nolink(project_ctx.task_supervisor, fn ->
         execute_tool(project_ctx, spec, call)
       end)
 
-    case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
-      {:ok, {:ok, result}} ->
-        {:ok, result}
+    register_child_process(owner_pid, task.pid)
 
-      {:ok, {:error, reason}} ->
-        {:error, {:tool_failed, reason}}
-
+    case Task.yield(task, timeout_ms) do
       nil ->
-        {:error, :timeout}
+        case Task.shutdown(task, :brutal_kill) do
+          nil ->
+            terminated_count = terminate_registered_child_processes(owner_pid)
+            maybe_emit_child_process_termination(project_ctx, call, :timeout, terminated_count)
+            {:error, :timeout}
 
-      {:exit, reason} ->
-        {:error, {:task_exit, reason}}
+          task_reply ->
+            unregister_child_process(owner_pid, task.pid)
+            handle_task_reply(task_reply)
+        end
+
+      task_reply ->
+        unregister_child_process(owner_pid, task.pid)
+        handle_task_reply(task_reply)
     end
   end
 
@@ -331,6 +403,10 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   end
 
   defp maybe_notify_async_result(_notify, _correlated_call, _result), do: :ok
+
+  defp handle_task_reply({:ok, {:ok, result}}), do: {:ok, result}
+  defp handle_task_reply({:ok, {:error, reason}}), do: {:error, {:tool_failed, reason}}
+  defp handle_task_reply({:exit, reason}), do: {:error, {:task_exit, reason}}
 
   defp acquire_capacity(project_ctx, call) do
     case ensure_project_capacity(project_ctx) do
@@ -825,6 +901,26 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
   defp maybe_emit_timeout_signals(_project_ctx, _tool_call, _reason), do: :ok
 
+  defp maybe_emit_child_process_termination(project_ctx, tool_call, reason, terminated_count)
+       when is_map(project_ctx) and is_integer(terminated_count) and terminated_count > 0 do
+    Telemetry.emit("tool.child_processes_terminated", %{
+      project_id: project_ctx.project_id,
+      conversation_id: conversation_id_from_call(tool_call),
+      correlation_id: correlation_id_from_call(tool_call),
+      tool: tool_name(tool_call),
+      reason: reason,
+      terminated_child_process_count: terminated_count
+    })
+  end
+
+  defp maybe_emit_child_process_termination(
+         _project_ctx,
+         _tool_call,
+         _reason,
+         _terminated_count
+       ),
+       do: :ok
+
   defp maybe_emit_env_signals(project_ctx, tool_call, {:env_vars_not_allowed, denied_env_keys}) do
     Telemetry.emit("security.env_denied", %{
       project_id: project_ctx.project_id,
@@ -859,10 +955,70 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     end
   end
 
+  defp terminate_registered_child_processes(owner_pid) when is_pid(owner_pid) do
+    child_pids = list_registered_child_processes(owner_pid)
+
+    terminated_count =
+      Enum.reduce(child_pids, 0, fn child_pid, terminated ->
+        if Process.alive?(child_pid) do
+          Process.exit(child_pid, :kill)
+          terminated + 1
+        else
+          terminated
+        end
+      end)
+
+    clear_registered_child_processes(owner_pid, child_pids)
+    terminated_count
+  rescue
+    _error ->
+      0
+  end
+
+  defp list_registered_child_processes(owner_pid) when is_pid(owner_pid) do
+    ensure_child_process_table()
+
+    @child_process_table
+    |> :ets.match_object({{owner_pid, :"$1"}, :"$2"})
+    |> Enum.map(fn {{^owner_pid, child_pid}, _started_at} -> child_pid end)
+    |> Enum.reject(&(&1 == owner_pid))
+    |> Enum.uniq()
+  rescue
+    _error ->
+      []
+  end
+
+  defp clear_registered_child_processes(owner_pid, child_pids) when is_pid(owner_pid) do
+    Enum.each(child_pids, fn child_pid ->
+      unregister_child_process(owner_pid, child_pid)
+    end)
+  end
+
   defp ensure_concurrency_table do
     case :ets.whereis(@concurrency_table) do
       :undefined ->
         :ets.new(@concurrency_table, [
+          :named_table,
+          :public,
+          :set,
+          read_concurrency: true,
+          write_concurrency: true
+        ])
+
+        :ok
+
+      _ ->
+        :ok
+    end
+  rescue
+    ArgumentError ->
+      :ok
+  end
+
+  defp ensure_child_process_table do
+    case :ets.whereis(@child_process_table) do
+      :undefined ->
+        :ets.new(@child_process_table, [
           :named_table,
           :public,
           :set,

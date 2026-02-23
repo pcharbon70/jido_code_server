@@ -25,6 +25,7 @@
 - [ ] Project and conversation concurrency limits both enforce (`tool_max_concurrency`, `tool_max_concurrency_per_conversation`).
 - [ ] `conversation.cancel` emits deterministic `tool.cancelled` events with reason `conversation_cancelled` when pending tool calls exist.
 - [ ] Async tool requests (`meta.run_mode = "async"`) emit completion/failure events via conversation runtime and are cancellable by `conversation.cancel`.
+- [ ] Timeout and cancellation paths terminate tracked child processes and emit `tool.child_processes_terminated`.
 - [ ] Project startup rejects malformed runtime options with deterministic `{:invalid_runtime_opt, key, reason}` errors.
 - [ ] Project startup rejects unknown runtime option keys (strict startup option allowlist).
 - [ ] Command/workflow `env` passthrough is deny-by-default, allowlisted via `tool_env_allowlist`, and denied attempts emit `security.env_denied`.
