@@ -46,6 +46,7 @@ Roadmap source:
 - `mix ci` - format check, compile warnings-as-errors, credo, tests
 - `mix quality` - `mix ci` plus dialyzer
 - `mix q` - shorthand for `mix quality`
+- `mix phase9.bench` - synthetic multi-project load/soak benchmark harness for Phase 9 readiness
 
 ## Alert Routing
 

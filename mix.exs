@@ -68,7 +68,8 @@ defmodule Jido.Code.Server.MixProject do
         "credo --strict",
         "test",
         "dialyzer"
-      ]
+      ],
+      "phase9.bench": ["run priv/bench/phase9_bench.exs"]
     ]
   end
 end
