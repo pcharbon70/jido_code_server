@@ -107,9 +107,9 @@
 1. Run full quality gate:
    - `mix ci`
 2. Run Phase 9 reliability-focused tests:
-   - `mix test test/jido_code_server/project_phase9_test.exs`
+   - `mix test test/jido_code_server/runtime_hardening_test.exs`
 3. Stress/failure repeat:
-   - `mix test test/jido_code_server/project_phase9_test.exs --repeat-until-failure 20`
+   - `mix test test/jido_code_server/runtime_hardening_test.exs --repeat-until-failure 20`
 4. Synthetic load/soak benchmark harness:
    - `mix phase9.bench`
    - tune profile as needed: `mix phase9.bench --projects 5 --conversations 8 --events 4 --concurrency 24`

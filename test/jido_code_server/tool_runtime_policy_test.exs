@@ -1,4 +1,4 @@
-defmodule Jido.Code.Server.ProjectPhase4Test do
+defmodule Jido.Code.Server.ToolRuntimePolicyTest do
   use ExUnit.Case, async: false
 
   alias Jido.Code.Server, as: Runtime

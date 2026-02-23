@@ -1,4 +1,4 @@
-defmodule Jido.Code.Server.ProtocolPhase8Test do
+defmodule Jido.Code.Server.ProtocolGatewayTest do
   use ExUnit.Case, async: false
 
   alias Jido.Code.Server, as: Runtime
