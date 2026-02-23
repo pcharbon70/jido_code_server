@@ -59,6 +59,18 @@
 - `project.assets_reloaded` with non-zero `error_count`:
   - open incident ticket if persistent across 3 successive reloads.
 
+## Alert Router Configuration
+
+- Configure escalation routing with application env:
+  - `alert_signal_events` - telemetry events to route to alerting
+  - `alert_router` - callback target (`{module, function}` or `{module, function, extra_args}`)
+- Default escalation events:
+  - `security.sandbox_violation`
+  - `security.repeated_timeout_failures`
+- Router callback signature:
+  - `(event_name, payload, metadata)` for `{module, function}`
+  - `(event_name, payload, metadata, ...extra_args)` for `{module, function, extra_args}`
+
 ## Incident Response Playbook
 
 1. Identify affected `project_id`, `conversation_id`, and `correlation_id` from telemetry payload.

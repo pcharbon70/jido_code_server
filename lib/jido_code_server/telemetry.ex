@@ -3,6 +3,8 @@ defmodule Jido.Code.Server.Telemetry do
   Telemetry emission facade with lightweight in-memory diagnostics counters.
   """
 
+  alias Jido.Code.Server.AlertRouter
+
   @table __MODULE__
   @prefix [:jido_code_server]
   @max_recent_errors 25
@@ -59,6 +61,7 @@ defmodule Jido.Code.Server.Telemetry do
     increment_counter(project_key, name)
     maybe_track_event(project_key, name, sanitized_payload, metadata.emitted_at)
     maybe_track_error(project_key, name, sanitized_payload, metadata.emitted_at)
+    AlertRouter.maybe_dispatch(name, sanitized_payload, metadata)
     :ok
   rescue
     _error ->
