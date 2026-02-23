@@ -87,6 +87,12 @@ defmodule Jido.Code.Server.EngineTest do
 
     assert {:error, {:invalid_runtime_opt, :tool_env_allowlist, :expected_list_of_strings}} =
              Runtime.start_project(root, tool_env_allowlist: ["PATH", 123])
+
+    assert {:error, {:invalid_runtime_opt, :llm_model, :expected_string_or_nil}} =
+             Runtime.start_project(root, llm_model: 123)
+
+    assert {:error, {:invalid_runtime_opt, :unknown_option, :unknown_option}} =
+             Runtime.start_project(root, unknown_option: :value)
   end
 
   test "normalizes accepted runtime options before project start" do

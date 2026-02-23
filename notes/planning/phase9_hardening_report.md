@@ -195,6 +195,8 @@
   - boolean guards (`watcher`, `conversation_orchestration`)
   - list-of-string guards for allow/deny and path/network list options
   - `network_egress_policy` value validation with normalization from `"allow"/"deny"` to atoms
+  - optional LLM option type checks (`llm_model`, `llm_system_prompt`, `llm_temperature`, `llm_max_tokens`)
+  - strict option-key allowlist; unknown startup options are rejected
 - Invalid options fail fast with deterministic errors:
   - `{:invalid_runtime_opt, key, reason}`
 - This prevents silent misconfiguration from weakening runtime guardrails (for example nil/invalid list overrides).
