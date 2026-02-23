@@ -13,6 +13,7 @@
 - [ ] Correlation IDs propagate across ingest, LLM lifecycle, tool execution, and policy decisions.
 - [ ] Sandbox escape attempts emit `security.sandbox_violation`.
 - [ ] Outside-root exceptions require `outside_root_allowlist` entries with `reason_code` and emit `security.sandbox_exception_used`.
+- [ ] Malformed `outside_root_allowlist` entries are rejected at startup via `{:invalid_runtime_opt, :outside_root_allowlist, ...}`.
 - [ ] Sensitive file paths are denylisted by default and emit `security.sensitive_path_denied` when blocked.
 - [ ] Tool results with sensitive artifacts are flagged and emit `security.sensitive_artifact_detected`.
 - [ ] Network-capable tools are deny-by-default and emit `security.network_denied` when blocked.

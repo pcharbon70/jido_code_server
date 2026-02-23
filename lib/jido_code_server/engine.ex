@@ -364,14 +364,62 @@ defmodule Jido.Code.Server.Engine do
   defp validate_network_egress_policy(_value), do: {:error, :expected_allow_or_deny}
 
   defp validate_outside_root_allowlist(value) when is_list(value) do
-    if Enum.all?(value, &(is_map(&1) or is_binary(&1))) do
-      {:ok, value}
-    else
-      {:error, :expected_list_of_maps_or_strings}
+    value
+    |> Enum.with_index()
+    |> Enum.reduce_while(:ok, fn {entry, index}, :ok ->
+      case validate_outside_root_allowlist_entry(entry) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:invalid_entry, index, reason}}}
+      end
+    end)
+    |> case do
+      :ok -> {:ok, value}
+      {:error, _reason} = error -> error
     end
   end
 
-  defp validate_outside_root_allowlist(_value), do: {:error, :expected_list_of_maps_or_strings}
+  defp validate_outside_root_allowlist(_value), do: {:error, :expected_list_of_reason_coded_maps}
+
+  defp validate_outside_root_allowlist_entry(entry) when is_map(entry) do
+    path_or_pattern =
+      Map.get(entry, :pattern) ||
+        Map.get(entry, "pattern") ||
+        Map.get(entry, :path) ||
+        Map.get(entry, "path")
+
+    reason_code = Map.get(entry, :reason_code) || Map.get(entry, "reason_code")
+
+    case validate_path_or_pattern(path_or_pattern) do
+      :ok -> validate_reason_code(reason_code)
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp validate_outside_root_allowlist_entry(_entry), do: {:error, :expected_map_entry}
+
+  defp validate_path_or_pattern(nil), do: {:error, :missing_path_or_pattern}
+
+  defp validate_path_or_pattern(value) when is_binary(value) do
+    if String.trim(value) == "" do
+      {:error, :empty_path_or_pattern}
+    else
+      :ok
+    end
+  end
+
+  defp validate_path_or_pattern(_value), do: {:error, :expected_path_or_pattern_string}
+
+  defp validate_reason_code(nil), do: {:error, :missing_reason_code}
+
+  defp validate_reason_code(value) when is_binary(value) do
+    if String.trim(value) == "" do
+      {:error, :empty_reason_code}
+    else
+      :ok
+    end
+  end
+
+  defp validate_reason_code(_value), do: {:error, :expected_reason_code_string}
 
   defp validate_optional_binary(nil), do: {:ok, nil}
   defp validate_optional_binary(value) when is_binary(value), do: {:ok, value}
