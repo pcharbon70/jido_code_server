@@ -1,4 +1,4 @@
-defmodule Jido.Code.Server.ProjectPhase3Test do
+defmodule Jido.Code.Server.AssetStoreLoadingTest do
   use ExUnit.Case, async: false
 
   alias Jido.Code.Server, as: Runtime

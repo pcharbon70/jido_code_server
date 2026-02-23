@@ -1,4 +1,4 @@
-defmodule Jido.Code.Server.Phase9BenchmarkHarnessTest do
+defmodule Jido.Code.Server.BenchmarkHarnessTest do
   use ExUnit.Case, async: false
 
   alias Jido.Code.Server, as: Runtime
@@ -14,7 +14,7 @@ defmodule Jido.Code.Server.Phase9BenchmarkHarnessTest do
     :ok
   end
 
-  test "phase9 harness runs a small synthetic workload and returns a passing report" do
+  test "benchmark harness runs a small synthetic workload and returns a passing report" do
     assert {:ok, report} =
              Phase9Harness.run(
                project_count: 2,
@@ -44,7 +44,7 @@ defmodule Jido.Code.Server.Phase9BenchmarkHarnessTest do
     assert report.elapsed_ms >= 0
   end
 
-  test "phase9 harness rejects invalid options" do
+  test "benchmark harness rejects invalid options" do
     assert {:error, {:invalid_benchmark_opt, :project_count, :expected_positive_integer}} =
              Phase9Harness.run(project_count: 0)
 

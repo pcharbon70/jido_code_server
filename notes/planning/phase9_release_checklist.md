@@ -3,7 +3,7 @@
 ## Quality Gates
 
 - [ ] `mix ci` passes on the release branch.
-- [ ] `test/jido_code_server/project_phase9_test.exs` passes.
+- [ ] `test/jido_code_server/runtime_hardening_test.exs` passes.
 - [ ] Phase 9 benchmark harness runs cleanly (`mix phase9.bench`) for the target workload profile.
 - [ ] No open P0/P1 correctness or security defects.
 

@@ -1,4 +1,4 @@
-defmodule Jido.Code.Server.ProjectPhase6Test do
+defmodule Jido.Code.Server.ConversationOrchestrationTest do
   use ExUnit.Case, async: false
 
   alias Jido.Code.Server, as: Runtime

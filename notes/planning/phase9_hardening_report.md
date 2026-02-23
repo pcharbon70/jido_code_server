@@ -279,8 +279,8 @@
 ## Evidence (Automated Tests)
 
 - Added:
-  - `test/jido_code_server/project_phase9_test.exs`
-  - `test/jido_code_server/protocol_phase8_test.exs`
+  - `test/jido_code_server/runtime_hardening_test.exs`
+  - `test/jido_code_server/protocol_gateway_test.exs`
 - Covered scenarios:
   - schema rejection
   - output cap enforcement
