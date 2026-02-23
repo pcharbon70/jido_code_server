@@ -10,6 +10,7 @@
 
 1. Confirm runtime boots cleanly:
    - `mix ci`
+   - project startup should reject malformed runtime options with `{:invalid_runtime_opt, key, reason}` instead of booting with unsafe defaults.
 2. Verify project-level diagnostics are reachable:
    - `Jido.Code.Server.diagnostics(project_id)`
 3. Verify telemetry counters are advancing:

@@ -12,6 +12,25 @@ defmodule Jido.Code.Server.Engine do
   alias Jido.Code.Server.Engine.ProjectRegistry
   alias Jido.Code.Server.Engine.ProjectSupervisor
 
+  @positive_integer_runtime_opts [
+    :tool_timeout_ms,
+    :tool_timeout_alert_threshold,
+    :tool_max_output_bytes,
+    :tool_max_artifact_bytes,
+    :tool_max_concurrency,
+    :llm_timeout_ms,
+    :watcher_debounce_ms
+  ]
+  @non_negative_integer_runtime_opts [:tool_max_concurrency_per_conversation]
+  @boolean_runtime_opts [:watcher, :conversation_orchestration]
+  @string_list_runtime_opts [
+    :deny_tools,
+    :network_allowlist,
+    :network_allowed_schemes,
+    :sensitive_path_denylist,
+    :sensitive_path_allowlist
+  ]
+
   @type project_id :: String.t()
   @type conversation_id :: String.t()
   @type project_summary :: %{
@@ -27,8 +46,10 @@ defmodule Jido.Code.Server.Engine do
     with {:ok, normalized_root_path} <- normalize_root_path(root_path),
          {:ok, data_dir} <- resolve_data_dir(opts),
          {:ok, project_id} <- resolve_project_id(opts),
+         {:ok, runtime_opts} <- validate_runtime_opts(opts),
          :ok <- ensure_project_absent(project_id),
-         {:ok, _pid} <- start_project_child(project_id, normalized_root_path, data_dir, opts) do
+         {:ok, _pid} <-
+           start_project_child(project_id, normalized_root_path, data_dir, runtime_opts) do
       {:ok, project_id}
     end
   end
@@ -253,6 +274,91 @@ defmodule Jido.Code.Server.Engine do
         {:error, {:start_project_failed, reason}}
     end
   end
+
+  defp validate_runtime_opts(opts) when is_list(opts) do
+    opts
+    |> Enum.reduce_while({:ok, []}, fn
+      {key, value}, {:ok, acc} when is_atom(key) ->
+        case validate_runtime_opt(key, value) do
+          {:ok, normalized_value} ->
+            {:cont, {:ok, [{key, normalized_value} | acc]}}
+
+          {:error, reason} ->
+            {:halt, {:error, {:invalid_runtime_opt, key, reason}}}
+        end
+
+      {key, _value}, _acc ->
+        {:halt, {:error, {:invalid_runtime_opt, key, :expected_atom_key}}}
+
+      invalid_entry, _acc ->
+        {:halt, {:error, {:invalid_runtime_opt, invalid_entry, :expected_key_value_tuple}}}
+    end)
+    |> case do
+      {:ok, normalized} -> {:ok, Enum.reverse(normalized)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp validate_runtime_opt(:allow_tools, nil), do: {:ok, nil}
+
+  defp validate_runtime_opt(:allow_tools, value), do: validate_string_list(value)
+
+  defp validate_runtime_opt(key, value) when key in @string_list_runtime_opts,
+    do: validate_string_list(value)
+
+  defp validate_runtime_opt(key, value) when key in @positive_integer_runtime_opts,
+    do: validate_positive_integer(value)
+
+  defp validate_runtime_opt(key, value) when key in @non_negative_integer_runtime_opts,
+    do: validate_non_negative_integer(value)
+
+  defp validate_runtime_opt(key, value) when key in @boolean_runtime_opts,
+    do: validate_boolean(value)
+
+  defp validate_runtime_opt(:network_egress_policy, value),
+    do: validate_network_egress_policy(value)
+
+  defp validate_runtime_opt(:outside_root_allowlist, value),
+    do: validate_outside_root_allowlist(value)
+
+  defp validate_runtime_opt(_key, value), do: {:ok, value}
+
+  defp validate_positive_integer(value) when is_integer(value) and value > 0, do: {:ok, value}
+  defp validate_positive_integer(_value), do: {:error, :expected_positive_integer}
+
+  defp validate_non_negative_integer(value) when is_integer(value) and value >= 0,
+    do: {:ok, value}
+
+  defp validate_non_negative_integer(_value), do: {:error, :expected_non_negative_integer}
+
+  defp validate_boolean(value) when is_boolean(value), do: {:ok, value}
+  defp validate_boolean(_value), do: {:error, :expected_boolean}
+
+  defp validate_string_list(value) when is_list(value) do
+    if Enum.all?(value, &is_binary/1) do
+      {:ok, value}
+    else
+      {:error, :expected_list_of_strings}
+    end
+  end
+
+  defp validate_string_list(_value), do: {:error, :expected_list_of_strings}
+
+  defp validate_network_egress_policy(:allow), do: {:ok, :allow}
+  defp validate_network_egress_policy(:deny), do: {:ok, :deny}
+  defp validate_network_egress_policy("allow"), do: {:ok, :allow}
+  defp validate_network_egress_policy("deny"), do: {:ok, :deny}
+  defp validate_network_egress_policy(_value), do: {:error, :expected_allow_or_deny}
+
+  defp validate_outside_root_allowlist(value) when is_list(value) do
+    if Enum.all?(value, &(is_map(&1) or is_binary(&1))) do
+      {:ok, value}
+    else
+      {:error, :expected_list_of_maps_or_strings}
+    end
+  end
+
+  defp validate_outside_root_allowlist(_value), do: {:error, :expected_list_of_maps_or_strings}
 
   defp terminate_project(pid) when is_pid(pid) do
     ref = Process.monitor(pid)
