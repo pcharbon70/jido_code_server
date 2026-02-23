@@ -113,6 +113,10 @@
   (`url`/`uri`/`host`/`domain`/`endpoint`) instead of only top-level args.
 - Network checks now also decode JSON-encoded values under network target keys, so
   serialized endpoint payloads are enforced by allowlist/protocol guards.
+- JSON payload wrappers under non-network keys are decoded during traversal, so
+  nested network target fields (for example under `payload`) are enforced.
+- Opaque serialized blobs are scanned for URL and keyed endpoint markers, so
+  non-JSON text payloads still participate in allowlist/protocol guardrails.
 - Disallowed protocols are denied with:
   - `:network_protocol_denied`
 - Policy telemetry now emits security signal on denied network attempts:
@@ -280,6 +284,8 @@
   - network deny-by-default and allowlist enforcement
   - nested network target extraction for allowlist/protocol enforcement
   - JSON-encoded endpoint payload enforcement for allowlist/protocol checks
+  - JSON wrapper payload enforcement under non-network keys
+  - opaque serialized payload endpoint/protocol enforcement
   - protocol deny-by-default with explicit allow override
   - configurable escalation alert routing from security/timeout telemetry signals
   - strict asset-loading startup failure mode with lenient fallback behavior
@@ -290,5 +296,5 @@
 ## Residual Constraints
 
 - Tool timeout handling currently terminates the task process; child OS process group termination is not yet implemented.
-- Network allowlist enforcement now traverses nested payloads and JSON-encoded network target values, but remains advisory for non-JSON opaque serialized blobs.
+- Opaque payload enforcement is heuristic-based and may miss deeply encoded or encrypted endpoint data.
 - Benchmark harness is synthetic/in-process; production sign-off should still include environment-specific external load profiles.
