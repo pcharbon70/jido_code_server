@@ -338,51 +338,90 @@ defmodule Jido.Code.Server.Project.Policy do
     end)
   end
 
-  defp extract_network_schemes(args) when is_map(args) do
+  defp extract_network_schemes(args) do
     args
-    |> Map.to_list()
-    |> Enum.reduce([], fn {key, value}, acc ->
-      case network_scheme_for_arg(key, value) do
-        nil -> acc
-        scheme -> [scheme | acc]
-      end
-    end)
+    |> extract_network_values()
+    |> Enum.map(&extract_network_scheme/1)
+    |> Enum.reject(&is_nil/1)
     |> Enum.uniq()
   end
 
-  defp extract_network_schemes(_args), do: []
+  defp extract_network_targets(args) do
+    args
+    |> extract_network_values()
+    |> Enum.map(&normalize_network_target/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
 
-  defp network_scheme_for_arg(key, value)
-       when is_binary(value) and (is_binary(key) or is_atom(key)) do
-    normalized_key = key |> to_string() |> String.downcase()
+  defp extract_network_values(args) do
+    collect_network_values(args, [])
+    |> Enum.reverse()
+  end
 
-    if network_target_key?(normalized_key) do
-      normalize_network_scheme(URI.parse(String.trim(value)).scheme)
+  defp collect_network_values(%_{} = _struct, acc), do: acc
+
+  defp collect_network_values(args, acc) when is_map(args) do
+    Enum.reduce(args, acc, fn {key, value}, inner_acc ->
+      if network_target_key?(normalize_network_key(key)) do
+        collect_network_values_for_target_value(value, inner_acc)
+      else
+        collect_network_values(value, inner_acc)
+      end
+    end)
+  end
+
+  defp collect_network_values(args, acc) when is_list(args) do
+    Enum.reduce(args, acc, &collect_network_values(&1, &2))
+  end
+
+  defp collect_network_values(args, acc) when is_tuple(args) do
+    args
+    |> Tuple.to_list()
+    |> collect_network_values(acc)
+  end
+
+  defp collect_network_values(_args, acc), do: acc
+
+  defp collect_network_values_for_target_value(value, acc) when is_binary(value),
+    do: [value | acc]
+
+  defp collect_network_values_for_target_value(value, acc) when is_list(value) do
+    Enum.reduce(value, acc, &collect_network_values_for_target_value(&1, &2))
+  end
+
+  defp collect_network_values_for_target_value(value, acc) when is_tuple(value) do
+    value
+    |> Tuple.to_list()
+    |> collect_network_values_for_target_value(acc)
+  end
+
+  defp collect_network_values_for_target_value(%_{} = _struct, acc), do: acc
+
+  defp collect_network_values_for_target_value(value, acc) when is_map(value) do
+    collect_network_values(value, acc)
+  end
+
+  defp collect_network_values_for_target_value(_value, acc), do: acc
+
+  defp normalize_network_key(key) when is_binary(key), do: String.downcase(key)
+
+  defp normalize_network_key(key) when is_atom(key),
+    do: key |> Atom.to_string() |> String.downcase()
+
+  defp normalize_network_key(_key), do: ""
+
+  defp extract_network_scheme(value) when is_binary(value) do
+    trimmed = String.trim(value)
+
+    if String.contains?(trimmed, "://") do
+      normalize_network_scheme(URI.parse(trimmed).scheme)
     else
       nil
     end
   end
 
-  defp network_scheme_for_arg(_key, _value), do: nil
-
-  defp extract_network_targets(args) when is_map(args) do
-    args
-    |> Map.to_list()
-    |> Enum.reduce([], fn
-      {key, value}, acc when is_binary(value) and (is_binary(key) or is_atom(key)) ->
-        normalized_key = key |> to_string() |> String.downcase()
-
-        if network_target_key?(normalized_key) do
-          [normalize_network_target(value) | acc]
-        else
-          acc
-        end
-
-      {_key, _value}, acc ->
-        acc
-    end)
-    |> Enum.reject(&is_nil/1)
-  end
+  defp extract_network_scheme(_value), do: nil
 
   defp network_target_key?(key) do
     String.contains?(key, "url") or
@@ -403,8 +442,40 @@ defmodule Jido.Code.Server.Project.Policy do
       if is_binary(uri.host) and uri.host != "" do
         String.downcase(uri.host)
       else
-        String.downcase(trimmed)
+        normalize_network_host_candidate(trimmed)
       end
+    end
+  end
+
+  defp normalize_network_host_candidate(value) when is_binary(value) do
+    candidate =
+      value
+      |> String.trim_leading("//")
+      |> String.split(["/", "?", "#"], parts: 2)
+      |> List.first("")
+      |> String.split("@")
+      |> List.last()
+      |> drop_port_suffix()
+      |> String.trim()
+
+    if candidate == "", do: nil, else: String.downcase(candidate)
+  end
+
+  defp drop_port_suffix(host) when is_binary(host) do
+    cond do
+      host == "" ->
+        ""
+
+      String.starts_with?(host, "[") ->
+        host
+        |> String.trim_leading("[")
+        |> String.split("]", parts: 2)
+        |> List.first("")
+
+      true ->
+        host
+        |> String.split(":", parts: 2)
+        |> List.first("")
     end
   end
 
