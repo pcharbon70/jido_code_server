@@ -18,6 +18,7 @@
   - Environment-passthrough controls for command/workflow tools
   - Configurable alert routing for escalation telemetry signals
   - Per-project strict asset loading fail-fast mode
+  - Synthetic benchmark harness for repeatable load/soak validation
 
 ## Implemented Controls
 
@@ -241,6 +242,20 @@
   - project starts with diagnostics errors captured, preserving runtime availability
 - This makes loader strictness an explicit per-project reliability/safety control.
 
+### 19. Phase 9 synthetic benchmark harness
+
+- Added reusable benchmark module:
+  - `Jido.Code.Server.Benchmark.Phase9Harness.run/1`
+- Added operator-facing task:
+  - `mix phase9.bench`
+- Harness behavior:
+  - bootstraps temporary seeded project roots
+  - starts configurable project/conversation fan-out
+  - dispatches concurrent `user.message` workloads
+  - validates projection integrity and reports latency percentiles
+  - emits structured pass/fail report with per-step failure details
+- This provides repeatable non-unit load/soak evidence beyond normal test execution.
+
 ## Evidence (Automated Tests)
 
 - Added: `test/jido_code_server/project_phase9_test.exs`
@@ -265,6 +280,7 @@
   - protocol deny-by-default with explicit allow override
   - configurable escalation alert routing from security/timeout telemetry signals
   - strict asset-loading startup failure mode with lenient fallback behavior
+  - synthetic load/soak benchmark harness with structured report output
   - secret redaction behavior
   - repeated timeout escalation signal
 
@@ -272,4 +288,4 @@
 
 - Tool timeout handling currently terminates the task process; child OS process group termination is not yet implemented.
 - Network allowlist enforcement now traverses nested payloads for recognized network keys, but remains advisory for fully opaque serialized blobs.
-- External benchmark harness beyond test-suite load scenarios remains pending for full operational sign-off.
+- Benchmark harness is synthetic/in-process; production sign-off should still include environment-specific external load profiles.
