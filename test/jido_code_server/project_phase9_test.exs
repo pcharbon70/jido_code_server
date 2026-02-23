@@ -307,7 +307,6 @@ defmodule Jido.Code.Server.ProjectPhase9Test do
                project_id: "phase9-sandbox-allow",
                network_egress_policy: :allow,
                outside_root_allowlist: [
-                 %{"path" => outside_path},
                  %{"path" => outside_path, "reason_code" => reason_code}
                ]
              )

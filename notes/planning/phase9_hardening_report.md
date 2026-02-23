@@ -143,7 +143,7 @@
 - Exception behavior:
   - outside-root paths remain deny-by-default
   - exception only applies when path pattern matches and `reason_code` is non-empty
-  - malformed entries (missing `reason_code`) are ignored
+  - malformed entries (missing `path`/`pattern` or `reason_code`) are rejected at project startup
 - Allowed exception attempts remain auditable via policy decision metadata:
   - `outside_root_exception_reason_codes`
 - Security telemetry emits:
@@ -196,6 +196,7 @@
   - list-of-string guards for allow/deny and path/network list options
   - `network_egress_policy` value validation with normalization from `"allow"/"deny"` to atoms
   - optional LLM option type checks (`llm_model`, `llm_system_prompt`, `llm_temperature`, `llm_max_tokens`)
+  - strict reason-coded outside-root allowlist entry checks
   - strict option-key allowlist; unknown startup options are rejected
 - Invalid options fail fast with deterministic errors:
   - `{:invalid_runtime_opt, key, reason}`

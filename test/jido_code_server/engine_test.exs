@@ -91,6 +91,18 @@ defmodule Jido.Code.Server.EngineTest do
     assert {:error, {:invalid_runtime_opt, :llm_model, :expected_string_or_nil}} =
              Runtime.start_project(root, llm_model: 123)
 
+    assert {:error,
+            {:invalid_runtime_opt, :outside_root_allowlist,
+             {:invalid_entry, 0, :missing_reason_code}}} =
+             Runtime.start_project(root,
+               outside_root_allowlist: [%{"path" => "/tmp/allowed.txt"}]
+             )
+
+    assert {:error,
+            {:invalid_runtime_opt, :outside_root_allowlist,
+             {:invalid_entry, 0, :expected_map_entry}}} =
+             Runtime.start_project(root, outside_root_allowlist: ["/tmp/allowed.txt"])
+
     assert {:error, {:invalid_runtime_opt, :unknown_option, :unknown_option}} =
              Runtime.start_project(root, unknown_option: :value)
   end

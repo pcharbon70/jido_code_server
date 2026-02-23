@@ -78,7 +78,7 @@ defmodule Jido.Code.Server.Config do
     |> Enum.filter(&is_binary/1)
   end
 
-  @spec outside_root_allowlist() :: [map() | String.t()]
+  @spec outside_root_allowlist() :: [map()]
   def outside_root_allowlist do
     Application.get_env(@app, :outside_root_allowlist, [])
     |> List.wrap()
