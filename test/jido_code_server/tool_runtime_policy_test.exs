@@ -75,6 +75,57 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
              })
   end
 
+  test "command tool executes valid markdown definitions through jido_command runtime" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    command_path = Path.join(root, ".jido/commands/example_command.md")
+
+    File.write!(command_path, valid_command_markdown())
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase4-command-runtime",
+               network_egress_policy: :allow
+             )
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command", result: result}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"path" => ".jido/commands/example_command.md", "query" => "hello-world"}
+             })
+
+    assert result.mode == :executed
+    assert result.runtime == :jido_command
+    assert result.command == "example_command"
+    assert result.asset.name == "example_command"
+    assert get_in(result, [:execution, "result", "command"]) == "example_command"
+    assert get_in(result, [:execution, "result", "params", "query"]) == "hello-world"
+    assert get_in(result, [:execution, "result", "prompt"]) =~ "query=hello-world"
+  end
+
+  test "command tool falls back to preview mode when command markdown is invalid" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase4-command-preview-fallback",
+               network_egress_policy: :allow
+             )
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command", result: result}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"path" => ".jido/commands/example_command.md"}
+             })
+
+    assert result.mode == :preview
+    assert result.asset.name == "example_command"
+    assert is_binary(result.note)
+    assert result.note =~ "preview compatibility mode"
+  end
+
   test "project allow_tools policy limits inventory and execution surface" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
@@ -143,5 +194,17 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
 
     assert {:error, %{status: :error, reason: :max_concurrency_reached}} =
              ToolRunner.run(project_ctx, %{name: "asset.list", args: %{"type" => "skill"}})
+  end
+
+  defp valid_command_markdown do
+    """
+    ---
+    name: example_command
+    description: Example command fixture for runtime execution tests
+    allowed-tools:
+      - asset.list
+    ---
+    Execute path={{path}} query={{query}}
+    """
   end
 end

@@ -20,6 +20,7 @@
   - Protocol boundary allowlisting for MCP/A2A adapter exposure
   - Per-project strict asset loading fail-fast mode
   - Synthetic benchmark harness for repeatable load/soak validation
+  - Command runtime bridge via `jido_command` for valid command markdown definitions
 
 ## Implemented Controls
 
@@ -276,6 +277,18 @@
 - Security telemetry emits:
   - `security.protocol_denied` with protocol and operation context for triage.
 
+### 21. Command runtime bridge with compatibility fallback
+
+- Command-backed tools now attempt real command execution through `jido_command` when the
+  markdown asset is a valid command definition with YAML frontmatter.
+- Execution behavior:
+  - parse command markdown definition from asset content
+  - execute through `JidoCommand.Extensibility.CommandRuntime`
+  - return structured runtime metadata under tool result (`mode: :executed`, `runtime: :jido_command`)
+- Compatibility behavior:
+  - invalid/legacy command markdown assets now degrade to preview mode rather than failing tool calls
+  - preview fallback includes parse reason context for operator debugging
+
 ## Evidence (Automated Tests)
 
 - Added:
@@ -310,9 +323,11 @@
   - repeated timeout escalation signal
   - timeout/cancellation child-process cleanup signal (`tool.child_processes_terminated`)
   - per-project protocol boundary enforcement across MCP/A2A adapters with security telemetry
+  - command runtime execution via `jido_command` for valid command markdown and compatibility fallback for invalid definitions
 
 ## Residual Constraints
 
 - Child-process termination controls require execution bridges to register spawned child processes; untracked external processes remain outside this guardrail.
+- Workflow-backed tools remain on preview execution path pending `jido_workflow` bridge wiring.
 - Opaque payload enforcement is heuristic-based and may miss deeply encoded or encrypted endpoint data.
 - Benchmark harness is synthetic/in-process; production sign-off should still include environment-specific external load profiles.
