@@ -296,6 +296,17 @@
   - invalid/legacy command/workflow markdown assets degrade to preview mode rather than failing tool calls
   - preview fallback includes parse/validation reason context for operator debugging
 
+### 22. Definition-aware tool schemas for LLM tool use
+
+- Asset-backed tool specs now expose richer `input_schema` metadata when definitions are valid:
+  - `command.run.*` schemas are derived from `jido_command` frontmatter `jido.schema` declarations
+  - `workflow.run.*` schemas are derived from `jido_workflow` input declarations
+- Schema behavior:
+  - tool specs include typed top-level fields (for current runtime compatibility)
+  - tool specs include nested `params`/`inputs` object schemas with required field hints
+  - fallback remains permissive when definitions are invalid or unavailable
+- This improves LLM/tool-call argument quality without introducing a second tool execution path.
+
 ## Evidence (Automated Tests)
 
 - Added:
@@ -332,6 +343,7 @@
   - per-project protocol boundary enforcement across MCP/A2A adapters with security telemetry
   - command runtime execution via `jido_command` for valid command markdown and compatibility fallback for invalid definitions
   - workflow runtime execution via `jido_workflow` for valid workflow markdown and compatibility fallback for invalid definitions
+  - definition-aware command/workflow tool input schemas exposed via `Runtime.list_tools/1`
 
 ## Residual Constraints
 

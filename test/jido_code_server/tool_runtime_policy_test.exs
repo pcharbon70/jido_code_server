@@ -170,6 +170,56 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
     assert get_in(result, [:execution, :result, "file_path"]) == "lib/example.ex"
   end
 
+  test "list_tools exposes definition-aware schemas for command and workflow assets" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    command_path = Path.join(root, ".jido/commands/example_command.md")
+    workflow_path = Path.join(root, ".jido/workflows/example_workflow.md")
+
+    File.write!(command_path, valid_command_markdown_with_schema())
+    File.write!(workflow_path, valid_workflow_markdown_with_inputs())
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase4-definition-aware-tool-schema",
+               network_egress_policy: :allow
+             )
+
+    tools = Runtime.list_tools(project_id)
+
+    command_tool = Enum.find(tools, &(&1.name == "command.run.example_command"))
+    workflow_tool = Enum.find(tools, &(&1.name == "workflow.run.example_workflow"))
+
+    assert command_tool.input_schema["additionalProperties"] == true
+    assert get_in(command_tool, [:input_schema, "properties", "query", "type"]) == "string"
+
+    assert get_in(command_tool, [:input_schema, "properties", "query", "description"]) ==
+             "Search query string"
+
+    assert get_in(command_tool, [:input_schema, "properties", "limit", "type"]) == "integer"
+    assert get_in(command_tool, [:input_schema, "properties", "limit", "default"]) == 10
+    assert get_in(command_tool, [:input_schema, "properties", "params", "type"]) == "object"
+
+    assert get_in(command_tool, [:input_schema, "properties", "params", "required"]) == ["query"]
+
+    assert workflow_tool.input_schema["additionalProperties"] == true
+    assert get_in(workflow_tool, [:input_schema, "properties", "file_path", "type"]) == "string"
+
+    assert get_in(workflow_tool, [:input_schema, "properties", "file_path", "description"]) ==
+             "Path to file"
+
+    assert get_in(workflow_tool, [:input_schema, "properties", "max_findings", "type"]) ==
+             "integer"
+
+    assert get_in(workflow_tool, [:input_schema, "properties", "max_findings", "default"]) == 25
+    assert get_in(workflow_tool, [:input_schema, "properties", "inputs", "type"]) == "object"
+
+    assert get_in(workflow_tool, [:input_schema, "properties", "inputs", "required"]) == [
+             "file_path"
+           ]
+  end
+
   test "workflow tool falls back to preview mode when workflow markdown is invalid" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
@@ -285,6 +335,59 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
       - name: file_path
         type: string
         required: true
+    ---
+    # Example Workflow
+
+    ## Steps
+
+    ### echo
+    - **type**: action
+    - **module**: Jido.Code.Server.ToolRuntimePolicyTest.WorkflowEchoAction
+    - **inputs**:
+      - file_path: `input:file_path`
+
+    ## Return
+    - **value**: echo
+    """
+  end
+
+  defp valid_command_markdown_with_schema do
+    """
+    ---
+    name: example_command
+    description: Example command fixture with declared parameter schema
+    allowed-tools:
+      - asset.list
+    jido:
+      schema:
+        query:
+          type: string
+          required: true
+          doc: Search query string
+        limit:
+          type: integer
+          default: 10
+    ---
+    Execute query={{query}} limit={{limit}}
+    """
+  end
+
+  defp valid_workflow_markdown_with_inputs do
+    """
+    ---
+    name: example_workflow
+    version: "1.0.0"
+    description: Example workflow fixture with declared inputs
+    enabled: true
+    inputs:
+      - name: file_path
+        type: string
+        required: true
+        description: Path to file
+      - name: max_findings
+        type: integer
+        required: false
+        default: 25
     ---
     # Example Workflow
 
