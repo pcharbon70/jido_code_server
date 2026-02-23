@@ -1051,17 +1051,42 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   end
 
   defp enforce_artifact_limits(result, max_artifact_bytes) do
-    artifacts = Map.get(result, :artifacts) || Map.get(result, "artifacts")
-
-    if is_list(artifacts) do
-      Enum.with_index(artifacts)
-      |> Enum.reduce_while(:ok, fn {artifact, index}, :ok ->
-        validate_artifact_size(artifact, index, max_artifact_bytes)
-      end)
-    else
-      :ok
-    end
+    result
+    |> collect_artifacts()
+    |> Enum.with_index()
+    |> Enum.reduce_while(:ok, fn {artifact, index}, :ok ->
+      validate_artifact_size(artifact, index, max_artifact_bytes)
+    end)
   end
+
+  defp collect_artifacts(%_{} = _struct), do: []
+
+  defp collect_artifacts(term) when is_map(term) do
+    direct_artifacts =
+      case map_get_value(term, "artifacts") do
+        artifacts when is_list(artifacts) -> artifacts
+        _other -> []
+      end
+
+    nested_artifacts =
+      term
+      |> Map.values()
+      |> Enum.flat_map(&collect_artifacts/1)
+
+    direct_artifacts ++ nested_artifacts
+  end
+
+  defp collect_artifacts(term) when is_list(term) do
+    Enum.flat_map(term, &collect_artifacts/1)
+  end
+
+  defp collect_artifacts(term) when is_tuple(term) do
+    term
+    |> Tuple.to_list()
+    |> collect_artifacts()
+  end
+
+  defp collect_artifacts(_term), do: []
 
   defp validate_artifact_size(artifact, index, max_artifact_bytes) do
     artifact_size = term_size(artifact)

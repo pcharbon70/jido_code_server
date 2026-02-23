@@ -24,6 +24,7 @@
   - Recursive sandbox path validation for nested and JSON-wrapped tool arguments
   - Recursive tool schema validation for nested `params`/`inputs` payloads
   - Optional workspace-backed command executor isolation mode via `jido_workspace`
+  - Nested artifact guardrail enforcement for command/workflow runtime execution payloads
 
 ## Implemented Controls
 
@@ -364,6 +365,18 @@
   - executor context remains isolated per run via unique workspace IDs and explicit workspace close
   - missing `project_root` in executor context fails deterministically via workspace init validation
 
+### 28. Nested artifact guardrails + runtime override coverage
+
+- Artifact guardrails now inspect nested result payloads for `artifacts` lists, including runtime bridge outputs:
+  - command execution payloads (`execution.result.artifacts`)
+  - workflow execution payloads with nested artifact collections
+- Guardrail behavior:
+  - `tool_max_artifact_bytes` applies across all discovered artifact entries, not just top-level tool result keys
+  - failure reason remains deterministic: `{:artifact_too_large, index, size, max}`
+- Runtime override coverage:
+  - project-wide concurrency guardrail (`tool_max_concurrency`) is validated under concurrent `ToolRunner` load
+  - operations runbook now documents runtime guardrail override knobs and verification steps.
+
 ## Evidence (Automated Tests)
 
 - Added:
@@ -407,6 +420,8 @@
   - conversation orchestration path coverage for workspace-backed command execution (including executor metadata and workspace ID propagation)
   - deterministic command runtime context validation for missing required fields (`root_path`)
   - workspace executor project-root mount coverage (workspace commands can access project files through mounted root)
+  - nested artifact guardrails for command/workflow runtime bridge payloads
+  - concurrent project-wide `tool_max_concurrency` guardrail enforcement coverage
 
 ## Residual Constraints
 

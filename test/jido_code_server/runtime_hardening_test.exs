@@ -13,6 +13,16 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
 
   @pending_task_table Module.concat(Jido.Code.Server.Conversation.ToolBridge, PendingTasks)
 
+  defmodule ArtifactProbeExecutor do
+    @behaviour JidoCommand.Extensibility.CommandRuntime
+
+    @impl true
+    def execute(_definition, _prompt, _params, _context) do
+      {:ok,
+       %{"artifacts" => [%{"type" => "text/plain", "content" => String.duplicate("A", 256)}]}}
+    end
+  end
+
   setup do
     Telemetry.reset()
 
@@ -1196,6 +1206,69 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert diagnostics.runtime_opts[:tool_max_output_bytes] == 64
   end
 
+  test "artifact size caps apply to nested command runtime artifacts" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    command_path = Path.join(root, ".jido/commands/example_command.md")
+    File.write!(command_path, valid_command_markdown())
+
+    project_ctx =
+      direct_project_ctx(root,
+        project_id: "phase9-artifact-cap",
+        network_egress_policy: :allow,
+        command_executor: ArtifactProbeExecutor,
+        tool_max_output_bytes: 1_000_000,
+        tool_max_artifact_bytes: 64
+      )
+
+    assert {:error, %{status: :error, reason: {:artifact_too_large, _index, _size, 64}}} =
+             ToolRunner.run(project_ctx, %{
+               name: "command.run.example_command",
+               args: %{
+                 "path" => ".jido/commands/example_command.md",
+                 "query" => "artifact-check"
+               }
+             })
+  end
+
+  test "project-wide concurrency guardrail blocks over-limit tool calls" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    project_ctx =
+      direct_project_ctx(root,
+        project_id: "phase9-project-cap",
+        tool_max_concurrency: 1,
+        network_egress_policy: :allow
+      )
+
+    first_call =
+      Task.async(fn ->
+        ToolRunner.run(project_ctx, %{
+          name: "command.run.example_command",
+          args: %{
+            "path" => ".jido/commands/example_command.md",
+            "simulate_delay_ms" => 400
+          }
+        })
+      end)
+
+    assert_eventually(fn ->
+      diagnostics = %{telemetry: Telemetry.snapshot("phase9-project-cap")}
+      event_count(diagnostics, "tool.started") >= 1
+    end)
+
+    assert {:error, %{status: :error, reason: :max_concurrency_reached}} =
+             ToolRunner.run(project_ctx, %{
+               name: "asset.list",
+               args: %{"type" => "skill"}
+             })
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
+             Task.await(first_call, 2_000)
+  end
+
   test "conversation-scoped concurrency quota blocks over-limit tool calls" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
@@ -1416,6 +1489,18 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     end)
   end
 
+  defp valid_command_markdown do
+    """
+    ---
+    name: example_command
+    description: Example command fixture for runtime hardening tests
+    allowed-tools:
+      - asset.list
+    ---
+    Execute path={{path}} query={{query}}
+    """
+  end
+
   defp direct_project_ctx(root, opts) do
     layout = Layout.paths(root, ".jido")
     project_id = Keyword.fetch!(opts, :project_id)
@@ -1426,7 +1511,10 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              Policy.start_link(
                project_id: project_id,
                root_path: root,
-               allow_tools: Keyword.get(opts, :allow_tools)
+               allow_tools: Keyword.get(opts, :allow_tools),
+               network_egress_policy: Keyword.get(opts, :network_egress_policy),
+               network_allowlist: Keyword.get(opts, :network_allowlist),
+               network_allowed_schemes: Keyword.get(opts, :network_allowed_schemes)
              )
 
     assert {:ok, task_supervisor} = Task.Supervisor.start_link()
@@ -1452,7 +1540,9 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
       tool_max_concurrency: Keyword.get(opts, :tool_max_concurrency, 8),
       tool_max_concurrency_per_conversation:
         Keyword.get(opts, :tool_max_concurrency_per_conversation, 4),
-      tool_env_allowlist: Keyword.get(opts, :tool_env_allowlist, [])
+      tool_env_allowlist: Keyword.get(opts, :tool_env_allowlist, []),
+      command_executor: Keyword.get(opts, :command_executor),
+      workflow_backend: Keyword.get(opts, :workflow_backend)
     }
   end
 
