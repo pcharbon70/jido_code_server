@@ -132,4 +132,40 @@ defmodule Jido.Code.Server.ProtocolPhase8Test do
     assert Enum.map(tools_a, & &1.name) == ["asset.list"]
     assert Enum.map(tools_b, & &1.name) == ["asset.search"]
   end
+
+  test "protocol allowlist enforces per-project MCP/A2A exposure boundaries" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, mcp_only_project_id} =
+             Runtime.start_project(root,
+               project_id: "phase8-protocol-mcp-only",
+               protocol_allowlist: ["mcp"]
+             )
+
+    assert {:ok, _tools} = MCPGateway.tools_list(mcp_only_project_id)
+    assert {:error, {:protocol_denied, "a2a"}} = A2AGateway.task_create(mcp_only_project_id, "hi")
+
+    diagnostics_mcp_only = Runtime.diagnostics(mcp_only_project_id)
+    assert event_count(diagnostics_mcp_only, "security.protocol_denied") >= 1
+
+    assert {:ok, a2a_only_project_id} =
+             Runtime.start_project(root,
+               project_id: "phase8-protocol-a2a-only",
+               protocol_allowlist: ["a2a"]
+             )
+
+    assert {:error, {:protocol_denied, "mcp"}} = MCPGateway.tools_list(a2a_only_project_id)
+    assert {:ok, _task} = A2AGateway.task_create(a2a_only_project_id, "hi")
+
+    diagnostics_a2a_only = Runtime.diagnostics(a2a_only_project_id)
+    assert event_count(diagnostics_a2a_only, "security.protocol_denied") >= 1
+  end
+
+  defp event_count(diagnostics, event_name) do
+    diagnostics
+    |> Map.get(:telemetry, %{})
+    |> Map.get(:event_counts, %{})
+    |> Map.get(event_name, 0)
+  end
 end

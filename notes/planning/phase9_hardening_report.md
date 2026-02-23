@@ -17,6 +17,7 @@
   - Runtime option validation and normalization at project start
   - Environment-passthrough controls for command/workflow tools
   - Configurable alert routing for escalation telemetry signals
+  - Protocol boundary allowlisting for MCP/A2A adapter exposure
   - Per-project strict asset loading fail-fast mode
   - Synthetic benchmark harness for repeatable load/soak validation
 
@@ -262,9 +263,23 @@
   - emits structured pass/fail report with per-step failure details
 - This provides repeatable non-unit load/soak evidence beyond normal test execution.
 
+### 20. Protocol boundary allowlisting for MCP/A2A adapters
+
+- Projects can now explicitly control protocol exposure with runtime option:
+  - `protocol_allowlist` (default `["mcp", "a2a"]`)
+- Gateway enforcement:
+  - MCP operations (`tools.list`, `tools.call`, `message.send`) require `mcp` in allowlist
+  - A2A operations (`agent.card`, `task.*`) require `a2a` in allowlist
+- Denied protocol access now returns deterministic errors:
+  - `{:protocol_denied, "mcp"}` / `{:protocol_denied, "a2a"}`
+- Security telemetry emits:
+  - `security.protocol_denied` with protocol and operation context for triage.
+
 ## Evidence (Automated Tests)
 
-- Added: `test/jido_code_server/project_phase9_test.exs`
+- Added:
+  - `test/jido_code_server/project_phase9_test.exs`
+  - `test/jido_code_server/protocol_phase8_test.exs`
 - Covered scenarios:
   - schema rejection
   - output cap enforcement
@@ -292,6 +307,7 @@
   - synthetic load/soak benchmark harness with structured report output
   - secret redaction behavior
   - repeated timeout escalation signal
+  - per-project protocol boundary enforcement across MCP/A2A adapters with security telemetry
 
 ## Residual Constraints
 

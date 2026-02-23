@@ -119,6 +119,16 @@ defmodule Jido.Code.Server.Config do
     |> Enum.filter(&is_binary/1)
   end
 
+  @spec protocol_allowlist() :: [String.t()]
+  def protocol_allowlist do
+    Application.get_env(@app, :protocol_allowlist, ["mcp", "a2a"])
+    |> List.wrap()
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&(&1 |> String.trim() |> String.downcase()))
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+  end
+
   @spec llm_timeout_ms() :: pos_integer()
   def llm_timeout_ms do
     Application.get_env(@app, :llm_timeout_ms, 120_000)
