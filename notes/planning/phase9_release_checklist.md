@@ -39,6 +39,7 @@
 - [ ] LLM adapter failure path emits `llm.failed` and keeps conversation runtime available.
 - [ ] Watcher storm behavior remains debounced and stable.
 - [ ] Multi-project concurrent conversation workload validates isolation.
+- [ ] Asset-backed command/workflow tools publish definition-aware `input_schema` metadata when markdown definitions are valid.
 
 ## Operational Readiness
 
