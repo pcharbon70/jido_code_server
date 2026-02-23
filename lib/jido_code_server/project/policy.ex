@@ -383,8 +383,15 @@ defmodule Jido.Code.Server.Project.Policy do
 
   defp collect_network_values(_args, acc), do: acc
 
-  defp collect_network_values_for_target_value(value, acc) when is_binary(value),
-    do: [value | acc]
+  defp collect_network_values_for_target_value(value, acc) when is_binary(value) do
+    trimmed = String.trim(value)
+
+    if trimmed == "" do
+      acc
+    else
+      maybe_collect_decoded_network_payload(value, trimmed, acc)
+    end
+  end
 
   defp collect_network_values_for_target_value(value, acc) when is_list(value) do
     Enum.reduce(value, acc, &collect_network_values_for_target_value(&1, &2))
@@ -403,6 +410,33 @@ defmodule Jido.Code.Server.Project.Policy do
   end
 
   defp collect_network_values_for_target_value(_value, acc), do: acc
+
+  defp maybe_collect_decoded_network_payload(original_value, trimmed_value, acc) do
+    case decode_network_payload(trimmed_value) do
+      {:ok, decoded} ->
+        collect_network_values_for_target_value(decoded, acc)
+
+      :error ->
+        [original_value | acc]
+    end
+  end
+
+  defp decode_network_payload(value) when is_binary(value) do
+    if network_payload_json?(value) do
+      case Jason.decode(value) do
+        {:ok, decoded} -> {:ok, decoded}
+        _ -> :error
+      end
+    else
+      :error
+    end
+  end
+
+  defp network_payload_json?(value) when is_binary(value) do
+    String.starts_with?(value, "{") or
+      String.starts_with?(value, "[") or
+      String.starts_with?(value, "\"")
+  end
 
   defp normalize_network_key(key) when is_binary(key), do: String.downcase(key)
 
