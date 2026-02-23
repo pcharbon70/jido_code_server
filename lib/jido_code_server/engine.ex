@@ -31,6 +31,7 @@ defmodule Jido.Code.Server.Engine do
     :sensitive_path_allowlist,
     :tool_env_allowlist
   ]
+  @passthrough_runtime_opts [:project_id, :data_dir, :llm_adapter]
 
   @type project_id :: String.t()
   @type conversation_id :: String.t()
@@ -304,6 +305,9 @@ defmodule Jido.Code.Server.Engine do
 
   defp validate_runtime_opt(:allow_tools, value), do: validate_string_list(value)
 
+  defp validate_runtime_opt(key, value) when key in @passthrough_runtime_opts,
+    do: {:ok, value}
+
   defp validate_runtime_opt(key, value) when key in @string_list_runtime_opts,
     do: validate_string_list(value)
 
@@ -322,7 +326,15 @@ defmodule Jido.Code.Server.Engine do
   defp validate_runtime_opt(:outside_root_allowlist, value),
     do: validate_outside_root_allowlist(value)
 
-  defp validate_runtime_opt(_key, value), do: {:ok, value}
+  defp validate_runtime_opt(:llm_model, value), do: validate_optional_binary(value)
+
+  defp validate_runtime_opt(:llm_system_prompt, value), do: validate_optional_binary(value)
+
+  defp validate_runtime_opt(:llm_temperature, value), do: validate_optional_number(value)
+
+  defp validate_runtime_opt(:llm_max_tokens, value), do: validate_optional_positive_integer(value)
+
+  defp validate_runtime_opt(_key, _value), do: {:error, :unknown_option}
 
   defp validate_positive_integer(value) when is_integer(value) and value > 0, do: {:ok, value}
   defp validate_positive_integer(_value), do: {:error, :expected_positive_integer}
@@ -360,6 +372,21 @@ defmodule Jido.Code.Server.Engine do
   end
 
   defp validate_outside_root_allowlist(_value), do: {:error, :expected_list_of_maps_or_strings}
+
+  defp validate_optional_binary(nil), do: {:ok, nil}
+  defp validate_optional_binary(value) when is_binary(value), do: {:ok, value}
+  defp validate_optional_binary(_value), do: {:error, :expected_string_or_nil}
+
+  defp validate_optional_number(nil), do: {:ok, nil}
+  defp validate_optional_number(value) when is_number(value), do: {:ok, value}
+  defp validate_optional_number(_value), do: {:error, :expected_number_or_nil}
+
+  defp validate_optional_positive_integer(nil), do: {:ok, nil}
+
+  defp validate_optional_positive_integer(value) when is_integer(value) and value > 0,
+    do: {:ok, value}
+
+  defp validate_optional_positive_integer(_value), do: {:error, :expected_positive_integer_or_nil}
 
   defp terminate_project(pid) when is_pid(pid) do
     ref = Process.monitor(pid)
