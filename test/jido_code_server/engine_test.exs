@@ -69,6 +69,39 @@ defmodule Jido.Code.Server.EngineTest do
              Runtime.start_project(root, data_dir: "../jido")
   end
 
+  test "rejects invalid runtime option values" do
+    root = TempProject.create!()
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:error, {:invalid_runtime_opt, :tool_timeout_ms, :expected_positive_integer}} =
+             Runtime.start_project(root, tool_timeout_ms: 0)
+
+    assert {:error, {:invalid_runtime_opt, :watcher, :expected_boolean}} =
+             Runtime.start_project(root, watcher: :enabled)
+
+    assert {:error, {:invalid_runtime_opt, :network_egress_policy, :expected_allow_or_deny}} =
+             Runtime.start_project(root, network_egress_policy: :blocked)
+
+    assert {:error, {:invalid_runtime_opt, :sensitive_path_denylist, :expected_list_of_strings}} =
+             Runtime.start_project(root, sensitive_path_denylist: nil)
+  end
+
+  test "normalizes accepted runtime options before project start" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, "engine-runtime-normalize"} =
+             Runtime.start_project(root,
+               project_id: "engine-runtime-normalize",
+               network_egress_policy: "allow"
+             )
+
+    diagnostics = Runtime.diagnostics("engine-runtime-normalize")
+
+    assert diagnostics.runtime_opts[:network_egress_policy] == :allow
+    assert diagnostics.policy.network_egress_policy == :allow
+  end
+
   test "stop_project returns not found error for unknown project" do
     assert {:error, {:project_not_found, "missing-project"}} =
              Runtime.stop_project("missing-project")

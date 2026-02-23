@@ -14,6 +14,7 @@
   - Conversation-scoped tool concurrency quotas
   - Deterministic cancellation events for pending tool calls
   - Async tool execution bridge with cancellable in-flight task tracking
+  - Runtime option validation and normalization at project start
 
 ## Implemented Controls
 
@@ -184,6 +185,19 @@
   - async completion updates timeline and clears `pending_tool_calls`
   - cancellation path emits `tool.cancelled` and avoids stale `tool.completed` after cancel
 
+### 15. Runtime option validation and normalization
+
+- `Engine.start_project/2` now validates runtime option shapes before supervisor startup.
+- Validation covers:
+  - positive integer guards (`tool_timeout_ms`, `tool_max_output_bytes`, etc.)
+  - non-negative integer guards (`tool_max_concurrency_per_conversation`)
+  - boolean guards (`watcher`, `conversation_orchestration`)
+  - list-of-string guards for allow/deny and path/network list options
+  - `network_egress_policy` value validation with normalization from `"allow"/"deny"` to atoms
+- Invalid options fail fast with deterministic errors:
+  - `{:invalid_runtime_opt, key, reason}`
+- This prevents silent misconfiguration from weakening runtime guardrails (for example nil/invalid list overrides).
+
 ## Evidence (Automated Tests)
 
 - Added: `test/jido_code_server/project_phase9_test.exs`
@@ -200,6 +214,7 @@
   - conversation-scoped concurrency quota enforcement
   - deterministic `tool.cancelled` events on conversation cancellation
   - cancellable async tool bridge execution path
+  - runtime option validation and normalization
   - sensitive path deny-by-default and explicit allowlist override
   - network deny-by-default and allowlist enforcement
   - protocol deny-by-default with explicit allow override
