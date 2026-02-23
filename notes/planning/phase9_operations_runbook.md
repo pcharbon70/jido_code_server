@@ -42,6 +42,7 @@
   - expected for unauthorized calls; alert only on sudden volume spikes (>3x baseline).
 - `security.sandbox_violation`:
   - page immediately; indicates outside-root path attempt.
+  - include nested arguments and JSON wrapper payloads in triage (`payload.path`, nested lists/maps, and decoded JSON blobs).
 - `security.sandbox_exception_used`:
   - warning by default; validate reason code and change ticket context for each occurrence.
 - `security.sensitive_path_denied`:
