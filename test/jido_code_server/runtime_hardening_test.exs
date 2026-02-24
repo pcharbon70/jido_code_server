@@ -324,6 +324,41 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert event_count(diagnostics, "security.sandbox_violation") >= 2
   end
 
+  test "opaque serialized path payloads are sandbox-validated" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-sandbox-opaque",
+               network_egress_policy: :allow
+             )
+
+    assert {:error, %{status: :error, reason: :outside_root}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"payload" => "path=../outside-opaque.md"},
+               meta: %{"conversation_id" => "phase9-c2-opaque"}
+             })
+
+    assert {:error, %{status: :error, reason: :outside_root}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"path" => "path=../outside-opaque-direct.md"},
+               meta: %{"conversation_id" => "phase9-c2-opaque"}
+             })
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"payload" => "path=.jido/commands/example_command.md"},
+               meta: %{"conversation_id" => "phase9-c2-opaque"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert event_count(diagnostics, "security.sandbox_violation") >= 2
+  end
+
   test "outside-root allowlist permits explicit exceptions and emits reason-coded security signal" do
     root = TempProject.create!(with_seed_files: true)
 
