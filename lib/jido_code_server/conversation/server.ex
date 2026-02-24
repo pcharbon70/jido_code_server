@@ -60,6 +60,8 @@ defmodule Jido.Code.Server.Conversation.Server do
     project_ctx = %{
       project_id: project_id,
       conversation_id: conversation_id,
+      root_path: Keyword.get(opts, :root_path),
+      data_dir: Keyword.get(opts, :data_dir),
       conversation_server: self(),
       asset_store: Keyword.get(opts, :asset_store),
       policy: Keyword.get(opts, :policy),

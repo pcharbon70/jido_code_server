@@ -340,6 +340,7 @@
   - `:workspace_shell` / `"workspace_shell"` alias
   - `Jido.Code.Server.Project.CommandExecutor.WorkspaceShell`
 - Project and conversation runtime contexts propagate `command_executor` so command tools can switch executor behavior without a second tool path.
+- Conversation startup now also propagates `root_path`/`data_dir` into conversation runtime context so orchestrated command calls can build executor context with deterministic project roots.
 - Added workspace-backed executor:
   - `Jido.Code.Server.Project.CommandExecutor.WorkspaceShell`
   - executes interpolated command prompts inside `Jido.Workspace` shell sessions
@@ -387,6 +388,7 @@
   - sandbox path validation for nested map/list args and JSON wrapper payloads
   - recursive validation of nested command/workflow `params`/`inputs` schema fields
   - workspace-backed command executor mode with runtime option validation and command runtime execution coverage
+  - conversation orchestration path coverage for workspace-backed command execution (including executor metadata and workspace ID propagation)
 
 ## Residual Constraints
 

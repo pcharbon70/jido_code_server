@@ -185,6 +185,74 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
     assert "assistant.message" in event_types(timeline_after_resume)
   end
 
+  test "orchestrated command tool calls honor workspace command executor mode" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    command_path = Path.join(root, ".jido/commands/example_command.md")
+    File.write!(command_path, valid_workspace_shell_command_markdown())
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase6-command-executor",
+               conversation_orchestration: true,
+               llm_adapter: :deterministic,
+               network_egress_policy: :allow,
+               command_executor: :workspace_shell
+             )
+
+    assert {:ok, "phase6-command-executor-c1"} =
+             Runtime.start_conversation(project_id, conversation_id: "phase6-command-executor-c1")
+
+    assert :ok =
+             Runtime.send_event(project_id, "phase6-command-executor-c1", %{
+               "type" => "user.message",
+               "content" => "run workspace command",
+               "llm" => %{
+                 "tool_calls" => [
+                   %{
+                     "name" => "command.run.example_command",
+                     "args" => %{"path" => ".jido/commands/example_command.md"}
+                   }
+                 ]
+               }
+             })
+
+    assert {:ok, timeline} =
+             Runtime.get_projection(project_id, "phase6-command-executor-c1", :timeline)
+
+    tool_completed =
+      Enum.find(timeline, fn event ->
+        map_lookup(event, :type) == "tool.completed"
+      end)
+
+    assert is_map(tool_completed)
+
+    execution_result =
+      tool_completed
+      |> map_lookup(:data)
+      |> map_lookup(:result)
+      |> map_lookup(:result)
+      |> map_lookup(:execution)
+      |> map_lookup(:result)
+
+    assert map_lookup(execution_result, :executor) == "workspace_shell"
+    assert map_lookup(execution_result, :workspace_id) =~ "phase6-command-executor"
+    assert map_lookup(execution_result, :output) =~ "workspace-sandbox-ok"
+  end
+
+  defp valid_workspace_shell_command_markdown do
+    """
+    ---
+    name: example_command
+    description: Example command fixture for workspace-backed command execution
+    allowed-tools:
+      - asset.list
+    ---
+    echo workspace-sandbox-ok
+    """
+  end
+
   defp event_types(timeline) do
     Enum.map(timeline, fn event -> map_lookup(event, :type) end)
   end

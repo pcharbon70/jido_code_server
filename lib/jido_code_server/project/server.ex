@@ -200,6 +200,8 @@ defmodule Jido.Code.Server.Project.Server do
         conversation_opts = [
           project_id: state.project_id,
           conversation_id: conversation_id,
+          root_path: state.root_path,
+          data_dir: state.data_dir,
           asset_store: state.asset_store,
           policy: state.policy,
           task_supervisor: state.task_supervisor,
