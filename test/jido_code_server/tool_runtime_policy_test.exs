@@ -128,7 +128,7 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
              Runtime.start_project(root,
                project_id: "phase4-command-workspace-executor",
                network_egress_policy: :allow,
-               command_executor: Jido.Code.Server.Project.CommandExecutor.WorkspaceShell
+               command_executor: :workspace_shell
              )
 
     assert {:ok, %{status: :ok, tool: "command.run.example_command", result: result}} =

@@ -11,6 +11,7 @@ defmodule Jido.Code.Server.Engine do
   alias Jido.Code.Server.Engine.Project
   alias Jido.Code.Server.Engine.ProjectRegistry
   alias Jido.Code.Server.Engine.ProjectSupervisor
+  alias Jido.Code.Server.Project.CommandExecutor.WorkspaceShell
 
   @positive_integer_runtime_opts [
     :tool_timeout_ms,
@@ -33,6 +34,7 @@ defmodule Jido.Code.Server.Engine do
     :protocol_allowlist
   ]
   @passthrough_runtime_opts [:project_id, :data_dir, :llm_adapter]
+  @allowed_command_executors [WorkspaceShell]
 
   @type project_id :: String.t()
   @type conversation_id :: String.t()
@@ -342,7 +344,7 @@ defmodule Jido.Code.Server.Engine do
 
   defp validate_runtime_opt(:llm_max_tokens, value), do: validate_optional_positive_integer(value)
 
-  defp validate_runtime_opt(:command_executor, value), do: validate_optional_module(value)
+  defp validate_runtime_opt(:command_executor, value), do: validate_command_executor(value)
 
   defp validate_runtime_opt(_key, _value), do: {:error, :unknown_option}
 
@@ -446,9 +448,40 @@ defmodule Jido.Code.Server.Engine do
 
   defp validate_optional_positive_integer(_value), do: {:error, :expected_positive_integer_or_nil}
 
-  defp validate_optional_module(nil), do: {:ok, nil}
-  defp validate_optional_module(value) when is_atom(value), do: {:ok, value}
-  defp validate_optional_module(_value), do: {:error, :expected_module_or_nil}
+  defp validate_command_executor(nil), do: {:ok, nil}
+
+  defp validate_command_executor(value) when is_atom(value) do
+    case normalize_command_executor(value) do
+      {:ok, normalized} -> {:ok, normalized}
+      :error -> {:error, :unsupported_command_executor}
+    end
+  end
+
+  defp validate_command_executor(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> String.downcase()
+    |> normalize_command_executor()
+    |> case do
+      {:ok, normalized} -> {:ok, normalized}
+      :error -> {:error, :unsupported_command_executor}
+    end
+  end
+
+  defp validate_command_executor(_value), do: {:error, :expected_command_executor_or_nil}
+
+  defp normalize_command_executor(:workspace_shell), do: {:ok, WorkspaceShell}
+  defp normalize_command_executor("workspace_shell"), do: {:ok, WorkspaceShell}
+
+  defp normalize_command_executor(value) when is_atom(value) do
+    if value in @allowed_command_executors do
+      {:ok, value}
+    else
+      :error
+    end
+  end
+
+  defp normalize_command_executor(_value), do: :error
 
   defp terminate_project(pid) when is_pid(pid) do
     ref = Process.monitor(pid)

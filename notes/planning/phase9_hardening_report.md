@@ -334,7 +334,11 @@
 
 ### 25. Optional workspace-backed command executor isolation mode
 
-- Runtime now supports `command_executor` startup option with module validation (`module | nil`).
+- Runtime now supports `command_executor` startup option with strict allowlist validation.
+- Supported values:
+  - `nil` (default)
+  - `:workspace_shell` / `"workspace_shell"` alias
+  - `Jido.Code.Server.Project.CommandExecutor.WorkspaceShell`
 - Project and conversation runtime contexts propagate `command_executor` so command tools can switch executor behavior without a second tool path.
 - Added workspace-backed executor:
   - `Jido.Code.Server.Project.CommandExecutor.WorkspaceShell`
