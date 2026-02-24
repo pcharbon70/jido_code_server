@@ -117,6 +117,36 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
     assert get_in(result, [:execution, "result", "prompt"]) =~ "query=hello-world"
   end
 
+  test "command tool supports workspace-backed executor isolation mode" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    command_path = Path.join(root, ".jido/commands/example_command.md")
+    File.write!(command_path, valid_workspace_shell_command_markdown())
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase4-command-workspace-executor",
+               network_egress_policy: :allow,
+               command_executor: Jido.Code.Server.Project.CommandExecutor.WorkspaceShell
+             )
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command", result: result}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"path" => ".jido/commands/example_command.md"}
+             })
+
+    assert result.mode == :executed
+    assert result.runtime == :jido_command
+    assert get_in(result, [:execution, "result", "executor"]) == "workspace_shell"
+
+    assert get_in(result, [:execution, "result", "workspace_id"]) =~
+             "phase4-command-workspace-executor"
+
+    assert get_in(result, [:execution, "result", "output"]) =~ "workspace-sandbox-ok"
+  end
+
   test "command tool falls back to preview mode when command markdown is invalid" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
@@ -395,6 +425,18 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
 
     ## Return
     - **value**: echo
+    """
+  end
+
+  defp valid_workspace_shell_command_markdown do
+    """
+    ---
+    name: example_command
+    description: Example command fixture for workspace-backed command execution
+    allowed-tools:
+      - asset.list
+    ---
+    echo workspace-sandbox-ok
     """
   end
 

@@ -342,6 +342,8 @@ defmodule Jido.Code.Server.Engine do
 
   defp validate_runtime_opt(:llm_max_tokens, value), do: validate_optional_positive_integer(value)
 
+  defp validate_runtime_opt(:command_executor, value), do: validate_optional_module(value)
+
   defp validate_runtime_opt(_key, _value), do: {:error, :unknown_option}
 
   defp validate_positive_integer(value) when is_integer(value) and value > 0, do: {:ok, value}
@@ -443,6 +445,10 @@ defmodule Jido.Code.Server.Engine do
     do: {:ok, value}
 
   defp validate_optional_positive_integer(_value), do: {:error, :expected_positive_integer_or_nil}
+
+  defp validate_optional_module(nil), do: {:ok, nil}
+  defp validate_optional_module(value) when is_atom(value), do: {:ok, value}
+  defp validate_optional_module(_value), do: {:error, :expected_module_or_nil}
 
   defp terminate_project(pid) when is_pid(pid) do
     ref = Process.monitor(pid)

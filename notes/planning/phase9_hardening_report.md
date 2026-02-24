@@ -23,6 +23,7 @@
   - Command runtime bridge via `jido_command` for valid command markdown definitions
   - Recursive sandbox path validation for nested and JSON-wrapped tool arguments
   - Recursive tool schema validation for nested `params`/`inputs` payloads
+  - Optional workspace-backed command executor isolation mode via `jido_workspace`
 
 ## Implemented Controls
 
@@ -331,6 +332,16 @@
   - validation behavior remains backward-compatible for permissive schemas
 - This closes a validation gap where definition-aware nested schema hints were published but only shallowly enforced at runtime.
 
+### 25. Optional workspace-backed command executor isolation mode
+
+- Runtime now supports `command_executor` startup option with module validation (`module | nil`).
+- Project and conversation runtime contexts propagate `command_executor` so command tools can switch executor behavior without a second tool path.
+- Added workspace-backed executor:
+  - `Jido.Code.Server.Project.CommandExecutor.WorkspaceShell`
+  - executes interpolated command prompts inside `Jido.Workspace` shell sessions
+  - returns structured execution metadata (`executor`, `workspace_id`, `output`) and closes workspace sessions after each run
+- This provides an explicit stronger isolation mode for command execution behind runtime configuration.
+
 ## Evidence (Automated Tests)
 
 - Added:
@@ -370,6 +381,7 @@
   - definition-aware command/workflow tool input schemas exposed via `Runtime.list_tools/1`
   - sandbox path validation for nested map/list args and JSON wrapper payloads
   - recursive validation of nested command/workflow `params`/`inputs` schema fields
+  - workspace-backed command executor mode with runtime option validation and command runtime execution coverage
 
 ## Residual Constraints
 
