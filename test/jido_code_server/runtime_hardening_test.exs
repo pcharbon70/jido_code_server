@@ -412,6 +412,89 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
            end)
   end
 
+  test "outside-root allowlist does not bypass sensitive path denylist" do
+    root = TempProject.create!(with_seed_files: true)
+
+    outside_root =
+      Path.join(
+        System.tmp_dir!(),
+        "jido_code_server_phase9_allowlisted_sensitive_#{System.unique_integer([:positive])}"
+      )
+
+    outside_path = Path.join(outside_root, ".env")
+
+    File.mkdir_p!(outside_root)
+    File.write!(outside_path, "SECRET=outside\n")
+
+    on_exit(fn -> TempProject.cleanup(root) end)
+    on_exit(fn -> File.rm_rf(outside_root) end)
+
+    reason_code = "OPS-OUTSIDE-SENSITIVE-001"
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-sandbox-allow-sensitive-deny",
+               network_egress_policy: :allow,
+               outside_root_allowlist: [
+                 %{"path" => outside_path, "reason_code" => reason_code}
+               ]
+             )
+
+    assert {:error, %{status: :error, reason: :sensitive_path_denied}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"path" => outside_path},
+               meta: %{"conversation_id" => "phase9-c2-allow-sensitive-deny"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+
+    assert event_count(diagnostics, "security.sensitive_path_denied") >= 1
+    assert event_count(diagnostics, "security.sandbox_exception_used") == 0
+  end
+
+  test "sensitive path allowlist can explicitly permit allowlisted outside-root sensitive paths" do
+    root = TempProject.create!(with_seed_files: true)
+
+    outside_root =
+      Path.join(
+        System.tmp_dir!(),
+        "jido_code_server_phase9_allowlisted_sensitive_ok_#{System.unique_integer([:positive])}"
+      )
+
+    outside_path = Path.join(outside_root, ".env")
+
+    File.mkdir_p!(outside_root)
+    File.write!(outside_path, "SECRET=outside\n")
+
+    on_exit(fn -> TempProject.cleanup(root) end)
+    on_exit(fn -> File.rm_rf(outside_root) end)
+
+    reason_code = "OPS-OUTSIDE-SENSITIVE-002"
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-sandbox-allow-sensitive-allowlist",
+               network_egress_policy: :allow,
+               outside_root_allowlist: [
+                 %{"path" => outside_path, "reason_code" => reason_code}
+               ],
+               sensitive_path_allowlist: [".env"]
+             )
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"path" => outside_path},
+               meta: %{"conversation_id" => "phase9-c2-allow-sensitive-allowlist"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+
+    assert event_count(diagnostics, "security.sandbox_exception_used") >= 1
+    assert event_count(diagnostics, "security.sensitive_path_denied") == 0
+  end
+
   test "conversation cancel emits deterministic tool.cancelled events for pending tool calls" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
