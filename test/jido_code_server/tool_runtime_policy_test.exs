@@ -433,6 +433,55 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
              ToolRunner.run(project_ctx, %{name: "asset.list", args: %{"type" => "skill"}})
   end
 
+  test "command tool returns deterministic error when project root is missing from context" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    command_path = Path.join(root, ".jido/commands/example_command.md")
+    File.write!(command_path, valid_command_markdown())
+
+    layout = Layout.paths(root, ".jido")
+    assert {:ok, asset_store} = AssetStore.start_link(project_id: "phase4-direct-missing-root")
+    assert :ok = AssetStore.load(asset_store, layout)
+
+    assert {:ok, policy} =
+             Policy.start_link(
+               project_id: "phase4-direct-missing-root",
+               root_path: root,
+               allow_tools: nil,
+               network_egress_policy: :allow
+             )
+
+    assert {:ok, task_supervisor} = Task.Supervisor.start_link()
+
+    on_exit(fn ->
+      safe_stop(task_supervisor)
+      safe_stop(policy)
+      safe_stop(asset_store)
+    end)
+
+    project_ctx = %{
+      project_id: "phase4-direct-missing-root",
+      data_dir: ".jido",
+      layout: layout,
+      asset_store: asset_store,
+      policy: policy,
+      task_supervisor: task_supervisor,
+      tool_timeout_ms: 30_000
+    }
+
+    assert {:error,
+            %{
+              status: :error,
+              tool: "command.run.example_command",
+              reason: {:tool_failed, {:invalid_project_context, :missing_root_path}}
+            }} =
+             ToolRunner.run(project_ctx, %{
+               name: "command.run.example_command",
+               args: %{"path" => ".jido/commands/example_command.md"}
+             })
+  end
+
   defp valid_command_markdown do
     """
     ---
@@ -536,4 +585,13 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
     - **value**: echo
     """
   end
+
+  defp safe_stop(pid) when is_pid(pid) do
+    if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1_000)
+    :ok
+  catch
+    :exit, _reason -> :ok
+  end
+
+  defp safe_stop(_), do: :ok
 end
