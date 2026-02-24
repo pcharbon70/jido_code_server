@@ -14,7 +14,7 @@
 - [ ] Policy decisions emit `policy.allowed` / `policy.denied` with auditable context.
 - [ ] Correlation IDs propagate across ingest, LLM lifecycle, tool execution, and policy decisions.
 - [ ] Sandbox escape attempts emit `security.sandbox_violation`.
-- [ ] Sandbox path validation covers nested map/list arguments and JSON wrapper payloads containing path-like keys.
+- [ ] Sandbox path validation covers nested map/list arguments, JSON wrapper payloads, and opaque serialized keyed payload blobs containing path-like keys.
 - [ ] Outside-root exceptions require `outside_root_allowlist` entries with `reason_code` and emit `security.sandbox_exception_used`.
 - [ ] Malformed `outside_root_allowlist` entries are rejected at startup via `{:invalid_runtime_opt, :outside_root_allowlist, ...}`.
 - [ ] Sensitive file paths are denylisted by default and emit `security.sensitive_path_denied` when blocked.

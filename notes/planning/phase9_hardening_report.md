@@ -21,7 +21,7 @@
   - Per-project strict asset loading fail-fast mode
   - Synthetic benchmark harness for repeatable load/soak validation
   - Command runtime bridge via `jido_command` for valid command markdown definitions
-  - Recursive sandbox path validation for nested and JSON-wrapped tool arguments
+  - Recursive sandbox path validation for nested, JSON-wrapped, and opaque serialized tool arguments
   - Recursive tool schema validation for nested `params`/`inputs` payloads
   - Optional workspace-backed command executor isolation mode via `jido_workspace`
   - Nested artifact guardrail enforcement for command/workflow runtime execution payloads
@@ -316,6 +316,7 @@
 - Path sandbox checks now recurse through structured and wrapper payloads:
   - nested map/list/tuple arguments containing path-like keys
   - JSON-encoded wrapper payloads that decode into path-like keys
+  - opaque serialized blobs containing keyed path markers (for example `path=...`)
 - Enforcement behavior:
   - outside-root attempts remain deny-by-default with deterministic `:outside_root` errors
   - sensitive-path denylist checks continue to apply after path normalization
@@ -432,7 +433,7 @@
   - command runtime execution via `jido_command` for valid command markdown and compatibility fallback for invalid definitions
   - workflow runtime execution via `jido_workflow` for valid workflow markdown and compatibility fallback for invalid definitions
   - definition-aware command/workflow tool input schemas exposed via `Runtime.list_tools/1`
-  - sandbox path validation for nested map/list args and JSON wrapper payloads
+  - sandbox path validation for nested map/list args, JSON wrapper payloads, and opaque serialized keyed path blobs
   - recursive validation of nested command/workflow `params`/`inputs` schema fields
   - workspace-backed command executor mode with runtime option validation and command runtime execution coverage
   - conversation orchestration path coverage for workspace-backed command execution (including executor metadata and workspace ID propagation)

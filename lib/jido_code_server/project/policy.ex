@@ -12,6 +12,7 @@ defmodule Jido.Code.Server.Project.Policy do
   @max_decisions 200
   @opaque_url_pattern ~r/(?:^|[^A-Za-z0-9+.\-])([A-Za-z][A-Za-z0-9+\-.]{1,20}:\/\/[^\s"'<>()[\]{}]+)/u
   @opaque_keyed_value_pattern ~r/(url|uri|host|domain|endpoint)\s*(?:=|:|=>)\s*["']?([^\s"',}>]+)/iu
+  @opaque_path_keyed_value_pattern ~r/(path|file_path|filepath)\s*(?:=|:|=>)\s*["']?([^\s"',}>]+)/iu
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -255,7 +256,7 @@ defmodule Jido.Code.Server.Project.Policy do
     else
       case decode_path_payload(trimmed) do
         {:ok, decoded} -> collect_path_values(decoded, acc)
-        :error -> acc
+        :error -> collect_opaque_path_blob_values(acc, trimmed)
       end
     end
   end
@@ -268,10 +269,7 @@ defmodule Jido.Code.Server.Project.Policy do
     if trimmed == "" do
       acc
     else
-      case decode_path_payload(trimmed) do
-        {:ok, decoded} -> collect_path_values(decoded, acc)
-        :error -> [trimmed | acc]
-      end
+      maybe_collect_decoded_path_payload(value, trimmed, acc)
     end
   end
 
@@ -288,6 +286,41 @@ defmodule Jido.Code.Server.Project.Policy do
   end
 
   defp collect_path_values_for_path_key(_value, acc), do: acc
+
+  defp maybe_collect_decoded_path_payload(original_value, trimmed_value, acc) do
+    case decode_path_payload(trimmed_value) do
+      {:ok, decoded} ->
+        collect_path_values(decoded, acc)
+
+      :error ->
+        acc
+        |> prepend_path_value(original_value)
+        |> collect_opaque_path_blob_values(trimmed_value)
+    end
+  end
+
+  defp prepend_path_value(acc, value) when is_binary(value), do: [value | acc]
+
+  defp collect_opaque_path_blob_values(acc, value) when is_binary(value) do
+    value
+    |> extract_opaque_path_blob_values()
+    |> Enum.reduce(acc, fn candidate, inner_acc ->
+      [candidate | inner_acc]
+    end)
+  end
+
+  defp extract_opaque_path_blob_values(value) when is_binary(value) do
+    @opaque_path_keyed_value_pattern
+    |> Regex.scan(value, capture: :all_but_first)
+    |> Enum.map(&opaque_path_keyed_capture/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+  end
+
+  defp opaque_path_keyed_capture([_key, value]) when is_binary(value), do: value
+  defp opaque_path_keyed_capture(_match), do: nil
 
   defp decode_path_payload(value) when is_binary(value) do
     decode_network_payload(value)
