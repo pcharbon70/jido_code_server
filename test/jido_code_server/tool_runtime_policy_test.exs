@@ -191,6 +191,32 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
     assert Enum.uniq(workspace_ids) |> length() == 2
   end
 
+  test "workspace-backed executor mounts project root for command execution context" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    command_path = Path.join(root, ".jido/commands/example_command.md")
+    File.write!(command_path, valid_workspace_shell_project_file_command_markdown())
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase4-command-workspace-root-mount",
+               network_egress_policy: :allow,
+               command_executor: :workspace_shell
+             )
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command", result: result}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"path" => ".jido/commands/example_command.md"}
+             })
+
+    output = get_in(result, [:execution, "result", "output"])
+
+    assert is_binary(output)
+    assert output =~ "Example Skill"
+  end
+
   test "command tool falls back to preview mode when command markdown is invalid" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
@@ -530,6 +556,18 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
       - asset.list
     ---
     echo workspace-sandbox-ok
+    """
+  end
+
+  defp valid_workspace_shell_project_file_command_markdown do
+    """
+    ---
+    name: example_command
+    description: Example command fixture validating project-root workspace mounts
+    allowed-tools:
+      - asset.list
+    ---
+    cat /.jido/skills/example_skill.md
     """
   end
 

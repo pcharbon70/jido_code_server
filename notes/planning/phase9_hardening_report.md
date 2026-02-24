@@ -355,6 +355,15 @@
   - `{:invalid_project_context, :missing_root_path}`
 - This prevents task-level `KeyError` exits from bubbling out of command execution and keeps failures auditable via normal `tool.failed` paths.
 
+### 27. Root-bound workspace mount for command executor isolation
+
+- Workspace-backed command execution now mounts `Jido.Workspace` against the command execution `project_root` using the local VFS adapter.
+- This changes workspace shell behavior from ephemeral in-memory roots to project-bound roots for command execution.
+- Resulting behavior:
+  - workspace-executed commands can read/write files under the project root via the workspace mount
+  - executor context remains isolated per run via unique workspace IDs and explicit workspace close
+  - missing `project_root` in executor context fails deterministically via workspace init validation
+
 ## Evidence (Automated Tests)
 
 - Added:
@@ -397,6 +406,7 @@
   - workspace-backed command executor mode with runtime option validation and command runtime execution coverage
   - conversation orchestration path coverage for workspace-backed command execution (including executor metadata and workspace ID propagation)
   - deterministic command runtime context validation for missing required fields (`root_path`)
+  - workspace executor project-root mount coverage (workspace commands can access project files through mounted root)
 
 ## Residual Constraints
 
