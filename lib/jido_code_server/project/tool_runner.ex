@@ -305,11 +305,12 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
   defp execute_command_asset_tool(project_ctx, asset, call) do
     with {:ok, definition} <- parse_command_definition(asset),
+         {:ok, execution_ctx} <- command_execution_context(project_ctx, call),
          {:ok, execution} <-
            execute_command_definition(
              definition,
              command_params_from_call(call.args),
-             command_execution_context(project_ctx, call)
+             execution_ctx
            ) do
       {:ok,
        %{
@@ -322,6 +323,9 @@ defmodule Jido.Code.Server.Project.ToolRunner do
        }}
     else
       {:error, {:invalid_command_definition, _reason}} = error ->
+        error
+
+      {:error, {:invalid_project_context, _reason}} = error ->
         error
 
       {:error, reason} ->
@@ -401,16 +405,23 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   defp workflow_inputs_from_call(_args), do: %{}
 
   defp command_execution_context(project_ctx, call) do
-    %{
-      project_id: project_ctx.project_id,
-      conversation_id: conversation_id_from_call(call),
-      correlation_id: correlation_id_from_call(call),
-      project_root: project_ctx.root_path,
-      invocation_id: command_invocation_id(call),
-      bus: :jido_code_bus,
-      tool_timeout_ms: Map.get(project_ctx, :tool_timeout_ms)
-    }
-    |> maybe_put_command_executor(Map.get(project_ctx, :command_executor))
+    case Map.get(project_ctx, :root_path) do
+      root_path when is_binary(root_path) and root_path != "" ->
+        {:ok,
+         %{
+           project_id: Map.get(project_ctx, :project_id),
+           conversation_id: conversation_id_from_call(call),
+           correlation_id: correlation_id_from_call(call),
+           project_root: root_path,
+           invocation_id: command_invocation_id(call),
+           bus: :jido_code_bus,
+           tool_timeout_ms: Map.get(project_ctx, :tool_timeout_ms)
+         }
+         |> maybe_put_command_executor(Map.get(project_ctx, :command_executor))}
+
+      _missing ->
+        {:error, {:invalid_project_context, :missing_root_path}}
+    end
   end
 
   defp maybe_put_command_executor(context, executor_module)

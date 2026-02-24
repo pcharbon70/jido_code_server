@@ -348,6 +348,13 @@
   - returns structured execution metadata (`executor`, `workspace_id`, `output`) and closes workspace sessions after each run
 - This provides an explicit stronger isolation mode for command execution behind runtime configuration.
 
+### 26. Deterministic command context validation for runtime execution
+
+- Command runtime context building now validates required project context fields before execution.
+- If conversation/direct runtime context is malformed and missing `root_path`, command execution fails deterministically with:
+  - `{:invalid_project_context, :missing_root_path}`
+- This prevents task-level `KeyError` exits from bubbling out of command execution and keeps failures auditable via normal `tool.failed` paths.
+
 ## Evidence (Automated Tests)
 
 - Added:
@@ -389,6 +396,7 @@
   - recursive validation of nested command/workflow `params`/`inputs` schema fields
   - workspace-backed command executor mode with runtime option validation and command runtime execution coverage
   - conversation orchestration path coverage for workspace-backed command execution (including executor metadata and workspace ID propagation)
+  - deterministic command runtime context validation for missing required fields (`root_path`)
 
 ## Residual Constraints
 
