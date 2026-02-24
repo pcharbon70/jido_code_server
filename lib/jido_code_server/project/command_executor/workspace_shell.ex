@@ -11,7 +11,7 @@ defmodule Jido.Code.Server.Project.CommandExecutor.WorkspaceShell do
 
   def execute(definition, prompt, params, context)
       when is_map(definition) and is_binary(prompt) and is_map(params) and is_map(context) do
-    workspace_id = workspace_id(context, definition)
+    workspace_id = workspace_id(context, definition, workspace_nonce())
 
     with {:ok, workspace} <- open_workspace(workspace_id),
          {:ok, output, workspace} <- run_workspace_command(workspace, prompt, context),
@@ -86,18 +86,23 @@ defmodule Jido.Code.Server.Project.CommandExecutor.WorkspaceShell do
     end
   end
 
-  defp workspace_id(context, definition) do
+  defp workspace_id(context, definition, nonce) when is_binary(nonce) do
     project_id = context_value(context, :project_id, "project")
     conversation_id = context_value(context, :conversation_id, "conversation")
     invocation_id = context_value(context, :invocation_id, "invocation")
     name = command_name(definition)
 
-    ["jcs", project_id, conversation_id, name, invocation_id]
+    ["jcs", project_id, conversation_id, name, invocation_id, nonce]
     |> Enum.map(&normalize_segment/1)
     |> Enum.reject(&(&1 == ""))
     |> Enum.join("-")
     |> String.slice(0, 120)
     |> ensure_workspace_id()
+  end
+
+  defp workspace_nonce do
+    System.unique_integer([:positive, :monotonic])
+    |> Integer.to_string()
   end
 
   defp ensure_workspace_id(""), do: "jcs-workspace"

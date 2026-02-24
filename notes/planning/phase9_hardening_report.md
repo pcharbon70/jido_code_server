@@ -343,6 +343,7 @@
 - Added workspace-backed executor:
   - `Jido.Code.Server.Project.CommandExecutor.WorkspaceShell`
   - executes interpolated command prompts inside `Jido.Workspace` shell sessions
+  - assigns per-execution unique workspace IDs to avoid cross-run workspace mount collisions
   - returns structured execution metadata (`executor`, `workspace_id`, `output`) and closes workspace sessions after each run
 - This provides an explicit stronger isolation mode for command execution behind runtime configuration.
 

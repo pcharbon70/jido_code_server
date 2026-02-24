@@ -147,6 +147,50 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
     assert get_in(result, [:execution, "result", "output"]) =~ "workspace-sandbox-ok"
   end
 
+  test "workspace-backed executor isolates concurrent runs with unique workspace ids" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    command_path = Path.join(root, ".jido/commands/example_command.md")
+    File.write!(command_path, valid_workspace_shell_command_markdown())
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase4-command-workspace-concurrency",
+               network_egress_policy: :allow,
+               command_executor: :workspace_shell
+             )
+
+    correlation_id = "corr-workspace-collision"
+
+    calls =
+      Task.async_stream(
+        1..2,
+        fn _ ->
+          Runtime.run_tool(project_id, %{
+            name: "command.run.example_command",
+            args: %{"path" => ".jido/commands/example_command.md"},
+            meta: %{"correlation_id" => correlation_id}
+          })
+        end,
+        max_concurrency: 2,
+        timeout: 5_000
+      )
+      |> Enum.to_list()
+
+    assert Enum.all?(calls, &match?({:ok, {:ok, %{status: :ok}}}, &1))
+
+    workspace_ids =
+      calls
+      |> Enum.map(fn {:ok, {:ok, result}} ->
+        get_in(result, [:result, :execution, "result", "workspace_id"])
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    assert length(workspace_ids) == 2
+    assert Enum.uniq(workspace_ids) |> length() == 2
+  end
+
   test "command tool falls back to preview mode when command markdown is invalid" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
