@@ -387,6 +387,14 @@
   - child-process registry entries for cancelled workspace tasks are drained deterministically
   - timeout cleanup paths also terminate tracked workspace sessions without manual child PID injection
 
+### 30. Dead child-process registration pruning after tool completion
+
+- Tool runner now prunes dead registered child-process entries after task completion handling paths.
+- This closes a registry-hygiene gap where dead child PIDs could remain in the child-process table if execution bridges missed unregister callbacks during normal completion.
+- Resulting behavior:
+  - successful and non-timeout task-reply paths clear stale dead-child registrations for the owning task process
+  - timeout/cancellation paths continue to perform full tracked child-process termination and table cleanup
+
 ## Evidence (Automated Tests)
 
 - Added:
@@ -434,6 +442,7 @@
   - concurrent project-wide `tool_max_concurrency` guardrail enforcement coverage
   - workspace executor async cancellation cleanup using tracked session child processes (no manual test PID injection)
   - workspace executor timeout cleanup using tracked session child processes (no manual test PID injection)
+  - dead child-process registry entries are pruned on successful tool execution completion paths
 
 ## Residual Constraints
 
