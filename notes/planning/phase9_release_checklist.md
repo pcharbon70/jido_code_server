@@ -32,6 +32,7 @@
 - [ ] Project startup rejects unknown runtime option keys (strict startup option allowlist).
 - [ ] Command/workflow `env` passthrough is deny-by-default, allowlisted via `tool_env_allowlist`, and denied attempts emit `security.env_denied`.
 - [ ] Optional stronger command isolation mode is available behind runtime config (`command_executor`) with startup allowlist validation (`workspace_shell` alias/module).
+- [ ] Workspace-backed command executor uses per-execution unique workspace IDs to avoid concurrent mount/session collisions.
 - [ ] Command/workflow-backed tools execute valid markdown definitions through `jido_command`/`jido_workflow`; invalid definitions degrade to preview compatibility mode.
 - [ ] Protocol adapters enforce per-project `protocol_allowlist` boundaries and denied access emits `security.protocol_denied`.
 
