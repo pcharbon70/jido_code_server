@@ -407,7 +407,8 @@ defmodule Jido.Code.Server.Project.ToolRunner do
       correlation_id: correlation_id_from_call(call),
       project_root: project_ctx.root_path,
       invocation_id: command_invocation_id(call),
-      bus: :jido_code_bus
+      bus: :jido_code_bus,
+      tool_timeout_ms: Map.get(project_ctx, :tool_timeout_ms)
     }
     |> maybe_put_command_executor(Map.get(project_ctx, :command_executor))
   end
