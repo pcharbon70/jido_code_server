@@ -220,6 +220,53 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
            ]
   end
 
+  test "definition-aware schemas enforce nested params and inputs payload validation" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    command_path = Path.join(root, ".jido/commands/example_command.md")
+    workflow_path = Path.join(root, ".jido/workflows/example_workflow.md")
+
+    File.write!(command_path, valid_command_markdown_with_schema())
+    File.write!(workflow_path, valid_workflow_markdown_with_inputs())
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase4-nested-schema-validation",
+               network_egress_policy: :allow
+             )
+
+    assert {:error, %{status: :error, reason: command_missing_reason}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"params" => %{}}
+             })
+
+    assert {:invalid_tool_args,
+            {:invalid_arg_type, "params", {:missing_required_args, ["query"]}}} =
+             command_missing_reason
+
+    assert {:error, %{status: :error, reason: command_type_reason}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"params" => %{"query" => 123}}
+             })
+
+    assert {:invalid_tool_args,
+            {:invalid_arg_type, "params", {:invalid_arg_type, "query", {:expected, "string"}}}} =
+             command_type_reason
+
+    assert {:error, %{status: :error, reason: workflow_missing_reason}} =
+             Runtime.run_tool(project_id, %{
+               name: "workflow.run.example_workflow",
+               args: %{"inputs" => %{}}
+             })
+
+    assert {:invalid_tool_args,
+            {:invalid_arg_type, "inputs", {:missing_required_args, ["file_path"]}}} =
+             workflow_missing_reason
+  end
+
   test "workflow tool falls back to preview mode when workflow markdown is invalid" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)

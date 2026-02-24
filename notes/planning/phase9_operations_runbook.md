@@ -25,6 +25,7 @@
 - `tool.failed`:
   - alert when sustained failure ratio exceeds 5% over 5 minutes.
   - if reason is `conversation_max_concurrency_reached`, treat as conversation-level saturation and tune `tool_max_concurrency_per_conversation` as needed.
+  - if reason contains `invalid_tool_args`, inspect nested schema-path failures (`params.*`, `inputs.*`) and align caller payload shape with published tool `input_schema`.
 - `tool.cancelled`:
   - expected after `conversation.cancel` when pending tool calls exist; alert only if cancellation volume is unexpectedly high.
   - async requests (`meta.run_mode = "async"`) should transition to `tool.completed`/`tool.failed` unless conversation cancellation occurs first.

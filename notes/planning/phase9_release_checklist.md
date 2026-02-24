@@ -10,6 +10,7 @@
 ## Security Gates
 
 - [ ] Tool schema validation rejects malformed payloads.
+- [ ] Tool schema validation recursively enforces nested object payloads (for example `command.run.*.params` and `workflow.run.*.inputs`).
 - [ ] Policy decisions emit `policy.allowed` / `policy.denied` with auditable context.
 - [ ] Correlation IDs propagate across ingest, LLM lifecycle, tool execution, and policy decisions.
 - [ ] Sandbox escape attempts emit `security.sandbox_violation`.

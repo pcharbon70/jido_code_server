@@ -22,6 +22,7 @@
   - Synthetic benchmark harness for repeatable load/soak validation
   - Command runtime bridge via `jido_command` for valid command markdown definitions
   - Recursive sandbox path validation for nested and JSON-wrapped tool arguments
+  - Recursive tool schema validation for nested `params`/`inputs` payloads
 
 ## Implemented Controls
 
@@ -319,6 +320,17 @@
   - `security.sandbox_violation` telemetry is emitted for nested/wrapped violation attempts
 - This closes a policy bypass class where path fields were not top-level tool args.
 
+### 24. Recursive nested schema validation for definition-aware tool payloads
+
+- Tool argument validation now recurses into nested object/array schemas:
+  - nested `params` objects for `command.run.*` tools
+  - nested `inputs` objects for `workflow.run.*` tools
+- Enforcement behavior:
+  - nested required fields emit deterministic validation errors before execution
+  - nested type mismatches emit deterministic validation errors before execution
+  - validation behavior remains backward-compatible for permissive schemas
+- This closes a validation gap where definition-aware nested schema hints were published but only shallowly enforced at runtime.
+
 ## Evidence (Automated Tests)
 
 - Added:
@@ -357,6 +369,7 @@
   - workflow runtime execution via `jido_workflow` for valid workflow markdown and compatibility fallback for invalid definitions
   - definition-aware command/workflow tool input schemas exposed via `Runtime.list_tools/1`
   - sandbox path validation for nested map/list args and JSON wrapper payloads
+  - recursive validation of nested command/workflow `params`/`inputs` schema fields
 
 ## Residual Constraints
 
