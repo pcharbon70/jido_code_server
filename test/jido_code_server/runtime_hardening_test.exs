@@ -616,6 +616,43 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert event_count(diagnostics, "tool.child_processes_terminated") >= 1
   end
 
+  test "workspace executor sessions are terminated on timeout without manual PID registration" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    command_path = Path.join(root, ".jido/commands/example_command.md")
+    File.write!(command_path, valid_workspace_sleep_command_markdown())
+
+    project_ctx =
+      direct_project_ctx(root,
+        project_id: "phase9-workspace-timeout-cleanup",
+        network_egress_policy: :allow,
+        command_executor: Jido.Code.Server.Project.CommandExecutor.WorkspaceShell,
+        tool_timeout_ms: 1_500
+      )
+
+    run_task =
+      Task.async(fn ->
+        ToolRunner.run(project_ctx, %{
+          name: "command.run.example_command",
+          args: %{"path" => ".jido/commands/example_command.md"}
+        })
+      end)
+
+    assert_eventually(fn ->
+      tracked_child_count(run_task.pid) >= 2
+    end)
+
+    assert {:error, %{status: :error, reason: :timeout}} = Task.await(run_task, 2_000)
+
+    assert_eventually(fn ->
+      tracked_child_count(run_task.pid) == 0
+    end)
+
+    diagnostics = %{telemetry: Telemetry.snapshot("phase9-workspace-timeout-cleanup")}
+    assert event_count(diagnostics, "tool.child_processes_terminated") >= 1
+  end
+
   test "sensitive file paths are denied by default and emit security signal" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)

@@ -385,6 +385,7 @@
   - async conversation cancellation can terminate workspace session processes without manual PID registration
   - timeout and cancellation cleanup telemetry (`tool.child_processes_terminated`) reflects real workspace session cleanup activity
   - child-process registry entries for cancelled workspace tasks are drained deterministically
+  - timeout cleanup paths also terminate tracked workspace sessions without manual child PID injection
 
 ## Evidence (Automated Tests)
 
@@ -432,6 +433,7 @@
   - nested artifact guardrails for command/workflow runtime bridge payloads
   - concurrent project-wide `tool_max_concurrency` guardrail enforcement coverage
   - workspace executor async cancellation cleanup using tracked session child processes (no manual test PID injection)
+  - workspace executor timeout cleanup using tracked session child processes (no manual test PID injection)
 
 ## Residual Constraints
 
