@@ -219,11 +219,13 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
           task_reply ->
             unregister_child_process(owner_pid, task.pid)
+            prune_dead_registered_child_processes(owner_pid)
             handle_task_reply(task_reply)
         end
 
       task_reply ->
         unregister_child_process(owner_pid, task.pid)
+        prune_dead_registered_child_processes(owner_pid)
         handle_task_reply(task_reply)
     end
   end
@@ -1340,6 +1342,21 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   rescue
     _error ->
       0
+  end
+
+  defp prune_dead_registered_child_processes(owner_pid) when is_pid(owner_pid) do
+    owner_pid
+    |> list_registered_child_processes()
+    |> Enum.each(fn child_pid ->
+      if not Process.alive?(child_pid) do
+        unregister_child_process(owner_pid, child_pid)
+      end
+    end)
+
+    :ok
+  rescue
+    _error ->
+      :ok
   end
 
   defp list_registered_child_processes(owner_pid) when is_pid(owner_pid) do

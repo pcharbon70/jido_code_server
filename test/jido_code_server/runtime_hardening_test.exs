@@ -653,6 +653,49 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert event_count(diagnostics, "tool.child_processes_terminated") >= 1
   end
 
+  test "tool runner prunes dead child registrations after successful execution" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    project_ctx =
+      direct_project_ctx(root,
+        project_id: "phase9-child-process-prune",
+        network_egress_policy: :allow
+      )
+
+    run_task =
+      Task.async(fn ->
+        ToolRunner.run(project_ctx, %{
+          name: "command.run.example_command",
+          args: %{
+            "path" => ".jido/commands/example_command.md",
+            "simulate_delay_ms" => 600
+          }
+        })
+      end)
+
+    assert_eventually(fn ->
+      tracked_child_count(run_task.pid) >= 1
+    end)
+
+    stale_child = spawn(fn -> Process.sleep(:infinity) end)
+    on_exit(fn -> if Process.alive?(stale_child), do: Process.exit(stale_child, :kill) end)
+
+    assert :ok = ToolRunner.register_child_process(run_task.pid, stale_child)
+    Process.exit(stale_child, :kill)
+
+    assert_eventually(fn ->
+      not Process.alive?(stale_child)
+    end)
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
+             Task.await(run_task, 2_000)
+
+    assert_eventually(fn ->
+      tracked_child_count(run_task.pid) == 0
+    end)
+  end
+
   test "sensitive file paths are denied by default and emit security signal" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
