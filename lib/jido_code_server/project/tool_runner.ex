@@ -199,7 +199,12 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
     task =
       Task.Supervisor.async_nolink(project_ctx.task_supervisor, fn ->
-        execute_tool(project_ctx, spec, call)
+        task_project_ctx =
+          project_ctx
+          |> Map.put(:task_owner_pid, owner_pid)
+          |> Map.put(:task_pid, self())
+
+        execute_tool(task_project_ctx, spec, call)
       end)
 
     register_child_process(owner_pid, task.pid)
@@ -214,11 +219,13 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
           task_reply ->
             unregister_child_process(owner_pid, task.pid)
+            prune_dead_registered_child_processes(owner_pid)
             handle_task_reply(task_reply)
         end
 
       task_reply ->
         unregister_child_process(owner_pid, task.pid)
+        prune_dead_registered_child_processes(owner_pid)
         handle_task_reply(task_reply)
     end
   end
@@ -407,17 +414,20 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   defp command_execution_context(project_ctx, call) do
     case Map.get(project_ctx, :root_path) do
       root_path when is_binary(root_path) and root_path != "" ->
-        {:ok,
-         %{
-           project_id: Map.get(project_ctx, :project_id),
-           conversation_id: conversation_id_from_call(call),
-           correlation_id: correlation_id_from_call(call),
-           project_root: root_path,
-           invocation_id: command_invocation_id(call),
-           bus: :jido_code_bus,
-           tool_timeout_ms: Map.get(project_ctx, :tool_timeout_ms)
-         }
-         |> maybe_put_command_executor(Map.get(project_ctx, :command_executor))}
+        context =
+          %{
+            project_id: Map.get(project_ctx, :project_id),
+            conversation_id: conversation_id_from_call(call),
+            correlation_id: correlation_id_from_call(call),
+            project_root: root_path,
+            invocation_id: command_invocation_id(call),
+            bus: :jido_code_bus,
+            tool_timeout_ms: Map.get(project_ctx, :tool_timeout_ms)
+          }
+          |> maybe_put_command_executor(Map.get(project_ctx, :command_executor))
+          |> maybe_put_task_owner_pid(Map.get(project_ctx, :task_owner_pid))
+
+        {:ok, context}
 
       _missing ->
         {:error, {:invalid_project_context, :missing_root_path}}
@@ -430,6 +440,12 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   end
 
   defp maybe_put_command_executor(context, _executor_module), do: context
+
+  defp maybe_put_task_owner_pid(context, task_owner_pid) when is_pid(task_owner_pid) do
+    Map.put(context, :task_owner_pid, task_owner_pid)
+  end
+
+  defp maybe_put_task_owner_pid(context, _task_owner_pid), do: context
 
   defp workflow_execution_opts(project_ctx, call, definition) do
     []
@@ -1326,6 +1342,21 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   rescue
     _error ->
       0
+  end
+
+  defp prune_dead_registered_child_processes(owner_pid) when is_pid(owner_pid) do
+    owner_pid
+    |> list_registered_child_processes()
+    |> Enum.each(fn child_pid ->
+      if not Process.alive?(child_pid) do
+        unregister_child_process(owner_pid, child_pid)
+      end
+    end)
+
+    :ok
+  rescue
+    _error ->
+      :ok
   end
 
   defp list_registered_child_processes(owner_pid) when is_pid(owner_pid) do

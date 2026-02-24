@@ -12,6 +12,17 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
   alias Jido.Code.Server.TestSupport.TempProject
 
   @pending_task_table Module.concat(Jido.Code.Server.Conversation.ToolBridge, PendingTasks)
+  @child_process_table Module.concat(Jido.Code.Server.Project.ToolRunner, ChildProcesses)
+
+  defmodule ArtifactProbeExecutor do
+    @behaviour JidoCommand.Extensibility.CommandRuntime
+
+    @impl true
+    def execute(_definition, _prompt, _params, _context) do
+      {:ok,
+       %{"artifacts" => [%{"type" => "text/plain", "content" => String.duplicate("A", 256)}]}}
+    end
+  end
 
   defmodule ArtifactProbeExecutor do
     @behaviour JidoCommand.Extensibility.CommandRuntime
@@ -323,6 +334,41 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert event_count(diagnostics, "security.sandbox_violation") >= 2
   end
 
+  test "opaque serialized path payloads are sandbox-validated" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-sandbox-opaque",
+               network_egress_policy: :allow
+             )
+
+    assert {:error, %{status: :error, reason: :outside_root}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"payload" => "path=../outside-opaque.md"},
+               meta: %{"conversation_id" => "phase9-c2-opaque"}
+             })
+
+    assert {:error, %{status: :error, reason: :outside_root}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"path" => "path=../outside-opaque-direct.md"},
+               meta: %{"conversation_id" => "phase9-c2-opaque"}
+             })
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"payload" => "path=.jido/commands/example_command.md"},
+               meta: %{"conversation_id" => "phase9-c2-opaque"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert event_count(diagnostics, "security.sandbox_violation") >= 2
+  end
+
   test "outside-root allowlist permits explicit exceptions and emits reason-coded security signal" do
     root = TempProject.create!(with_seed_files: true)
 
@@ -374,6 +420,89 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
                decision.reason == :allowed and
                reason_code in List.wrap(decision.outside_root_exception_reason_codes)
            end)
+  end
+
+  test "outside-root allowlist does not bypass sensitive path denylist" do
+    root = TempProject.create!(with_seed_files: true)
+
+    outside_root =
+      Path.join(
+        System.tmp_dir!(),
+        "jido_code_server_phase9_allowlisted_sensitive_#{System.unique_integer([:positive])}"
+      )
+
+    outside_path = Path.join(outside_root, ".env")
+
+    File.mkdir_p!(outside_root)
+    File.write!(outside_path, "SECRET=outside\n")
+
+    on_exit(fn -> TempProject.cleanup(root) end)
+    on_exit(fn -> File.rm_rf(outside_root) end)
+
+    reason_code = "OPS-OUTSIDE-SENSITIVE-001"
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-sandbox-allow-sensitive-deny",
+               network_egress_policy: :allow,
+               outside_root_allowlist: [
+                 %{"path" => outside_path, "reason_code" => reason_code}
+               ]
+             )
+
+    assert {:error, %{status: :error, reason: :sensitive_path_denied}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"path" => outside_path},
+               meta: %{"conversation_id" => "phase9-c2-allow-sensitive-deny"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+
+    assert event_count(diagnostics, "security.sensitive_path_denied") >= 1
+    assert event_count(diagnostics, "security.sandbox_exception_used") == 0
+  end
+
+  test "sensitive path allowlist can explicitly permit allowlisted outside-root sensitive paths" do
+    root = TempProject.create!(with_seed_files: true)
+
+    outside_root =
+      Path.join(
+        System.tmp_dir!(),
+        "jido_code_server_phase9_allowlisted_sensitive_ok_#{System.unique_integer([:positive])}"
+      )
+
+    outside_path = Path.join(outside_root, ".env")
+
+    File.mkdir_p!(outside_root)
+    File.write!(outside_path, "SECRET=outside\n")
+
+    on_exit(fn -> TempProject.cleanup(root) end)
+    on_exit(fn -> File.rm_rf(outside_root) end)
+
+    reason_code = "OPS-OUTSIDE-SENSITIVE-002"
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-sandbox-allow-sensitive-allowlist",
+               network_egress_policy: :allow,
+               outside_root_allowlist: [
+                 %{"path" => outside_path, "reason_code" => reason_code}
+               ],
+               sensitive_path_allowlist: [".env"]
+             )
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"path" => outside_path},
+               meta: %{"conversation_id" => "phase9-c2-allow-sensitive-allowlist"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+
+    assert event_count(diagnostics, "security.sandbox_exception_used") >= 1
+    assert event_count(diagnostics, "security.sensitive_path_denied") == 0
   end
 
   test "conversation cancel emits deterministic tool.cancelled events for pending tool calls" do
@@ -558,6 +687,141 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     diagnostics = Runtime.diagnostics(project_id)
     assert event_count(diagnostics, "tool.cancelled") >= 1
     assert event_count(diagnostics, "tool.child_processes_terminated") >= 1
+  end
+
+  test "workspace executor sessions are tracked as child processes for async cancellation" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    command_path = Path.join(root, ".jido/commands/example_command.md")
+    File.write!(command_path, valid_workspace_sleep_command_markdown())
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-workspace-child-tracking",
+               conversation_orchestration: true,
+               network_egress_policy: :allow,
+               command_executor: :workspace_shell
+             )
+
+    assert {:ok, "phase9-workspace-child-c1"} =
+             Runtime.start_conversation(project_id, conversation_id: "phase9-workspace-child-c1")
+
+    assert :ok =
+             Runtime.send_event(project_id, "phase9-workspace-child-c1", %{
+               "type" => "tool.requested",
+               "data" => %{
+                 "name" => "command.run.example_command",
+                 "args" => %{"path" => ".jido/commands/example_command.md"},
+                 "meta" => %{"run_mode" => "async"}
+               }
+             })
+
+    pending_task_pid = wait_for_pending_task_pid(project_id, "phase9-workspace-child-c1")
+
+    assert_eventually(fn ->
+      tracked_child_count(pending_task_pid) >= 2
+    end)
+
+    assert :ok =
+             Runtime.send_event(project_id, "phase9-workspace-child-c1", %{
+               "type" => "conversation.cancel"
+             })
+
+    assert_eventually(fn ->
+      {:ok, timeline} = Runtime.get_projection(project_id, "phase9-workspace-child-c1", :timeline)
+
+      Enum.any?(timeline, fn event ->
+        map_lookup(event, :type) == "tool.cancelled"
+      end)
+    end)
+
+    assert_eventually(fn ->
+      tracked_child_count(pending_task_pid) == 0
+    end)
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert event_count(diagnostics, "tool.child_processes_terminated") >= 1
+  end
+
+  test "workspace executor sessions are terminated on timeout without manual PID registration" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    command_path = Path.join(root, ".jido/commands/example_command.md")
+    File.write!(command_path, valid_workspace_sleep_command_markdown())
+
+    project_ctx =
+      direct_project_ctx(root,
+        project_id: "phase9-workspace-timeout-cleanup",
+        network_egress_policy: :allow,
+        command_executor: Jido.Code.Server.Project.CommandExecutor.WorkspaceShell,
+        tool_timeout_ms: 1_500
+      )
+
+    run_task =
+      Task.async(fn ->
+        ToolRunner.run(project_ctx, %{
+          name: "command.run.example_command",
+          args: %{"path" => ".jido/commands/example_command.md"}
+        })
+      end)
+
+    assert_eventually(fn ->
+      tracked_child_count(run_task.pid) >= 2
+    end)
+
+    assert {:error, %{status: :error, reason: :timeout}} = Task.await(run_task, 2_000)
+
+    assert_eventually(fn ->
+      tracked_child_count(run_task.pid) == 0
+    end)
+
+    diagnostics = %{telemetry: Telemetry.snapshot("phase9-workspace-timeout-cleanup")}
+    assert event_count(diagnostics, "tool.child_processes_terminated") >= 1
+  end
+
+  test "tool runner prunes dead child registrations after successful execution" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    project_ctx =
+      direct_project_ctx(root,
+        project_id: "phase9-child-process-prune",
+        network_egress_policy: :allow
+      )
+
+    run_task =
+      Task.async(fn ->
+        ToolRunner.run(project_ctx, %{
+          name: "command.run.example_command",
+          args: %{
+            "path" => ".jido/commands/example_command.md",
+            "simulate_delay_ms" => 600
+          }
+        })
+      end)
+
+    assert_eventually(fn ->
+      tracked_child_count(run_task.pid) >= 1
+    end)
+
+    stale_child = spawn(fn -> Process.sleep(:infinity) end)
+    on_exit(fn -> if Process.alive?(stale_child), do: Process.exit(stale_child, :kill) end)
+
+    assert :ok = ToolRunner.register_child_process(run_task.pid, stale_child)
+    Process.exit(stale_child, :kill)
+
+    assert_eventually(fn ->
+      not Process.alive?(stale_child)
+    end)
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command"}} =
+             Task.await(run_task, 2_000)
+
+    assert_eventually(fn ->
+      tracked_child_count(run_task.pid) == 0
+    end)
   end
 
   test "sensitive file paths are denied by default and emit security signal" do
@@ -1590,6 +1854,21 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
           _ ->
             :error
         end
+    end
+  end
+
+  defp tracked_child_count(owner_pid) when is_pid(owner_pid) do
+    case :ets.whereis(@child_process_table) do
+      :undefined ->
+        0
+
+      _ ->
+        @child_process_table
+        |> :ets.tab2list()
+        |> Enum.count(fn
+          {{^owner_pid, _child_pid}, _timestamp} -> true
+          _other -> false
+        end)
     end
   end
 

@@ -21,9 +21,10 @@
   - Per-project strict asset loading fail-fast mode
   - Synthetic benchmark harness for repeatable load/soak validation
   - Command runtime bridge via `jido_command` for valid command markdown definitions
-  - Recursive sandbox path validation for nested and JSON-wrapped tool arguments
+  - Recursive sandbox path validation for nested, JSON-wrapped, and opaque serialized tool arguments
   - Recursive tool schema validation for nested `params`/`inputs` payloads
   - Optional workspace-backed command executor isolation mode via `jido_workspace`
+  - Nested artifact guardrail enforcement for command/workflow runtime execution payloads
 
 ## Implemented Controls
 
@@ -101,6 +102,9 @@
 - Project overrides:
   - `sensitive_path_denylist`
   - `sensitive_path_allowlist` (explicit exception path patterns)
+- Outside-root allowlist interactions:
+  - `outside_root_allowlist` exceptions remain subject to sensitive-path denylist enforcement
+  - allowlisted sensitive paths still require explicit `sensitive_path_allowlist` coverage
 - Denied attempts return:
   - `:sensitive_path_denied`
 - Security telemetry emits:
@@ -315,6 +319,7 @@
 - Path sandbox checks now recurse through structured and wrapper payloads:
   - nested map/list/tuple arguments containing path-like keys
   - JSON-encoded wrapper payloads that decode into path-like keys
+  - opaque serialized blobs containing keyed path markers (for example `path=...`)
 - Enforcement behavior:
   - outside-root attempts remain deny-by-default with deterministic `:outside_root` errors
   - sensitive-path denylist checks continue to apply after path normalization
@@ -355,6 +360,45 @@
   - `{:invalid_project_context, :missing_root_path}`
 - This prevents task-level `KeyError` exits from bubbling out of command execution and keeps failures auditable via normal `tool.failed` paths.
 
+### 27. Root-bound workspace mount for command executor isolation
+
+- Workspace-backed command execution now mounts `Jido.Workspace` against the command execution `project_root` using the local VFS adapter.
+- This changes workspace shell behavior from ephemeral in-memory roots to project-bound roots for command execution.
+- Resulting behavior:
+  - workspace-executed commands can read/write files under the project root via the workspace mount
+  - executor context remains isolated per run via unique workspace IDs and explicit workspace close
+  - missing `project_root` in executor context fails deterministically via workspace init validation
+
+### 28. Nested artifact guardrails + runtime override coverage
+
+- Artifact guardrails now inspect nested result payloads for `artifacts` lists, including runtime bridge outputs:
+  - command execution payloads (`execution.result.artifacts`)
+  - workflow execution payloads with nested artifact collections
+- Guardrail behavior:
+  - `tool_max_artifact_bytes` applies across all discovered artifact entries, not just top-level tool result keys
+  - failure reason remains deterministic: `{:artifact_too_large, index, size, max}`
+- Runtime override coverage:
+  - project-wide concurrency guardrail (`tool_max_concurrency`) is validated under concurrent `ToolRunner` load
+  - operations runbook now documents runtime guardrail override knobs and verification steps.
+
+### 29. Workspace executor child-process tracking for cancellation/timeout cleanup
+
+- Workspace-backed command execution now registers active shell session processes under the owning tool task lifecycle.
+- Tool execution context now propagates a `task_owner_pid` for command runtimes so workspace session PIDs can be tracked via `ToolRunner` child-process registry.
+- Resulting behavior:
+  - async conversation cancellation can terminate workspace session processes without manual PID registration
+  - timeout and cancellation cleanup telemetry (`tool.child_processes_terminated`) reflects real workspace session cleanup activity
+  - child-process registry entries for cancelled workspace tasks are drained deterministically
+  - timeout cleanup paths also terminate tracked workspace sessions without manual child PID injection
+
+### 30. Dead child-process registration pruning after tool completion
+
+- Tool runner now prunes dead registered child-process entries after task completion handling paths.
+- This closes a registry-hygiene gap where dead child PIDs could remain in the child-process table if execution bridges missed unregister callbacks during normal completion.
+- Resulting behavior:
+  - successful and non-timeout task-reply paths clear stale dead-child registrations for the owning task process
+  - timeout/cancellation paths continue to perform full tracked child-process termination and table cleanup
+
 ## Evidence (Automated Tests)
 
 - Added:
@@ -392,11 +436,18 @@
   - command runtime execution via `jido_command` for valid command markdown and compatibility fallback for invalid definitions
   - workflow runtime execution via `jido_workflow` for valid workflow markdown and compatibility fallback for invalid definitions
   - definition-aware command/workflow tool input schemas exposed via `Runtime.list_tools/1`
-  - sandbox path validation for nested map/list args and JSON wrapper payloads
+  - sandbox path validation for nested map/list args, JSON wrapper payloads, and opaque serialized keyed path blobs
   - recursive validation of nested command/workflow `params`/`inputs` schema fields
   - workspace-backed command executor mode with runtime option validation and command runtime execution coverage
   - conversation orchestration path coverage for workspace-backed command execution (including executor metadata and workspace ID propagation)
   - deterministic command runtime context validation for missing required fields (`root_path`)
+  - workspace executor project-root mount coverage (workspace commands can access project files through mounted root)
+  - nested artifact guardrails for command/workflow runtime bridge payloads
+  - concurrent project-wide `tool_max_concurrency` guardrail enforcement coverage
+  - workspace executor async cancellation cleanup using tracked session child processes (no manual test PID injection)
+  - workspace executor timeout cleanup using tracked session child processes (no manual test PID injection)
+  - dead child-process registry entries are pruned on successful tool execution completion paths
+  - outside-root allowlist exceptions remain constrained by sensitive-path denylist enforcement unless explicitly allowlisted
 
 ## Residual Constraints
 
