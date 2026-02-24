@@ -377,6 +377,15 @@
   - project-wide concurrency guardrail (`tool_max_concurrency`) is validated under concurrent `ToolRunner` load
   - operations runbook now documents runtime guardrail override knobs and verification steps.
 
+### 29. Workspace executor child-process tracking for cancellation/timeout cleanup
+
+- Workspace-backed command execution now registers active shell session processes under the owning tool task lifecycle.
+- Tool execution context now propagates a `task_owner_pid` for command runtimes so workspace session PIDs can be tracked via `ToolRunner` child-process registry.
+- Resulting behavior:
+  - async conversation cancellation can terminate workspace session processes without manual PID registration
+  - timeout and cancellation cleanup telemetry (`tool.child_processes_terminated`) reflects real workspace session cleanup activity
+  - child-process registry entries for cancelled workspace tasks are drained deterministically
+
 ## Evidence (Automated Tests)
 
 - Added:
@@ -422,6 +431,7 @@
   - workspace executor project-root mount coverage (workspace commands can access project files through mounted root)
   - nested artifact guardrails for command/workflow runtime bridge payloads
   - concurrent project-wide `tool_max_concurrency` guardrail enforcement coverage
+  - workspace executor async cancellation cleanup using tracked session child processes (no manual test PID injection)
 
 ## Residual Constraints
 

@@ -12,6 +12,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
   alias Jido.Code.Server.TestSupport.TempProject
 
   @pending_task_table Module.concat(Jido.Code.Server.Conversation.ToolBridge, PendingTasks)
+  @child_process_table Module.concat(Jido.Code.Server.Project.ToolRunner, ChildProcesses)
 
   defmodule ArtifactProbeExecutor do
     @behaviour JidoCommand.Extensibility.CommandRuntime
@@ -557,6 +558,61 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
 
     diagnostics = Runtime.diagnostics(project_id)
     assert event_count(diagnostics, "tool.cancelled") >= 1
+    assert event_count(diagnostics, "tool.child_processes_terminated") >= 1
+  end
+
+  test "workspace executor sessions are tracked as child processes for async cancellation" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    command_path = Path.join(root, ".jido/commands/example_command.md")
+    File.write!(command_path, valid_workspace_sleep_command_markdown())
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-workspace-child-tracking",
+               conversation_orchestration: true,
+               network_egress_policy: :allow,
+               command_executor: :workspace_shell
+             )
+
+    assert {:ok, "phase9-workspace-child-c1"} =
+             Runtime.start_conversation(project_id, conversation_id: "phase9-workspace-child-c1")
+
+    assert :ok =
+             Runtime.send_event(project_id, "phase9-workspace-child-c1", %{
+               "type" => "tool.requested",
+               "data" => %{
+                 "name" => "command.run.example_command",
+                 "args" => %{"path" => ".jido/commands/example_command.md"},
+                 "meta" => %{"run_mode" => "async"}
+               }
+             })
+
+    pending_task_pid = wait_for_pending_task_pid(project_id, "phase9-workspace-child-c1")
+
+    assert_eventually(fn ->
+      tracked_child_count(pending_task_pid) >= 2
+    end)
+
+    assert :ok =
+             Runtime.send_event(project_id, "phase9-workspace-child-c1", %{
+               "type" => "conversation.cancel"
+             })
+
+    assert_eventually(fn ->
+      {:ok, timeline} = Runtime.get_projection(project_id, "phase9-workspace-child-c1", :timeline)
+
+      Enum.any?(timeline, fn event ->
+        map_lookup(event, :type) == "tool.cancelled"
+      end)
+    end)
+
+    assert_eventually(fn ->
+      tracked_child_count(pending_task_pid) == 0
+    end)
+
+    diagnostics = Runtime.diagnostics(project_id)
     assert event_count(diagnostics, "tool.child_processes_terminated") >= 1
   end
 
@@ -1501,6 +1557,18 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     """
   end
 
+  defp valid_workspace_sleep_command_markdown do
+    """
+    ---
+    name: example_command
+    description: Example command fixture for async cancellation cleanup coverage
+    allowed-tools:
+      - asset.list
+    ---
+    sleep 2
+    """
+  end
+
   defp direct_project_ctx(root, opts) do
     layout = Layout.paths(root, ".jido")
     project_id = Keyword.fetch!(opts, :project_id)
@@ -1590,6 +1658,21 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
           _ ->
             :error
         end
+    end
+  end
+
+  defp tracked_child_count(owner_pid) when is_pid(owner_pid) do
+    case :ets.whereis(@child_process_table) do
+      :undefined ->
+        0
+
+      _ ->
+        @child_process_table
+        |> :ets.tab2list()
+        |> Enum.count(fn
+          {{^owner_pid, _child_pid}, _timestamp} -> true
+          _other -> false
+        end)
     end
   end
 
