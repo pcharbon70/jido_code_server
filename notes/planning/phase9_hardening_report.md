@@ -21,6 +21,7 @@
   - Per-project strict asset loading fail-fast mode
   - Synthetic benchmark harness for repeatable load/soak validation
   - Command runtime bridge via `jido_command` for valid command markdown definitions
+  - Recursive sandbox path validation for nested and JSON-wrapped tool arguments
 
 ## Implemented Controls
 
@@ -307,6 +308,17 @@
   - fallback remains permissive when definitions are invalid or unavailable
 - This improves LLM/tool-call argument quality without introducing a second tool execution path.
 
+### 23. Recursive sandbox path validation for nested payloads
+
+- Path sandbox checks now recurse through structured and wrapper payloads:
+  - nested map/list/tuple arguments containing path-like keys
+  - JSON-encoded wrapper payloads that decode into path-like keys
+- Enforcement behavior:
+  - outside-root attempts remain deny-by-default with deterministic `:outside_root` errors
+  - sensitive-path denylist checks continue to apply after path normalization
+  - `security.sandbox_violation` telemetry is emitted for nested/wrapped violation attempts
+- This closes a policy bypass class where path fields were not top-level tool args.
+
 ## Evidence (Automated Tests)
 
 - Added:
@@ -344,6 +356,7 @@
   - command runtime execution via `jido_command` for valid command markdown and compatibility fallback for invalid definitions
   - workflow runtime execution via `jido_workflow` for valid workflow markdown and compatibility fallback for invalid definitions
   - definition-aware command/workflow tool input schemas exposed via `Runtime.list_tools/1`
+  - sandbox path validation for nested map/list args and JSON wrapper payloads
 
 ## Residual Constraints
 
