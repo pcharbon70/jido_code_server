@@ -17,7 +17,7 @@
 - [ ] Sandbox path validation covers nested map/list arguments, JSON wrapper payloads, and opaque serialized keyed payload blobs containing path-like keys.
 - [ ] Outside-root exceptions require `outside_root_allowlist` entries with `reason_code` and emit `security.sandbox_exception_used`.
 - [ ] Malformed `outside_root_allowlist` entries are rejected at startup via `{:invalid_runtime_opt, :outside_root_allowlist, ...}`.
-- [ ] Sensitive file paths are denylisted by default and emit `security.sensitive_path_denied` when blocked.
+- [ ] Sensitive file paths are denylisted by default (including outside-root allowlist exceptions unless explicitly sensitive-allowlisted) and emit `security.sensitive_path_denied` when blocked.
 - [ ] Tool results with sensitive artifacts are flagged and emit `security.sensitive_artifact_detected`.
 - [ ] Artifact size caps (`tool_max_artifact_bytes`) apply to nested command/workflow execution artifacts, not only top-level tool result keys.
 - [ ] Network-capable tools are deny-by-default and emit `security.network_denied` when blocked.

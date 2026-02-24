@@ -350,7 +350,8 @@ defmodule Jido.Code.Server.Project.Policy do
 
   defp maybe_allow_outside_root_path(state, value) do
     with {:ok, _root, resolved} <- resolve_path(state.root_path, value),
-         {:ok, reason_code} <- outside_root_reason_code(state.outside_root_allowlist, resolved) do
+         {:ok, reason_code} <- outside_root_reason_code(state.outside_root_allowlist, resolved),
+         :ok <- validate_sensitive_path(state, resolved) do
       {:ok, reason_code}
     else
       {:error, :outside_root} -> {:error, :outside_root}

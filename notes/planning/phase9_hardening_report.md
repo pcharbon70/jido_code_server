@@ -102,6 +102,9 @@
 - Project overrides:
   - `sensitive_path_denylist`
   - `sensitive_path_allowlist` (explicit exception path patterns)
+- Outside-root allowlist interactions:
+  - `outside_root_allowlist` exceptions remain subject to sensitive-path denylist enforcement
+  - allowlisted sensitive paths still require explicit `sensitive_path_allowlist` coverage
 - Denied attempts return:
   - `:sensitive_path_denied`
 - Security telemetry emits:
@@ -444,6 +447,7 @@
   - workspace executor async cancellation cleanup using tracked session child processes (no manual test PID injection)
   - workspace executor timeout cleanup using tracked session child processes (no manual test PID injection)
   - dead child-process registry entries are pruned on successful tool execution completion paths
+  - outside-root allowlist exceptions remain constrained by sensitive-path denylist enforcement unless explicitly allowlisted
 
 ## Residual Constraints
 
