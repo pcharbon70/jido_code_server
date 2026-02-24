@@ -200,6 +200,8 @@ defmodule Jido.Code.Server.Project.Server do
         conversation_opts = [
           project_id: state.project_id,
           conversation_id: conversation_id,
+          root_path: state.root_path,
+          data_dir: state.data_dir,
           asset_store: state.asset_store,
           policy: state.policy,
           task_supervisor: state.task_supervisor,
@@ -235,6 +237,7 @@ defmodule Jido.Code.Server.Project.Server do
             runtime_opt(state, :outside_root_allowlist, Config.outside_root_allowlist()),
           tool_env_allowlist:
             runtime_opt(state, :tool_env_allowlist, Config.tool_env_allowlist()),
+          command_executor: runtime_opt(state, :command_executor, nil),
           llm_timeout_ms: runtime_opt(state, :llm_timeout_ms, Config.llm_timeout_ms()),
           orchestration_enabled: conversation_orchestration_enabled?(state.runtime_opts),
           llm_adapter: Keyword.get(state.runtime_opts, :llm_adapter),
@@ -510,7 +513,8 @@ defmodule Jido.Code.Server.Project.Server do
         runtime_opt(state, :sensitive_path_allowlist, Config.sensitive_path_allowlist()),
       outside_root_allowlist:
         runtime_opt(state, :outside_root_allowlist, Config.outside_root_allowlist()),
-      tool_env_allowlist: runtime_opt(state, :tool_env_allowlist, Config.tool_env_allowlist())
+      tool_env_allowlist: runtime_opt(state, :tool_env_allowlist, Config.tool_env_allowlist()),
+      command_executor: runtime_opt(state, :command_executor, nil)
     }
   end
 
@@ -630,6 +634,7 @@ defmodule Jido.Code.Server.Project.Server do
           :sensitive_path_allowlist,
           :outside_root_allowlist,
           :tool_env_allowlist,
+          :command_executor,
           :protocol_allowlist,
           :llm_timeout_ms
         ]),

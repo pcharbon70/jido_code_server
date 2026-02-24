@@ -97,6 +97,12 @@ defmodule Jido.Code.Server.EngineTest do
     assert {:error, {:invalid_runtime_opt, :llm_model, :expected_string_or_nil}} =
              Runtime.start_project(root, llm_model: 123)
 
+    assert {:error, {:invalid_runtime_opt, :command_executor, :unsupported_command_executor}} =
+             Runtime.start_project(root, command_executor: "not-a-module")
+
+    assert {:error, {:invalid_runtime_opt, :command_executor, :expected_command_executor_or_nil}} =
+             Runtime.start_project(root, command_executor: 123)
+
     assert {:error,
             {:invalid_runtime_opt, :outside_root_allowlist,
              {:invalid_entry, 0, :missing_reason_code}}} =
@@ -143,6 +149,38 @@ defmodule Jido.Code.Server.EngineTest do
 
     diagnostics = Runtime.diagnostics("engine-runtime-strict-assets")
     assert diagnostics.runtime_opts[:strict_asset_loading] == true
+  end
+
+  test "accepts command_executor runtime option and surfaces it in diagnostics" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, "engine-runtime-command-executor"} =
+             Runtime.start_project(root,
+               project_id: "engine-runtime-command-executor",
+               command_executor: Jido.Code.Server.Project.CommandExecutor.WorkspaceShell
+             )
+
+    diagnostics = Runtime.diagnostics("engine-runtime-command-executor")
+
+    assert diagnostics.runtime_opts[:command_executor] ==
+             Jido.Code.Server.Project.CommandExecutor.WorkspaceShell
+  end
+
+  test "normalizes command_executor alias values to supported module" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, "engine-runtime-command-executor-alias"} =
+             Runtime.start_project(root,
+               project_id: "engine-runtime-command-executor-alias",
+               command_executor: "workspace_shell"
+             )
+
+    diagnostics = Runtime.diagnostics("engine-runtime-command-executor-alias")
+
+    assert diagnostics.runtime_opts[:command_executor] ==
+             Jido.Code.Server.Project.CommandExecutor.WorkspaceShell
   end
 
   test "stop_project returns not found error for unknown project" do

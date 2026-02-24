@@ -305,11 +305,12 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
   defp execute_command_asset_tool(project_ctx, asset, call) do
     with {:ok, definition} <- parse_command_definition(asset),
+         {:ok, execution_ctx} <- command_execution_context(project_ctx, call),
          {:ok, execution} <-
            execute_command_definition(
              definition,
              command_params_from_call(call.args),
-             command_execution_context(project_ctx, call)
+             execution_ctx
            ) do
       {:ok,
        %{
@@ -322,6 +323,9 @@ defmodule Jido.Code.Server.Project.ToolRunner do
        }}
     else
       {:error, {:invalid_command_definition, _reason}} = error ->
+        error
+
+      {:error, {:invalid_project_context, _reason}} = error ->
         error
 
       {:error, reason} ->
@@ -401,15 +405,23 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   defp workflow_inputs_from_call(_args), do: %{}
 
   defp command_execution_context(project_ctx, call) do
-    %{
-      project_id: project_ctx.project_id,
-      conversation_id: conversation_id_from_call(call),
-      correlation_id: correlation_id_from_call(call),
-      project_root: project_ctx.root_path,
-      invocation_id: command_invocation_id(call),
-      bus: :jido_code_bus
-    }
-    |> maybe_put_command_executor(Map.get(project_ctx, :command_executor))
+    case Map.get(project_ctx, :root_path) do
+      root_path when is_binary(root_path) and root_path != "" ->
+        {:ok,
+         %{
+           project_id: Map.get(project_ctx, :project_id),
+           conversation_id: conversation_id_from_call(call),
+           correlation_id: correlation_id_from_call(call),
+           project_root: root_path,
+           invocation_id: command_invocation_id(call),
+           bus: :jido_code_bus,
+           tool_timeout_ms: Map.get(project_ctx, :tool_timeout_ms)
+         }
+         |> maybe_put_command_executor(Map.get(project_ctx, :command_executor))}
+
+      _missing ->
+        {:error, {:invalid_project_context, :missing_root_path}}
+    end
   end
 
   defp maybe_put_command_executor(context, executor_module)
@@ -834,6 +846,7 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
     case type do
       "object" -> validate_object_schema(args, schema)
+      "array" -> validate_array_schema(args, schema)
       nil -> :ok
       _other -> :ok
     end
@@ -864,7 +877,7 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
   defp validate_required_keys(args, schema) do
     required = map_get(schema, "required")
-    required_list = if is_list(required), do: required, else: []
+    required_list = normalize_required_keys(required)
     missing = Enum.reject(required_list, &Map.has_key?(args, &1))
 
     if missing == [] do
@@ -918,8 +931,49 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
   defp validate_property_type(_value, schema) when not is_map(schema), do: :ok
 
-  defp validate_property_type(value, schema),
-    do: validate_known_type(value, map_get(schema, "type"))
+  defp validate_property_type(value, schema) do
+    case map_get(schema, "type") do
+      "object" ->
+        with :ok <- validate_type(value, &is_map/1, "object") do
+          validate_object_schema(value, schema)
+        end
+
+      "array" ->
+        with :ok <- validate_type(value, &is_list/1, "array") do
+          validate_array_schema(value, schema)
+        end
+
+      type ->
+        validate_known_type(value, type)
+    end
+  end
+
+  defp validate_array_schema(items, schema) when is_list(items) and is_map(schema) do
+    case map_get(schema, "items") do
+      item_schema when is_map(item_schema) ->
+        validate_array_items(items, item_schema)
+
+      _other ->
+        :ok
+    end
+  end
+
+  defp validate_array_schema(_items, _schema), do: :ok
+
+  defp validate_array_items(items, item_schema) when is_list(items) and is_map(item_schema) do
+    items
+    |> Enum.with_index()
+    |> Enum.reduce_while(:ok, fn {item, index}, :ok ->
+      reduce_array_item(item, index, item_schema)
+    end)
+  end
+
+  defp reduce_array_item(item, index, item_schema) do
+    case validate_property_type(item, item_schema) do
+      :ok -> {:cont, :ok}
+      {:error, reason} -> {:halt, {:error, {:invalid_array_item_type, index, reason}}}
+    end
+  end
 
   defp validate_type(value, predicate, expected_type) do
     if predicate.(value), do: :ok, else: {:error, {:expected, expected_type}}
@@ -941,6 +995,25 @@ defmodule Jido.Code.Server.Project.ToolRunner do
       :error -> :ok
     end
   end
+
+  defp normalize_required_keys(required) when is_list(required) do
+    required
+    |> Enum.reduce([], fn
+      key, acc when is_binary(key) ->
+        normalized = String.trim(key)
+        if normalized == "", do: acc, else: [normalized | acc]
+
+      key, acc when is_atom(key) ->
+        [Atom.to_string(key) | acc]
+
+      _other, acc ->
+        acc
+    end)
+    |> Enum.reverse()
+    |> Enum.uniq()
+  end
+
+  defp normalize_required_keys(_required), do: []
 
   defp normalize_property_schema(properties) when is_map(properties) do
     Enum.reduce(properties, %{}, fn {key, value}, acc ->

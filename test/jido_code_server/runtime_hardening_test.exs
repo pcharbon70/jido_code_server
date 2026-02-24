@@ -295,6 +295,34 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert event_count(diagnostics, "security.sandbox_violation") >= 1
   end
 
+  test "nested and JSON-wrapped path args are sandbox-validated" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-sandbox-nested",
+               network_egress_policy: :allow
+             )
+
+    assert {:error, %{status: :error, reason: :outside_root}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"payload" => %{"path" => "../outside.md"}},
+               meta: %{"conversation_id" => "phase9-c2-nested"}
+             })
+
+    assert {:error, %{status: :error, reason: :outside_root}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"payload" => Jason.encode!(%{"path" => "../outside-json.md"})},
+               meta: %{"conversation_id" => "phase9-c2-json"}
+             })
+
+    diagnostics = Runtime.diagnostics(project_id)
+    assert event_count(diagnostics, "security.sandbox_violation") >= 2
+  end
+
   test "outside-root allowlist permits explicit exceptions and emits reason-coded security signal" do
     root = TempProject.create!(with_seed_files: true)
 

@@ -10,9 +10,11 @@
 ## Security Gates
 
 - [ ] Tool schema validation rejects malformed payloads.
+- [ ] Tool schema validation recursively enforces nested object payloads (for example `command.run.*.params` and `workflow.run.*.inputs`).
 - [ ] Policy decisions emit `policy.allowed` / `policy.denied` with auditable context.
 - [ ] Correlation IDs propagate across ingest, LLM lifecycle, tool execution, and policy decisions.
 - [ ] Sandbox escape attempts emit `security.sandbox_violation`.
+- [ ] Sandbox path validation covers nested map/list arguments and JSON wrapper payloads containing path-like keys.
 - [ ] Outside-root exceptions require `outside_root_allowlist` entries with `reason_code` and emit `security.sandbox_exception_used`.
 - [ ] Malformed `outside_root_allowlist` entries are rejected at startup via `{:invalid_runtime_opt, :outside_root_allowlist, ...}`.
 - [ ] Sensitive file paths are denylisted by default and emit `security.sensitive_path_denied` when blocked.
@@ -30,6 +32,8 @@
 - [ ] Project startup rejects malformed runtime options with deterministic `{:invalid_runtime_opt, key, reason}` errors.
 - [ ] Project startup rejects unknown runtime option keys (strict startup option allowlist).
 - [ ] Command/workflow `env` passthrough is deny-by-default, allowlisted via `tool_env_allowlist`, and denied attempts emit `security.env_denied`.
+- [ ] Optional stronger command isolation mode is available behind runtime config (`command_executor`) with startup allowlist validation (`workspace_shell` alias/module).
+- [ ] Workspace-backed command executor uses per-execution unique workspace IDs to avoid concurrent mount/session collisions.
 - [ ] Command/workflow-backed tools execute valid markdown definitions through `jido_command`/`jido_workflow`; invalid definitions degrade to preview compatibility mode.
 - [ ] Protocol adapters enforce per-project `protocol_allowlist` boundaries and denied access emits `security.protocol_denied`.
 

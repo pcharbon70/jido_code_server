@@ -21,7 +21,9 @@
   - Per-project strict asset loading fail-fast mode
   - Synthetic benchmark harness for repeatable load/soak validation
   - Command runtime bridge via `jido_command` for valid command markdown definitions
-  - Nested artifact guardrail enforcement for command/workflow runtime execution payloads
+  - Recursive sandbox path validation for nested and JSON-wrapped tool arguments
+  - Recursive tool schema validation for nested `params`/`inputs` payloads
+  - Optional workspace-backed command executor isolation mode via `jido_workspace`
 
 ## Implemented Controls
 
@@ -308,17 +310,50 @@
   - fallback remains permissive when definitions are invalid or unavailable
 - This improves LLM/tool-call argument quality without introducing a second tool execution path.
 
-### 23. Nested artifact guardrails + runtime override coverage
+### 23. Recursive sandbox path validation for nested payloads
 
-- Artifact guardrails now inspect nested result payloads for `artifacts` lists, including runtime bridge outputs:
-  - command execution payloads (`execution.result.artifacts`)
-  - workflow execution payloads with nested artifact collections
-- Guardrail behavior:
-  - `tool_max_artifact_bytes` applies across all discovered artifact entries, not just top-level tool result keys
-  - failure reason remains deterministic: `{:artifact_too_large, index, size, max}`
-- Runtime override coverage:
-  - project-wide concurrency guardrail (`tool_max_concurrency`) is validated under concurrent `ToolRunner` load
-  - operations runbook now documents runtime guardrail override knobs and verification steps.
+- Path sandbox checks now recurse through structured and wrapper payloads:
+  - nested map/list/tuple arguments containing path-like keys
+  - JSON-encoded wrapper payloads that decode into path-like keys
+- Enforcement behavior:
+  - outside-root attempts remain deny-by-default with deterministic `:outside_root` errors
+  - sensitive-path denylist checks continue to apply after path normalization
+  - `security.sandbox_violation` telemetry is emitted for nested/wrapped violation attempts
+- This closes a policy bypass class where path fields were not top-level tool args.
+
+### 24. Recursive nested schema validation for definition-aware tool payloads
+
+- Tool argument validation now recurses into nested object/array schemas:
+  - nested `params` objects for `command.run.*` tools
+  - nested `inputs` objects for `workflow.run.*` tools
+- Enforcement behavior:
+  - nested required fields emit deterministic validation errors before execution
+  - nested type mismatches emit deterministic validation errors before execution
+  - validation behavior remains backward-compatible for permissive schemas
+- This closes a validation gap where definition-aware nested schema hints were published but only shallowly enforced at runtime.
+
+### 25. Optional workspace-backed command executor isolation mode
+
+- Runtime now supports `command_executor` startup option with strict allowlist validation.
+- Supported values:
+  - `nil` (default)
+  - `:workspace_shell` / `"workspace_shell"` alias
+  - `Jido.Code.Server.Project.CommandExecutor.WorkspaceShell`
+- Project and conversation runtime contexts propagate `command_executor` so command tools can switch executor behavior without a second tool path.
+- Conversation startup now also propagates `root_path`/`data_dir` into conversation runtime context so orchestrated command calls can build executor context with deterministic project roots.
+- Added workspace-backed executor:
+  - `Jido.Code.Server.Project.CommandExecutor.WorkspaceShell`
+  - executes interpolated command prompts inside `Jido.Workspace` shell sessions
+  - assigns per-execution unique workspace IDs to avoid cross-run workspace mount collisions
+  - returns structured execution metadata (`executor`, `workspace_id`, `output`) and closes workspace sessions after each run
+- This provides an explicit stronger isolation mode for command execution behind runtime configuration.
+
+### 26. Deterministic command context validation for runtime execution
+
+- Command runtime context building now validates required project context fields before execution.
+- If conversation/direct runtime context is malformed and missing `root_path`, command execution fails deterministically with:
+  - `{:invalid_project_context, :missing_root_path}`
+- This prevents task-level `KeyError` exits from bubbling out of command execution and keeps failures auditable via normal `tool.failed` paths.
 
 ## Evidence (Automated Tests)
 
@@ -357,8 +392,11 @@
   - command runtime execution via `jido_command` for valid command markdown and compatibility fallback for invalid definitions
   - workflow runtime execution via `jido_workflow` for valid workflow markdown and compatibility fallback for invalid definitions
   - definition-aware command/workflow tool input schemas exposed via `Runtime.list_tools/1`
-  - nested artifact guardrails for command/workflow runtime bridge payloads
-  - concurrent project-wide `tool_max_concurrency` guardrail enforcement coverage
+  - sandbox path validation for nested map/list args and JSON wrapper payloads
+  - recursive validation of nested command/workflow `params`/`inputs` schema fields
+  - workspace-backed command executor mode with runtime option validation and command runtime execution coverage
+  - conversation orchestration path coverage for workspace-backed command execution (including executor metadata and workspace ID propagation)
+  - deterministic command runtime context validation for missing required fields (`root_path`)
 
 ## Residual Constraints
 

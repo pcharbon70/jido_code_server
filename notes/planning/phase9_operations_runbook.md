@@ -42,6 +42,8 @@
 - `tool.failed`:
   - alert when sustained failure ratio exceeds 5% over 5 minutes.
   - if reason is `conversation_max_concurrency_reached`, treat as conversation-level saturation and tune `tool_max_concurrency_per_conversation` as needed.
+  - if reason contains `invalid_tool_args`, inspect nested schema-path failures (`params.*`, `inputs.*`) and align caller payload shape with published tool `input_schema`.
+  - if reason contains `workspace_command_failed`, inspect `command_executor` configuration (`workspace_shell` alias/module) and command prompt compatibility with workspace-shell command semantics.
 - `tool.cancelled`:
   - expected after `conversation.cancel` when pending tool calls exist; alert only if cancellation volume is unexpectedly high.
   - async requests (`meta.run_mode = "async"`) should transition to `tool.completed`/`tool.failed` unless conversation cancellation occurs first.
@@ -59,6 +61,7 @@
   - expected for unauthorized calls; alert only on sudden volume spikes (>3x baseline).
 - `security.sandbox_violation`:
   - page immediately; indicates outside-root path attempt.
+  - include nested arguments and JSON wrapper payloads in triage (`payload.path`, nested lists/maps, and decoded JSON blobs).
 - `security.sandbox_exception_used`:
   - warning by default; validate reason code and change ticket context for each occurrence.
 - `security.sensitive_path_denied`:

@@ -201,16 +201,15 @@ defmodule Jido.Code.Server.Project.Policy do
   defp validate_arg_paths(state, args) when is_map(state) and is_map(args) do
     result =
       args
-      |> Map.to_list()
-      |> Enum.reduce_while(default_authorization_meta(), fn
-        {key, value}, acc when is_binary(key) ->
-          maybe_validate_path(state, key, value, acc)
+      |> extract_path_values()
+      |> Enum.reduce_while(default_authorization_meta(), fn value, authorization_meta ->
+        case validate_path_arg(state, value) do
+          {:ok, reason_code} ->
+            {:cont, put_outside_root_reason_code(authorization_meta, reason_code)}
 
-        {key, value}, acc when is_atom(key) ->
-          maybe_validate_path(state, Atom.to_string(key), value, acc)
-
-        {_key, _value}, acc ->
-          {:cont, acc}
+          {:error, reason} ->
+            {:halt, {:error, reason}}
+        end
       end)
 
     case result do
@@ -219,22 +218,86 @@ defmodule Jido.Code.Server.Project.Policy do
     end
   end
 
-  defp maybe_validate_path(state, key, value, authorization_meta) when is_binary(value) do
-    if String.contains?(String.downcase(key), "path") do
-      case validate_path_arg(state, value) do
-        {:ok, reason_code} ->
-          {:cont, put_outside_root_reason_code(authorization_meta, reason_code)}
+  defp extract_path_values(args) do
+    args
+    |> collect_path_values([])
+    |> Enum.reverse()
+    |> Enum.uniq()
+  end
 
-        {:error, reason} ->
-          {:halt, {:error, reason}}
+  defp collect_path_values(%_{} = _struct, acc), do: acc
+
+  defp collect_path_values(args, acc) when is_map(args) do
+    Enum.reduce(args, acc, fn {key, value}, inner_acc ->
+      if path_key?(normalize_path_key(key)) do
+        collect_path_values_for_path_key(value, inner_acc)
+      else
+        collect_path_values(value, inner_acc)
       end
+    end)
+  end
+
+  defp collect_path_values(args, acc) when is_list(args) do
+    Enum.reduce(args, acc, &collect_path_values(&1, &2))
+  end
+
+  defp collect_path_values(args, acc) when is_tuple(args) do
+    args
+    |> Tuple.to_list()
+    |> collect_path_values(acc)
+  end
+
+  defp collect_path_values(args, acc) when is_binary(args) do
+    trimmed = String.trim(args)
+
+    if trimmed == "" do
+      acc
     else
-      {:cont, authorization_meta}
+      case decode_path_payload(trimmed) do
+        {:ok, decoded} -> collect_path_values(decoded, acc)
+        :error -> acc
+      end
     end
   end
 
-  defp maybe_validate_path(_state, _key, _value, authorization_meta),
-    do: {:cont, authorization_meta}
+  defp collect_path_values(_args, acc), do: acc
+
+  defp collect_path_values_for_path_key(value, acc) when is_binary(value) do
+    trimmed = String.trim(value)
+
+    if trimmed == "" do
+      acc
+    else
+      case decode_path_payload(trimmed) do
+        {:ok, decoded} -> collect_path_values(decoded, acc)
+        :error -> [trimmed | acc]
+      end
+    end
+  end
+
+  defp collect_path_values_for_path_key(value, acc) when is_map(value) do
+    collect_path_values(value, acc)
+  end
+
+  defp collect_path_values_for_path_key(value, acc) when is_list(value) do
+    collect_path_values(value, acc)
+  end
+
+  defp collect_path_values_for_path_key(value, acc) when is_tuple(value) do
+    collect_path_values(value, acc)
+  end
+
+  defp collect_path_values_for_path_key(_value, acc), do: acc
+
+  defp decode_path_payload(value) when is_binary(value) do
+    decode_network_payload(value)
+  end
+
+  defp normalize_path_key(key) when is_binary(key), do: String.downcase(key)
+  defp normalize_path_key(key) when is_atom(key), do: key |> Atom.to_string() |> String.downcase()
+  defp normalize_path_key(_key), do: ""
+
+  defp path_key?(key) when is_binary(key), do: String.contains?(key, "path")
 
   defp validate_path_arg(state, value) do
     case normalize_path(state.root_path, value) do

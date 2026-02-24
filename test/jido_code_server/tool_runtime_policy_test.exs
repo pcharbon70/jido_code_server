@@ -117,6 +117,80 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
     assert get_in(result, [:execution, "result", "prompt"]) =~ "query=hello-world"
   end
 
+  test "command tool supports workspace-backed executor isolation mode" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    command_path = Path.join(root, ".jido/commands/example_command.md")
+    File.write!(command_path, valid_workspace_shell_command_markdown())
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase4-command-workspace-executor",
+               network_egress_policy: :allow,
+               command_executor: :workspace_shell
+             )
+
+    assert {:ok, %{status: :ok, tool: "command.run.example_command", result: result}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"path" => ".jido/commands/example_command.md"}
+             })
+
+    assert result.mode == :executed
+    assert result.runtime == :jido_command
+    assert get_in(result, [:execution, "result", "executor"]) == "workspace_shell"
+
+    assert get_in(result, [:execution, "result", "workspace_id"]) =~
+             "phase4-command-workspace-executor"
+
+    assert get_in(result, [:execution, "result", "output"]) =~ "workspace-sandbox-ok"
+  end
+
+  test "workspace-backed executor isolates concurrent runs with unique workspace ids" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    command_path = Path.join(root, ".jido/commands/example_command.md")
+    File.write!(command_path, valid_workspace_shell_command_markdown())
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase4-command-workspace-concurrency",
+               network_egress_policy: :allow,
+               command_executor: :workspace_shell
+             )
+
+    correlation_id = "corr-workspace-collision"
+
+    calls =
+      Task.async_stream(
+        1..2,
+        fn _ ->
+          Runtime.run_tool(project_id, %{
+            name: "command.run.example_command",
+            args: %{"path" => ".jido/commands/example_command.md"},
+            meta: %{"correlation_id" => correlation_id}
+          })
+        end,
+        max_concurrency: 2,
+        timeout: 5_000
+      )
+      |> Enum.to_list()
+
+    assert Enum.all?(calls, &match?({:ok, {:ok, %{status: :ok}}}, &1))
+
+    workspace_ids =
+      calls
+      |> Enum.map(fn {:ok, {:ok, result}} ->
+        get_in(result, [:result, :execution, "result", "workspace_id"])
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    assert length(workspace_ids) == 2
+    assert Enum.uniq(workspace_ids) |> length() == 2
+  end
+
   test "command tool falls back to preview mode when command markdown is invalid" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
@@ -220,6 +294,53 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
            ]
   end
 
+  test "definition-aware schemas enforce nested params and inputs payload validation" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    command_path = Path.join(root, ".jido/commands/example_command.md")
+    workflow_path = Path.join(root, ".jido/workflows/example_workflow.md")
+
+    File.write!(command_path, valid_command_markdown_with_schema())
+    File.write!(workflow_path, valid_workflow_markdown_with_inputs())
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase4-nested-schema-validation",
+               network_egress_policy: :allow
+             )
+
+    assert {:error, %{status: :error, reason: command_missing_reason}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"params" => %{}}
+             })
+
+    assert {:invalid_tool_args,
+            {:invalid_arg_type, "params", {:missing_required_args, ["query"]}}} =
+             command_missing_reason
+
+    assert {:error, %{status: :error, reason: command_type_reason}} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               args: %{"params" => %{"query" => 123}}
+             })
+
+    assert {:invalid_tool_args,
+            {:invalid_arg_type, "params", {:invalid_arg_type, "query", {:expected, "string"}}}} =
+             command_type_reason
+
+    assert {:error, %{status: :error, reason: workflow_missing_reason}} =
+             Runtime.run_tool(project_id, %{
+               name: "workflow.run.example_workflow",
+               args: %{"inputs" => %{}}
+             })
+
+    assert {:invalid_tool_args,
+            {:invalid_arg_type, "inputs", {:missing_required_args, ["file_path"]}}} =
+             workflow_missing_reason
+  end
+
   test "workflow tool falls back to preview mode when workflow markdown is invalid" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
@@ -312,6 +433,55 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
              ToolRunner.run(project_ctx, %{name: "asset.list", args: %{"type" => "skill"}})
   end
 
+  test "command tool returns deterministic error when project root is missing from context" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    command_path = Path.join(root, ".jido/commands/example_command.md")
+    File.write!(command_path, valid_command_markdown())
+
+    layout = Layout.paths(root, ".jido")
+    assert {:ok, asset_store} = AssetStore.start_link(project_id: "phase4-direct-missing-root")
+    assert :ok = AssetStore.load(asset_store, layout)
+
+    assert {:ok, policy} =
+             Policy.start_link(
+               project_id: "phase4-direct-missing-root",
+               root_path: root,
+               allow_tools: nil,
+               network_egress_policy: :allow
+             )
+
+    assert {:ok, task_supervisor} = Task.Supervisor.start_link()
+
+    on_exit(fn ->
+      safe_stop(task_supervisor)
+      safe_stop(policy)
+      safe_stop(asset_store)
+    end)
+
+    project_ctx = %{
+      project_id: "phase4-direct-missing-root",
+      data_dir: ".jido",
+      layout: layout,
+      asset_store: asset_store,
+      policy: policy,
+      task_supervisor: task_supervisor,
+      tool_timeout_ms: 30_000
+    }
+
+    assert {:error,
+            %{
+              status: :error,
+              tool: "command.run.example_command",
+              reason: {:tool_failed, {:invalid_project_context, :missing_root_path}}
+            }} =
+             ToolRunner.run(project_ctx, %{
+               name: "command.run.example_command",
+               args: %{"path" => ".jido/commands/example_command.md"}
+             })
+  end
+
   defp valid_command_markdown do
     """
     ---
@@ -348,6 +518,18 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
 
     ## Return
     - **value**: echo
+    """
+  end
+
+  defp valid_workspace_shell_command_markdown do
+    """
+    ---
+    name: example_command
+    description: Example command fixture for workspace-backed command execution
+    allowed-tools:
+      - asset.list
+    ---
+    echo workspace-sandbox-ok
     """
   end
 
@@ -403,4 +585,13 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
     - **value**: echo
     """
   end
+
+  defp safe_stop(pid) when is_pid(pid) do
+    if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1_000)
+    :ok
+  catch
+    :exit, _reason -> :ok
+  end
+
+  defp safe_stop(_), do: :ok
 end
