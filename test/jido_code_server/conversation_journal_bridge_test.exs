@@ -139,6 +139,44 @@ defmodule Jido.Code.Server.ConversationJournalBridgeTest do
     end)
   end
 
+  test "canonical projections remain queryable after conversation stop" do
+    root = TempProject.create!()
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    project_id = unique_id("journal-bridge-stop-project")
+    conversation_id = unique_id("journal-bridge-stop-conversation")
+
+    assert {:ok, ^project_id} = Runtime.start_project(root, project_id: project_id)
+
+    assert {:ok, ^conversation_id} =
+             Runtime.start_conversation(project_id, conversation_id: conversation_id)
+
+    assert :ok =
+             RuntimeSignal.send_signal(project_id, conversation_id, %{
+               "type" => "conversation.user.message",
+               "content" => "persist me"
+             })
+
+    assert :ok = Runtime.stop_conversation(project_id, conversation_id)
+
+    assert {:error, {:conversation_not_found, ^conversation_id}} =
+             Runtime.conversation_projection(project_id, conversation_id, :timeline)
+
+    assert {:ok, canonical_timeline} =
+             Runtime.conversation_projection(project_id, conversation_id, :canonical_timeline)
+
+    assert Enum.any?(canonical_timeline, fn entry ->
+             entry.type == "conv.in.message.received" and entry.content == "persist me"
+           end)
+
+    assert {:ok, canonical_context} =
+             Runtime.conversation_projection(project_id, conversation_id, :canonical_llm_context)
+
+    assert Enum.any?(canonical_context, fn entry ->
+             entry.role == :user and entry.content == "persist me"
+           end)
+  end
+
   defp unique_id(prefix) do
     "#{prefix}-#{System.unique_integer([:positive, :monotonic])}"
   end

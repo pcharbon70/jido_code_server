@@ -650,7 +650,7 @@ defmodule Jido.Code.Server.Project.Server do
     end
   end
 
-  defp fetch_conversation_pid(state, conversation_id) do
+  defp fetch_conversation_pid(state, conversation_id) when is_binary(conversation_id) do
     case ConversationRegistry.fetch(state.conversation_registry, conversation_id) do
       {:ok, pid} when is_pid(pid) ->
         if Process.alive?(pid) do
@@ -663,6 +663,10 @@ defmodule Jido.Code.Server.Project.Server do
       _ ->
         {:error, {:conversation_not_found, conversation_id}}
     end
+  end
+
+  defp fetch_conversation_pid(_state, conversation_id) do
+    {:error, {:conversation_not_found, conversation_id}}
   end
 
   defp pop_by_monitor_ref(conversations, ref, pid) do
@@ -1036,14 +1040,10 @@ defmodule Jido.Code.Server.Project.Server do
   defp conversation_projection_reply(state, conversation_id, key, timeout) do
     case key do
       projection_key when projection_key in [:canonical_timeline, "canonical_timeline"] ->
-        with_conversation(state, conversation_id, fn _pid ->
-          {:ok, JournalBridge.timeline(state.project_id, conversation_id)}
-        end)
+        canonical_timeline_reply(state.project_id, conversation_id)
 
       projection_key when projection_key in [:canonical_llm_context, "canonical_llm_context"] ->
-        with_conversation(state, conversation_id, fn _pid ->
-          {:ok, JournalBridge.llm_context(state.project_id, conversation_id)}
-        end)
+        canonical_llm_context_reply(state.project_id, conversation_id)
 
       _other ->
         with_conversation(state, conversation_id, fn pid ->
@@ -1057,6 +1057,22 @@ defmodule Jido.Code.Server.Project.Server do
       {:ok, pid} -> fun.(pid)
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp canonical_timeline_reply(project_id, conversation_id) when is_binary(conversation_id) do
+    {:ok, JournalBridge.timeline(project_id, conversation_id)}
+  end
+
+  defp canonical_timeline_reply(_project_id, conversation_id) do
+    {:error, {:conversation_not_found, conversation_id}}
+  end
+
+  defp canonical_llm_context_reply(project_id, conversation_id) when is_binary(conversation_id) do
+    {:ok, JournalBridge.llm_context(project_id, conversation_id)}
+  end
+
+  defp canonical_llm_context_reply(_project_id, conversation_id) do
+    {:error, {:conversation_not_found, conversation_id}}
   end
 
   defp notify_subscribers(state, conversation_id, subscribers) do
