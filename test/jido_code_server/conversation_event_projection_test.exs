@@ -104,6 +104,30 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
     refute_receive {:conversation_event, "sub-c", _event}, 200
   end
 
+  test "project conversation cast notifies subscribers asynchronously" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root, project_id: "phase5-cast-subscribers")
+
+    assert {:ok, "cast-sub-c"} =
+             Runtime.start_conversation(project_id, conversation_id: "cast-sub-c")
+
+    assert :ok = Runtime.subscribe_conversation(project_id, "cast-sub-c", self())
+
+    signal =
+      Jido.Signal.new!("conversation.user.message", %{"content" => "cast one"},
+        source: "/test/conversation_event_projection"
+      )
+
+    assert :ok = Runtime.conversation_cast(project_id, "cast-sub-c", signal)
+
+    assert_receive {:conversation_event, "cast-sub-c", event}, 1_000
+    assert event.type == "user.message"
+    assert event.content == "cast one"
+  end
+
   test "conversation lifecycle supports stop and restart without project disruption" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
