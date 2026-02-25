@@ -739,38 +739,13 @@ defmodule Jido.Code.Server.Project.Server do
 
   defp build_incident_timeline(state, conversation_id, opts)
        when is_binary(conversation_id) and is_list(opts) do
-    with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
-         {:ok, timeline} <- ConversationAgent.projection(pid, :timeline) do
-      limit = incident_timeline_limit(opts)
-      correlation_id = incident_timeline_correlation_id(opts)
-      telemetry = Telemetry.snapshot(state.project_id)
+    limit = incident_timeline_limit(opts)
+    correlation_id = incident_timeline_correlation_id(opts)
 
-      conversation_entries =
-        incident_conversation_entries(timeline, conversation_id, correlation_id)
+    case incident_timeline_source(state, conversation_id) do
+      {:ok, timeline} ->
+        incident_timeline_response(state, conversation_id, timeline, correlation_id, limit)
 
-      telemetry_entries =
-        telemetry.recent_events
-        |> List.wrap()
-        |> incident_telemetry_entries(conversation_id, correlation_id)
-
-      total_entries = length(conversation_entries) + length(telemetry_entries)
-
-      entries =
-        conversation_entries
-        |> Kernel.++(telemetry_entries)
-        |> Enum.sort_by(&incident_sort_key/1)
-        |> take_recent(limit)
-
-      {:ok,
-       %{
-         project_id: state.project_id,
-         conversation_id: conversation_id,
-         correlation_id: correlation_id,
-         limit: limit,
-         total_entries: total_entries,
-         entries: entries
-       }}
-    else
       {:error, reason} ->
         {:error, reason}
     end
@@ -778,6 +753,55 @@ defmodule Jido.Code.Server.Project.Server do
 
   defp build_incident_timeline(_state, _conversation_id, _opts),
     do: {:error, :invalid_incident_timeline_request}
+
+  defp incident_timeline_source(state, conversation_id) do
+    case fetch_conversation_pid(state, conversation_id) do
+      {:ok, pid} ->
+        ConversationAgent.projection(pid, :timeline)
+
+      {:error, {:conversation_not_found, ^conversation_id}} ->
+        timeline = JournalBridge.timeline(state.project_id, conversation_id)
+
+        if timeline == [] do
+          {:error, {:conversation_not_found, conversation_id}}
+        else
+          {:ok, timeline}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp incident_timeline_response(state, conversation_id, timeline, correlation_id, limit) do
+    telemetry = Telemetry.snapshot(state.project_id)
+
+    conversation_entries =
+      incident_conversation_entries(timeline, conversation_id, correlation_id)
+
+    telemetry_entries =
+      telemetry.recent_events
+      |> List.wrap()
+      |> incident_telemetry_entries(conversation_id, correlation_id)
+
+    total_entries = length(conversation_entries) + length(telemetry_entries)
+
+    entries =
+      conversation_entries
+      |> Kernel.++(telemetry_entries)
+      |> Enum.sort_by(&incident_sort_key/1)
+      |> take_recent(limit)
+
+    {:ok,
+     %{
+       project_id: state.project_id,
+       conversation_id: conversation_id,
+       correlation_id: correlation_id,
+       limit: limit,
+       total_entries: total_entries,
+       entries: entries
+     }}
+  end
 
   defp runtime_opt(state, key, default) do
     Keyword.get(state.runtime_opts, key, default)
