@@ -7,6 +7,7 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunLLMInstruction do
     name: "jido_code_server_conversation_run_llm_instruction",
     schema: []
 
+  alias Jido.Code.Server.Conversation.JournalBridge
   alias Jido.Code.Server.Conversation.LLM
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
   alias Jido.Code.Server.Project.Policy
@@ -19,7 +20,7 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunLLMInstruction do
 
     with {:ok, source_signal} <- normalize_source_signal(params),
          true <- is_binary(conversation_id) do
-      llm_context = map_get(params, "llm_context") || %{}
+      llm_context = resolve_llm_context(params, project_ctx, conversation_id)
       correlation_id = ConversationSignal.correlation_id(source_signal)
 
       requested_signal =
@@ -74,6 +75,20 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunLLMInstruction do
     params
     |> map_get("source_signal")
     |> ConversationSignal.normalize()
+  end
+
+  defp resolve_llm_context(params, project_ctx, conversation_id) do
+    fallback = map_get(params, "llm_context") || %{}
+    project_id = map_get(project_ctx, "project_id")
+
+    with true <- is_binary(project_id) and project_id != "",
+         true <- is_binary(conversation_id) and conversation_id != "",
+         messages when is_list(messages) <- JournalBridge.llm_context(project_id, conversation_id),
+         true <- messages != [] do
+      %{messages: messages}
+    else
+      _ -> fallback
+    end
   end
 
   defp available_tool_specs(project_ctx) do

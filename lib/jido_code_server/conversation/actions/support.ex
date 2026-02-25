@@ -9,7 +9,9 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
   alias Jido.Code.Server.Conversation.Instructions.CancelSubagentsInstruction
   alias Jido.Code.Server.Conversation.Instructions.RunLLMInstruction
   alias Jido.Code.Server.Conversation.Instructions.RunToolInstruction
+  alias Jido.Code.Server.Conversation.JournalBridge
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
+  alias Jido.Code.Server.Telemetry
 
   @spec current_state(map()) :: {:ok, map()} | {:error, term()}
   def current_state(context) when is_map(context) do
@@ -31,6 +33,8 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
 
   @spec ingest_and_drain(State.t(), Jido.Signal.t(), map()) :: {State.t(), [Directive.t()]}
   def ingest_and_drain(%State{} = domain, %Jido.Signal{} = signal, state_map) do
+    persist_signal_to_journal(signal, state_map)
+
     domain
     |> Reducer.enqueue_signal(signal)
     |> drain(state_map)
@@ -38,6 +42,8 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
 
   @spec ingest_many_and_drain(State.t(), [Jido.Signal.t()], map()) :: {State.t(), [Directive.t()]}
   def ingest_many_and_drain(%State{} = domain, signals, state_map) when is_list(signals) do
+    Enum.each(signals, &persist_signal_to_journal(&1, state_map))
+
     domain = Enum.reduce(signals, domain, &Reducer.enqueue_signal(&2, &1))
     drain(domain, state_map)
   end
@@ -104,6 +110,35 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
 
   defp intent_to_directive(_intent, _domain, _state_map), do: []
 
+  defp persist_signal_to_journal(%Jido.Signal{} = signal, state_map) do
+    project_id = map_get(state_map, "project_id")
+    conversation_id = map_get(state_map, "conversation_id")
+
+    with true <- is_binary(project_id) and project_id != "",
+         true <- is_binary(conversation_id) and conversation_id != "",
+         :ok <- JournalBridge.ingest(project_id, conversation_id, signal) do
+      :ok
+    else
+      {:error, reason} ->
+        emit_journal_bridge_failed(project_id, conversation_id, signal, reason)
+        :error
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp persist_signal_to_journal(_signal, _state_map), do: :ok
+
+  defp emit_journal_bridge_failed(project_id, conversation_id, signal, reason) do
+    Telemetry.emit("conversation.journal_bridge.failed", %{
+      project_id: project_id,
+      conversation_id: conversation_id,
+      event_type: signal.type,
+      reason: inspect(reason)
+    })
+  end
+
   defp run_instruction(action_module, params, state_map, effect_kind) do
     instruction =
       Jido.Instruction.new!(%{
@@ -121,5 +156,17 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
       result_action: HandleInstructionResultAction,
       meta: %{"effect_kind" => effect_kind}
     )
+  end
+
+  defp map_get(map, key) when is_map(map) do
+    Map.get(map, key) || Map.get(map, to_existing_atom(key))
+  end
+
+  defp map_get(_map, _key), do: nil
+
+  defp to_existing_atom(key) when is_binary(key) do
+    String.to_existing_atom(key)
+  rescue
+    ArgumentError -> nil
   end
 end

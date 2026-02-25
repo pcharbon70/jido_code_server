@@ -4,6 +4,7 @@ defmodule Jido.Code.Server.ConversationJournalBridgeTest do
   alias Jido.Code.Server, as: Runtime
   alias Jido.Code.Server.TestSupport.RuntimeSignal
   alias Jido.Code.Server.TestSupport.TempProject
+  alias JidoConversation
 
   setup do
     on_exit(fn ->
@@ -98,7 +99,50 @@ defmodule Jido.Code.Server.ConversationJournalBridgeTest do
              Enum.filter(canonical_timeline_b, &(&1.type == "conv.in.message.received"))
   end
 
+  test "conversation cast persists canonical user message without projection sync side-effects" do
+    root = TempProject.create!()
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    project_id = unique_id("journal-bridge-cast-project")
+    conversation_id = unique_id("journal-bridge-cast-conversation")
+
+    assert {:ok, ^project_id} = Runtime.start_project(root, project_id: project_id)
+
+    assert {:ok, ^conversation_id} =
+             Runtime.start_conversation(project_id, conversation_id: conversation_id)
+
+    signal =
+      Jido.Signal.new!("conversation.user.message", %{"content" => "cast hello"},
+        source: "/test/conversation_journal_bridge"
+      )
+
+    assert :ok = Runtime.conversation_cast(project_id, conversation_id, signal)
+
+    assert_eventually(fn ->
+      timeline = JidoConversation.timeline(project_id, conversation_id, [])
+
+      Enum.any?(timeline, fn entry ->
+        entry.type == "conv.in.message.received" and entry.content == "cast hello"
+      end)
+    end)
+  end
+
   defp unique_id(prefix) do
     "#{prefix}-#{System.unique_integer([:positive, :monotonic])}"
+  end
+
+  defp assert_eventually(fun, attempts \\ 40)
+
+  defp assert_eventually(fun, attempts) when attempts > 0 do
+    if fun.() do
+      assert true
+    else
+      Process.sleep(25)
+      assert_eventually(fun, attempts - 1)
+    end
+  end
+
+  defp assert_eventually(_fun, 0) do
+    flunk("condition did not become true in time")
   end
 end
