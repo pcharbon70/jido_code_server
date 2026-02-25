@@ -30,19 +30,19 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
              Runtime.start_conversation(project_id, conversation_id: "phase6-c1")
 
     assert :ok =
-             Runtime.send_event(project_id, "phase6-c1", %{
-               "type" => "user.message",
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(project_id, "phase6-c1", %{
+               "type" => "conversation.user.message",
                "content" => "hello"
              })
 
-    assert {:ok, timeline} = Runtime.get_projection(project_id, "phase6-c1", :timeline)
+    assert {:ok, timeline} = Runtime.conversation_projection(project_id, "phase6-c1", :timeline)
 
     assert event_types(timeline) == [
-             "user.message",
-             "llm.started",
-             "assistant.delta",
-             "assistant.message",
-             "llm.completed"
+             "conversation.user.message",
+             "conversation.llm.requested",
+             "conversation.assistant.delta",
+             "conversation.assistant.message",
+             "conversation.llm.completed"
            ]
   end
 
@@ -61,23 +61,27 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
              Runtime.start_conversation(project_id, conversation_id: "phase6-tools-c1")
 
     assert :ok =
-             Runtime.send_event(project_id, "phase6-tools-c1", %{
-               "type" => "user.message",
-               "content" => "please list skills"
-             })
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase6-tools-c1",
+               %{
+                 "type" => "conversation.user.message",
+                 "content" => "please list skills"
+               }
+             )
 
     assert {:ok, timeline} =
-             Runtime.get_projection(project_id, "phase6-tools-c1", :timeline)
+             Runtime.conversation_projection(project_id, "phase6-tools-c1", :timeline)
 
     types = event_types(timeline)
 
-    assert "tool.requested" in types
-    assert "tool.completed" in types
-    assert "assistant.message" in types
+    assert "conversation.tool.requested" in types
+    assert "conversation.tool.completed" in types
+    assert "conversation.assistant.message" in types
 
     tool_completed =
       Enum.find(timeline, fn event ->
-        map_lookup(event, :type) == "tool.completed"
+        map_lookup(event, :type) == "conversation.tool.completed"
       end)
 
     result = map_lookup(tool_completed, :data) |> map_lookup(:result)
@@ -90,10 +94,10 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
       |> map_lookup(:items)
       |> List.wrap()
 
-    assert Enum.any?(items, fn item -> item.name == "example_skill" end)
+    assert Enum.any?(items, fn item -> map_lookup(item, :name) == "example_skill" end)
 
     assert {:ok, []} =
-             Runtime.get_projection(project_id, "phase6-tools-c1", :pending_tool_calls)
+             Runtime.conversation_projection(project_id, "phase6-tools-c1", :pending_tool_calls)
   end
 
   test "tool failures are captured as events and conversation continues with follow-up response" do
@@ -114,24 +118,28 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
              )
 
     assert :ok =
-             Runtime.send_event(project_id, "phase6-tool-failure-c1", %{
-               "type" => "user.message",
-               "content" => "run command",
-               "llm" => %{
-                 "tool_calls" => [%{"name" => "command.run.example_command", "args" => %{}}]
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase6-tool-failure-c1",
+               %{
+                 "type" => "conversation.user.message",
+                 "content" => "run command",
+                 "llm" => %{
+                   "tool_calls" => [%{"name" => "command.run.example_command", "args" => %{}}]
+                 }
                }
-             })
+             )
 
     assert {:ok, timeline} =
-             Runtime.get_projection(project_id, "phase6-tool-failure-c1", :timeline)
+             Runtime.conversation_projection(project_id, "phase6-tool-failure-c1", :timeline)
 
     types = event_types(timeline)
-    assert "tool.failed" in types
-    assert "assistant.message" in types
+    assert "conversation.tool.failed" in types
+    assert "conversation.assistant.message" in types
 
     tool_failed =
       Enum.find(timeline, fn event ->
-        map_lookup(event, :type) == "tool.failed"
+        map_lookup(event, :type) == "conversation.tool.failed"
       end)
 
     assert map_lookup(tool_failed, :data) |> map_lookup(:name) == "command.run.example_command"
@@ -152,37 +160,53 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
              Runtime.start_conversation(project_id, conversation_id: "phase6-cancel-c1")
 
     assert :ok =
-             Runtime.send_event(project_id, "phase6-cancel-c1", %{
-               "type" => "conversation.cancel"
-             })
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase6-cancel-c1",
+               %{
+                 "type" => "conversation.cancel"
+               }
+             )
 
     assert :ok =
-             Runtime.send_event(project_id, "phase6-cancel-c1", %{
-               "type" => "user.message",
-               "content" => "ignored"
-             })
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase6-cancel-c1",
+               %{
+                 "type" => "conversation.user.message",
+                 "content" => "ignored"
+               }
+             )
 
     assert {:ok, timeline_before_resume} =
-             Runtime.get_projection(project_id, "phase6-cancel-c1", :timeline)
+             Runtime.conversation_projection(project_id, "phase6-cancel-c1", :timeline)
 
-    refute "llm.started" in event_types(timeline_before_resume)
-
-    assert :ok =
-             Runtime.send_event(project_id, "phase6-cancel-c1", %{
-               "type" => "conversation.resume"
-             })
+    refute "conversation.llm.requested" in event_types(timeline_before_resume)
 
     assert :ok =
-             Runtime.send_event(project_id, "phase6-cancel-c1", %{
-               "type" => "user.message",
-               "content" => "active again"
-             })
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase6-cancel-c1",
+               %{
+                 "type" => "conversation.resume"
+               }
+             )
+
+    assert :ok =
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase6-cancel-c1",
+               %{
+                 "type" => "conversation.user.message",
+                 "content" => "active again"
+               }
+             )
 
     assert {:ok, timeline_after_resume} =
-             Runtime.get_projection(project_id, "phase6-cancel-c1", :timeline)
+             Runtime.conversation_projection(project_id, "phase6-cancel-c1", :timeline)
 
-    assert "llm.started" in event_types(timeline_after_resume)
-    assert "assistant.message" in event_types(timeline_after_resume)
+    assert "conversation.llm.requested" in event_types(timeline_after_resume)
+    assert "conversation.assistant.message" in event_types(timeline_after_resume)
   end
 
   test "orchestrated command tool calls honor workspace command executor mode" do
@@ -205,25 +229,29 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
              Runtime.start_conversation(project_id, conversation_id: "phase6-command-executor-c1")
 
     assert :ok =
-             Runtime.send_event(project_id, "phase6-command-executor-c1", %{
-               "type" => "user.message",
-               "content" => "run workspace command",
-               "llm" => %{
-                 "tool_calls" => [
-                   %{
-                     "name" => "command.run.example_command",
-                     "args" => %{"path" => ".jido/commands/example_command.md"}
-                   }
-                 ]
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase6-command-executor-c1",
+               %{
+                 "type" => "conversation.user.message",
+                 "content" => "run workspace command",
+                 "llm" => %{
+                   "tool_calls" => [
+                     %{
+                       "name" => "command.run.example_command",
+                       "args" => %{"path" => ".jido/commands/example_command.md"}
+                     }
+                   ]
+                 }
                }
-             })
+             )
 
     assert {:ok, timeline} =
-             Runtime.get_projection(project_id, "phase6-command-executor-c1", :timeline)
+             Runtime.conversation_projection(project_id, "phase6-command-executor-c1", :timeline)
 
     tool_completed =
       Enum.find(timeline, fn event ->
-        map_lookup(event, :type) == "tool.completed"
+        map_lookup(event, :type) == "conversation.tool.completed"
       end)
 
     assert is_map(tool_completed)

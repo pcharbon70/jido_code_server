@@ -1,13 +1,13 @@
 # Architecture Overview
 
-`Jido.Code.Server` is a multi-project runtime where each project is an isolated container and each conversation is an event-driven runtime instance.
+`Jido.Code.Server` is a multi-project runtime where each project is an isolated container and each conversation is a signal-first `Jido.AgentServer` instance.
 
 ## Design Principles
 
 1. Project is the isolation boundary.
    - Supervision, policy, tool execution, and shared assets are project-scoped.
-2. Conversation is event-driven.
-   - Conversations ingest events and maintain projection caches.
+2. Conversation is signal-first.
+   - Conversations ingest `Jido.Signal` values and maintain deterministic projection caches.
 3. Adapters are translators.
    - MCP/A2A map protocol operations to runtime APIs; they do not own state machines.
 4. Tool execution has one path.
@@ -35,7 +35,7 @@ graph TD
     I --> P["Project.ProtocolSupervisor"]
     I --> Q["Project.Watcher (optional)"]
 
-    O --> R["Conversation.Server (per conversation)"]
+    O --> R["Conversation.Agent (per conversation)"]
 ```
 
 ## Core Runtime Surface
@@ -47,7 +47,8 @@ Public API lives in `lib/jido_code_server.ex` and delegates to the engine.
 - Conversation lifecycle:
   - `start_conversation/2`, `stop_conversation/2`
 - Runtime operations:
-  - `send_event/3`, `get_projection/3`, `list_tools/1`, `run_tool/2`
+  - `conversation_call/4`, `conversation_cast/3`, `conversation_state/3`, `conversation_projection/4`
+  - `list_tools/1`, `run_tool/2`
 - Diagnostics:
   - `assets_diagnostics/1`, `conversation_diagnostics/2`, `diagnostics/1`, `incident_timeline/3`
 
@@ -58,7 +59,7 @@ Public API lives in `lib/jido_code_server.ex` and delegates to the engine.
 - Project layer (`lib/jido_code_server/project/*.ex`)
   - Owns layout, assets, policy, tool execution, and conversation routing.
 - Conversation layer (`lib/jido_code_server/conversation/*.ex`)
-  - Owns event ingestion and orchestration behavior.
+  - Owns signal ingestion, orchestration behavior, and projection derivation.
 - Adapter layer (`lib/jido_code_server/protocol/**/*.ex`)
   - Maps external protocol actions to runtime calls.
 - Observability layer (`lib/jido_code_server/telemetry.ex`)

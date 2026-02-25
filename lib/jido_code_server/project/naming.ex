@@ -11,6 +11,7 @@ defmodule Jido.Code.Server.Project.Naming do
           | :asset_store
           | :policy
           | :task_supervisor
+          | :subagent_manager
           | :conversation_registry
           | :conversation_supervisor
           | :protocol_supervisor

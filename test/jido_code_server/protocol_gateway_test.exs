@@ -64,7 +64,7 @@ defmodule Jido.Code.Server.ProtocolGatewayTest do
     assert {:ok, server_pid} = MCPProjectServer.start_link(project_id: project_id)
     assert :ok = MCPProjectServer.send_message(server_pid, "mcp-c1", "hello from project server")
 
-    assert {:ok, timeline} = Runtime.get_projection(project_id, "mcp-c1", :timeline)
+    assert {:ok, timeline} = Runtime.conversation_projection(project_id, "mcp-c1", :timeline)
 
     assert Enum.map(timeline, &Map.get(&1, "content")) == [
              "hello from mcp",
@@ -94,11 +94,11 @@ defmodule Jido.Code.Server.ProtocolGatewayTest do
     assert :ok = A2AGateway.unsubscribe_task(project_id, conversation_id, self())
 
     assert {:ok, timeline} =
-             Runtime.get_projection(project_id, conversation_id, :timeline)
+             Runtime.conversation_projection(project_id, conversation_id, :timeline)
 
     assert Enum.map(timeline, &Map.get(&1, "type")) == [
-             "user.message",
-             "user.message",
+             "conversation.user.message",
+             "conversation.user.message",
              "conversation.cancel"
            ]
 

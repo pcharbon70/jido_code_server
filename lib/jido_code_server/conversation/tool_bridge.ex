@@ -107,7 +107,8 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
           project_id_from_ctx(project_ctx),
           conversation_id,
           task_pid,
-          call_with_meta
+          call_with_meta,
+          notify
         )
 
         {:ok, []}
@@ -191,10 +192,10 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
     Map.get(project_ctx, :project_id) || "global"
   end
 
-  defp track_pending_task(project_id, conversation_id, task_pid, call)
+  defp track_pending_task(project_id, conversation_id, task_pid, call, heir_pid)
        when is_binary(project_id) and is_binary(conversation_id) and is_pid(task_pid) and
               is_map(call) do
-    ensure_task_table()
+    ensure_task_table(heir_pid)
     :ets.insert(@task_table, {{project_id, conversation_id, task_pid}, call})
     :ok
   rescue
@@ -242,16 +243,27 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
       :ok
   end
 
-  defp ensure_task_table do
+  defp ensure_task_table(heir_pid \\ nil)
+
+  defp ensure_task_table(heir_pid) do
     case :ets.whereis(@task_table) do
       :undefined ->
-        :ets.new(@task_table, [
+        opts = [
           :named_table,
           :public,
           :set,
           read_concurrency: true,
           write_concurrency: true
-        ])
+        ]
+
+        opts =
+          if is_pid(heir_pid) do
+            [{:heir, heir_pid, :tool_bridge_pending_tasks} | opts]
+          else
+            opts
+          end
+
+        :ets.new(@task_table, opts)
 
         :ok
 

@@ -153,4 +153,31 @@ defmodule Jido.Code.Server.Config do
   def watcher_debounce_ms do
     Application.get_env(@app, :watcher_debounce_ms, 250)
   end
+
+  @spec conversation_max_queue_size() :: pos_integer()
+  def conversation_max_queue_size do
+    Application.get_env(@app, :conversation_max_queue_size, 10_000)
+  end
+
+  @spec conversation_max_drain_steps() :: pos_integer()
+  def conversation_max_drain_steps do
+    Application.get_env(@app, :conversation_max_drain_steps, 128)
+  end
+
+  @spec default_subagent_max_children() :: pos_integer()
+  def default_subagent_max_children do
+    Application.get_env(@app, :subagent_max_children, 3)
+  end
+
+  @spec default_subagent_ttl_ms() :: pos_integer()
+  def default_subagent_ttl_ms do
+    Application.get_env(@app, :subagent_ttl_ms, 300_000)
+  end
+
+  @spec subagent_templates() :: [map()]
+  def subagent_templates do
+    Application.get_env(@app, :subagent_templates, [])
+    |> List.wrap()
+    |> Enum.filter(&is_map/1)
+  end
 end

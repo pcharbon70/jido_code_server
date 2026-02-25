@@ -47,7 +47,8 @@ defmodule Jido.Code.Server.AlertRouterTest do
     Application.put_env(:jido_code_server, :alert_signal_events, ["security.sandbox_violation"])
     Application.put_env(:jido_code_server, :alert_router, {__MODULE__.Sink, :dispatch, [self()]})
 
-    assert :ok = Telemetry.emit("tool.completed", %{project_id: "phase9-alert-routing"})
+    assert :ok =
+             Telemetry.emit("conversation.tool.completed", %{project_id: "phase9-alert-routing"})
 
     refute_receive {:alert_routed, _, _, _}, 50
   end

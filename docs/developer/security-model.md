@@ -20,6 +20,7 @@ This guide summarizes built-in runtime security controls and safe configuration 
 | Stuck external processes | Child PID tracking and termination on cancel/timeout | `Project.ToolRunner`, `WorkspaceShell` |
 | Env secret leakage | `env` deny-by-default with explicit allowlist | `Project.ToolRunner` |
 | Protocol surface expansion | Project `protocol_allowlist` checks and denied telemetry | `Project.Server`, protocol gateways |
+| Sub-agent privilege escalation | Template-gated spawn tools, template allowlist policy, per-conversation quotas/TTL | `ToolCatalog`, `Policy`, `SubAgentManager` |
 | Secret leakage in telemetry | Key and pattern-based redaction before persistence/emission | `Telemetry` |
 | Poor incident traceability | Correlation IDs and policy/tool decision telemetry | `Correlation`, `Policy`, `Telemetry` |
 
@@ -62,6 +63,9 @@ Security-relevant denials emit telemetry events such as:
 - `security.sensitive_path_denied`
 - `security.env_denied`
 - `security.protocol_denied`
+- `security.subagent.spawn_denied`
+- `security.subagent.quota_denied`
+- `security.subagent.policy_violation`
 
 ## Validation Strategy
 
