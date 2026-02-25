@@ -125,6 +125,18 @@ defmodule Jido.Code.Server.ConversationJournalBridgeTest do
         entry.type == "conv.in.message.received" and entry.content == "cast hello"
       end)
     end)
+
+    assert_eventually(fn ->
+      case Runtime.conversation_projection(project_id, conversation_id, :canonical_timeline) do
+        {:ok, timeline} ->
+          Enum.any?(timeline, fn entry ->
+            entry.type == "conv.in.message.received" and entry.content == "cast hello"
+          end)
+
+        _ ->
+          false
+      end
+    end)
   end
 
   defp unique_id(prefix) do
