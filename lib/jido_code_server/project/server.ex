@@ -876,7 +876,7 @@ defmodule Jido.Code.Server.Project.Server do
     timeline
     |> Enum.map(fn event ->
       event_correlation = incident_event_correlation(event)
-      event_name = event |> incident_map_get(:type) |> legacy_event_type(event)
+      event_name = incident_map_get(event, :type)
 
       %{
         source: :conversation,
@@ -1008,15 +1008,14 @@ defmodule Jido.Code.Server.Project.Server do
       with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
            {:ok, timeline} <- ConversationAgent.projection(pid, :timeline) do
         last_index = Map.get(state.last_notified_event_index, conversation_id, 0)
-        pending_events = timeline |> Enum.drop(last_index) |> List.wrap()
+        pending_signals = timeline |> Enum.drop(last_index) |> List.wrap()
 
-        Enum.each(pending_events, fn event ->
-          legacy_event = legacy_timeline_event(event)
-          send_conversation_event(subscribers, conversation_id, legacy_event)
-          maybe_send_conversation_delta(subscribers, conversation_id, legacy_event)
+        Enum.each(pending_signals, fn signal ->
+          send_conversation_signal(subscribers, conversation_id, signal)
+          maybe_send_conversation_delta(subscribers, conversation_id, signal)
         end)
 
-        updated_index = last_index + length(pending_events)
+        updated_index = last_index + length(pending_signals)
 
         {
           %{
@@ -1024,7 +1023,7 @@ defmodule Jido.Code.Server.Project.Server do
             | last_notified_event_index:
                 Map.put(state.last_notified_event_index, conversation_id, updated_index)
           },
-          length(pending_events)
+          length(pending_signals)
         }
       else
         _ -> {state, 0}
@@ -1032,18 +1031,18 @@ defmodule Jido.Code.Server.Project.Server do
     end
   end
 
-  defp send_conversation_event(subscribers, conversation_id, event) do
+  defp send_conversation_signal(subscribers, conversation_id, signal) do
     Enum.each(subscribers, fn pid ->
-      send(pid, {:conversation_event, conversation_id, event})
+      send(pid, {:conversation_signal, conversation_id, signal})
     end)
   end
 
-  defp maybe_send_conversation_delta(subscribers, conversation_id, event) do
-    type = incident_map_get(event, :type)
+  defp maybe_send_conversation_delta(subscribers, conversation_id, signal) do
+    type = incident_map_get(signal, :type)
 
-    if type in ["conversation.assistant.delta", "assistant.delta"] do
+    if type == "conversation.assistant.delta" do
       Enum.each(subscribers, fn pid ->
-        send(pid, {:conversation_delta, conversation_id, event})
+        send(pid, {:conversation_delta, conversation_id, signal})
       end)
     end
   end
@@ -1110,125 +1109,7 @@ defmodule Jido.Code.Server.Project.Server do
     end)
   end
 
-  defp legacy_timeline_event(event) when is_map(event) do
-    type = incident_map_get(event, :type) |> legacy_event_type(event)
-    data = event |> incident_map_get(:data) |> add_existing_atom_keys()
-    meta = event |> incident_map_get(:meta) |> add_existing_atom_keys()
-
-    event
-    |> maybe_put_atom_key(:type, type)
-    |> maybe_put_string_key("type", type)
-    |> maybe_put_atom_key(:data, data)
-    |> maybe_put_atom_key(:meta, meta)
-    |> maybe_put_atom_key(:content, incident_map_get(event, :content))
-    |> maybe_put_atom_key(:id, incident_map_get(event, :id))
-    |> maybe_put_atom_key(:source, incident_map_get(event, :source))
-    |> maybe_put_atom_key(:time, incident_map_get(event, :time))
-    |> maybe_put_atom_key(:extensions, incident_map_get(event, :extensions))
-    |> drop_nondeterministic_fields()
-    |> drop_conversation_id_fields()
-  end
-
-  defp legacy_timeline_event(event), do: event
-
-  defp legacy_event_type(type, event)
-
-  defp legacy_event_type("conversation.llm.requested", _event), do: "llm.started"
-  defp legacy_event_type("conversation.llm.completed", _event), do: "llm.completed"
-  defp legacy_event_type("conversation.llm.failed", _event), do: "llm.failed"
-  defp legacy_event_type("conversation.assistant.delta", _event), do: "assistant.delta"
-  defp legacy_event_type("conversation.assistant.message", _event), do: "assistant.message"
-  defp legacy_event_type("conversation.user.message", _event), do: "user.message"
-  defp legacy_event_type("conversation.cancel", _event), do: "conversation.cancel"
-  defp legacy_event_type("conversation.resume", _event), do: "conversation.resume"
-  defp legacy_event_type("conversation.tool.requested", _event), do: "tool.requested"
-  defp legacy_event_type("conversation.tool.completed", _event), do: "tool.completed"
-
-  defp legacy_event_type("conversation.tool.failed", event) do
-    reason = event |> incident_map_get(:data) |> incident_map_get(:reason)
-
-    if reason in ["conversation_cancelled", :conversation_cancelled] do
-      "tool.cancelled"
-    else
-      "tool.failed"
-    end
-  end
-
-  defp legacy_event_type("conversation.tool.cancelled", _event), do: "tool.cancelled"
-
-  defp legacy_event_type(type, _event) when is_binary(type) do
-    if String.starts_with?(type, "conversation.") do
-      String.replace_prefix(type, "conversation.", "")
-    else
-      type
-    end
-  end
-
-  defp legacy_event_type(type, _event), do: type
-
-  defp normalize_telemetry_event_name(name) when is_binary(name) do
-    legacy_event_type(name, %{})
-  end
-
   defp normalize_telemetry_event_name(name), do: name
-
-  defp drop_conversation_id_fields(value) when is_map(value) do
-    value
-    |> Map.drop([:conversation_id, "conversation_id"])
-    |> Enum.reduce(%{}, fn {key, nested}, acc ->
-      Map.put(acc, key, drop_conversation_id_fields(nested))
-    end)
-  end
-
-  defp drop_conversation_id_fields(value) when is_list(value) do
-    Enum.map(value, &drop_conversation_id_fields/1)
-  end
-
-  defp drop_conversation_id_fields(value), do: value
-
-  defp drop_nondeterministic_fields(value) when is_map(value) do
-    Map.drop(value, [:id, "id", :time, "time", :source, "source", :extensions, "extensions"])
-  end
-
-  defp drop_nondeterministic_fields(value), do: value
-
-  defp maybe_put_atom_key(map, key, value) when is_map(map) and is_atom(key) do
-    Map.put(map, key, value)
-  end
-
-  defp maybe_put_string_key(map, key, value) when is_map(map) and is_binary(key) do
-    if Map.has_key?(map, key), do: Map.put(map, key, value), else: Map.put(map, key, value)
-  end
-
-  defp add_existing_atom_keys(value) when is_map(value) do
-    Enum.reduce(value, %{}, fn {key, nested}, acc ->
-      nested_value = add_existing_atom_keys(nested)
-      acc = Map.put(acc, key, nested_value)
-
-      case key do
-        key when is_binary(key) ->
-          case to_existing_atom(key) do
-            nil -> acc
-            atom_key -> Map.put(acc, atom_key, nested_value)
-          end
-
-        _other ->
-          acc
-      end
-    end)
-  end
-
-  defp add_existing_atom_keys(value) when is_list(value) do
-    Enum.map(value, &add_existing_atom_keys/1)
-  end
-
-  defp add_existing_atom_keys(value), do: value
-
-  defp to_existing_atom(key) when is_binary(key) do
-    String.to_existing_atom(key)
-  rescue
-    ArgumentError -> nil
-  end
 
   defp emit_conversation_ingested(project_id, conversation_id, %Jido.Signal{} = signal) do
     Telemetry.emit("conversation.event_ingested", %{

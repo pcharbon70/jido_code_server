@@ -71,7 +71,7 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
     assert pending_a == []
   end
 
-  test "project conversation subscribers receive notifications and can unsubscribe" do
+  test "project conversation subscribers receive canonical signal notifications and can unsubscribe" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
 
@@ -89,8 +89,8 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
                "content" => "one"
              })
 
-    assert_receive {:conversation_event, "sub-c", event}, 1_000
-    assert event.type == "user.message"
+    assert_receive {:conversation_signal, "sub-c", event}, 1_000
+    assert event["type"] == "conversation.user.message"
 
     assert :ok = Runtime.unsubscribe_conversation(project_id, "sub-c", self())
 
@@ -100,7 +100,7 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
                "content" => "two"
              })
 
-    refute_receive {:conversation_event, "sub-c", _event}, 200
+    refute_receive {:conversation_signal, "sub-c", _event}, 200
   end
 
   test "conversation lifecycle supports stop and restart without project disruption" do

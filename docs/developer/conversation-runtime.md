@@ -97,6 +97,11 @@ Sub-agent templates are surfaced as spawn tools (`agent.spawn.<template_id>`) an
 - last event type/time
 - projection keys
 
+Conversation subscriptions (`Runtime.subscribe_conversation/3`) emit canonical runtime signals:
+
+- `{:conversation_signal, conversation_id, signal_map}`
+- `{:conversation_delta, conversation_id, signal_map}` for `conversation.assistant.delta`
+
 > Security Aside
 > 
 > Correlation IDs are enforced and propagated through incoming events, LLM lifecycle events, and tool events to support incident stitching and forensic timelines.
