@@ -117,7 +117,10 @@ defmodule Jido.Code.Server.Conversation.JournalBridge do
         "channel" => map_get(data, "channel") || @default_channel,
         "status" => status
       }
-      |> maybe_put("message", map_get(data, "message") || map_get(data, "reason"))
+      |> maybe_put(
+        "message",
+        normalize_tool_status_message(map_get(data, "message") || map_get(data, "reason"))
+      )
       |> maybe_put("tool_name", map_get(data, "name"))
       |> maybe_put("tool_call_id", map_get(data, "tool_call_id"))
       |> maybe_put("metadata", normalize_map(map_get(data, "metadata")))
@@ -177,4 +180,8 @@ defmodule Jido.Code.Server.Conversation.JournalBridge do
   defp normalize_value(value) when is_map(value), do: normalize_map(value)
   defp normalize_value(value) when is_list(value), do: Enum.map(value, &normalize_value/1)
   defp normalize_value(value), do: value
+
+  defp normalize_tool_status_message(nil), do: nil
+  defp normalize_tool_status_message(message) when is_binary(message), do: message
+  defp normalize_tool_status_message(message), do: inspect(message)
 end
