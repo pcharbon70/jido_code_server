@@ -12,6 +12,7 @@ defmodule Jido.Code.Server.Project.Server do
 
   alias Jido.Code.Server.Config
   alias Jido.Code.Server.Conversation.Agent, as: ConversationAgent
+  alias Jido.Code.Server.Conversation.JournalBridge
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
   alias Jido.Code.Server.Conversation.ToolBridge
   alias Jido.Code.Server.Project.AssetStore
@@ -190,6 +191,7 @@ defmodule Jido.Code.Server.Project.Server do
          conversations: %{},
          subscribers: %{},
          last_notified_event_index: %{},
+         last_journal_synced_event_index: %{},
          runtime_opts: runtime_opts,
          opts: opts
        }}
@@ -272,6 +274,9 @@ defmodule Jido.Code.Server.Project.Server do
             last_notified_event_index =
               Map.put(state.last_notified_event_index, conversation_id, 0)
 
+            last_journal_synced_event_index =
+              Map.put(state.last_journal_synced_event_index, conversation_id, 0)
+
             Telemetry.emit("conversation.started", %{
               project_id: state.project_id,
               conversation_id: conversation_id
@@ -281,7 +286,8 @@ defmodule Jido.Code.Server.Project.Server do
              %{
                state
                | conversations: conversations,
-                 last_notified_event_index: last_notified_event_index
+                 last_notified_event_index: last_notified_event_index,
+                 last_journal_synced_event_index: last_journal_synced_event_index
              }}
 
           {:error, reason} ->
@@ -309,12 +315,16 @@ defmodule Jido.Code.Server.Project.Server do
         subscribers = Map.delete(state.subscribers, conversation_id)
         last_notified_event_index = Map.delete(state.last_notified_event_index, conversation_id)
 
+        last_journal_synced_event_index =
+          Map.delete(state.last_journal_synced_event_index, conversation_id)
+
         {:reply, :ok,
          %{
            state
            | conversations: conversations,
              subscribers: subscribers,
-             last_notified_event_index: last_notified_event_index
+             last_notified_event_index: last_notified_event_index,
+             last_journal_synced_event_index: last_journal_synced_event_index
          }}
 
       :error ->
@@ -356,12 +366,8 @@ defmodule Jido.Code.Server.Project.Server do
   end
 
   def handle_call({:conversation_projection, conversation_id, key, timeout}, _from, state) do
-    reply =
-      case fetch_conversation_pid(state, conversation_id) do
-        {:ok, pid} -> ConversationAgent.projection(pid, key, timeout)
-        {:error, reason} -> {:error, reason}
-      end
-
+    {state, _synced_count} = sync_conversation_journal(state, conversation_id)
+    reply = conversation_projection_reply(state, conversation_id, key, timeout)
     {:reply, reply, state}
   end
 
@@ -520,12 +526,16 @@ defmodule Jido.Code.Server.Project.Server do
       subscribers = Map.delete(state.subscribers, conversation_id)
       last_notified_event_index = Map.delete(state.last_notified_event_index, conversation_id)
 
+      last_journal_synced_event_index =
+        Map.delete(state.last_journal_synced_event_index, conversation_id)
+
       {:noreply,
        %{
          state
          | conversations: conversations,
            subscribers: subscribers,
-           last_notified_event_index: last_notified_event_index
+           last_notified_event_index: last_notified_event_index,
+           last_journal_synced_event_index: last_journal_synced_event_index
        }}
     else
       {:noreply, state}
@@ -998,13 +1008,68 @@ defmodule Jido.Code.Server.Project.Server do
   end
 
   defp maybe_notify_subscribers_after_call(state, conversation_id) do
+    {state, synced_count} = sync_conversation_journal(state, conversation_id)
     subscribers = Map.get(state.subscribers, conversation_id, MapSet.new())
 
     if MapSet.size(subscribers) == 0 do
-      {state, 0}
+      {state, synced_count}
     else
-      notify_subscribers(state, conversation_id, subscribers)
+      {state, delivered_count} = notify_subscribers(state, conversation_id, subscribers)
+      {state, synced_count + delivered_count}
     end
+  end
+
+  defp sync_conversation_journal(state, conversation_id) do
+    with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
+         {:ok, timeline} <- ConversationAgent.projection(pid, :timeline) do
+      persist_journal_events(state, conversation_id, timeline)
+    else
+      _ -> {state, 0}
+    end
+  end
+
+  defp persist_journal_events(state, conversation_id, timeline) when is_list(timeline) do
+    last_index = Map.get(state.last_journal_synced_event_index, conversation_id, 0)
+    pending_events = timeline |> Enum.drop(last_index) |> List.wrap()
+
+    Enum.each(pending_events, fn event ->
+      persist_journal_event(state, conversation_id, event)
+    end)
+
+    updated_index = last_index + length(pending_events)
+
+    {
+      %{
+        state
+        | last_journal_synced_event_index:
+            Map.put(state.last_journal_synced_event_index, conversation_id, updated_index)
+      },
+      length(pending_events)
+    }
+  end
+
+  defp persist_journal_events(state, _conversation_id, _timeline), do: {state, 0}
+
+  defp persist_journal_event(state, conversation_id, event) when is_map(event) do
+    with {:ok, signal} <- ConversationSignal.normalize(event),
+         :ok <- JournalBridge.ingest(state.project_id, conversation_id, signal) do
+      :ok
+    else
+      {:error, reason} ->
+        emit_journal_bridge_failed(state.project_id, conversation_id, event, reason)
+        :error
+    end
+  end
+
+  defp persist_journal_event(_state, _conversation_id, _event), do: :error
+
+  defp emit_journal_bridge_failed(project_id, conversation_id, event, reason) do
+    Telemetry.emit("conversation.journal_bridge.failed", %{
+      project_id: project_id,
+      conversation_id: conversation_id,
+      event_type: incident_map_get(event, :type),
+      reason: inspect(reason)
+    })
   end
 
   defp conversation_snapshot(conversation_id, pid) do
@@ -1018,6 +1083,32 @@ defmodule Jido.Code.Server.Project.Server do
       end
     else
       %{conversation_id: conversation_id, status: :stopped, pid: pid}
+    end
+  end
+
+  defp conversation_projection_reply(state, conversation_id, key, timeout) do
+    case key do
+      projection_key when projection_key in [:canonical_timeline, "canonical_timeline"] ->
+        with_conversation(state, conversation_id, fn _pid ->
+          {:ok, JournalBridge.timeline(state.project_id, conversation_id)}
+        end)
+
+      projection_key when projection_key in [:canonical_llm_context, "canonical_llm_context"] ->
+        with_conversation(state, conversation_id, fn _pid ->
+          {:ok, JournalBridge.llm_context(state.project_id, conversation_id)}
+        end)
+
+      _other ->
+        with_conversation(state, conversation_id, fn pid ->
+          ConversationAgent.projection(pid, key, timeout)
+        end)
+    end
+  end
+
+  defp with_conversation(state, conversation_id, fun) when is_function(fun, 1) do
+    case fetch_conversation_pid(state, conversation_id) do
+      {:ok, pid} -> fun.(pid)
+      {:error, reason} -> {:error, reason}
     end
   end
 

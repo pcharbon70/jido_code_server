@@ -3,6 +3,8 @@ defmodule Jido.Code.Server.Conversation.Agent do
   Agent-first conversation runtime on top of `Jido.AgentServer`.
   """
 
+  @dialyzer {:nowarn_function, plugin_specs: 0}
+
   use Jido.Agent,
     name: "jido_code_server_conversation_agent",
     description: "Signal-first conversation runtime",
