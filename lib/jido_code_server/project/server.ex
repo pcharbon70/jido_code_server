@@ -13,6 +13,7 @@ defmodule Jido.Code.Server.Project.Server do
   alias Jido.Code.Server.Config
   alias Jido.Code.Server.Conversation.Agent, as: ConversationAgent
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
+  alias Jido.Code.Server.Conversation.ToolBridge
   alias Jido.Code.Server.Project.AssetStore
   alias Jido.Code.Server.Project.ConversationRegistry
   alias Jido.Code.Server.Project.ConversationSupervisor
@@ -336,9 +337,9 @@ defmodule Jido.Code.Server.Project.Server do
 
   def handle_call({:conversation_cast, conversation_id, signal}, _from, state) do
     reply =
-      with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
-           :ok <- ConversationAgent.cast(pid, signal) do
-        :ok
+      case fetch_conversation_pid(state, conversation_id) do
+        {:ok, pid} -> ConversationAgent.cast(pid, signal)
+        {:error, reason} -> {:error, reason}
       end
 
     {:reply, reply, state}
@@ -346,9 +347,9 @@ defmodule Jido.Code.Server.Project.Server do
 
   def handle_call({:conversation_state, conversation_id, timeout}, _from, state) do
     reply =
-      with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
-           {:ok, conversation_state} <- ConversationAgent.state(pid, timeout) do
-        {:ok, conversation_state}
+      case fetch_conversation_pid(state, conversation_id) do
+        {:ok, pid} -> ConversationAgent.state(pid, timeout)
+        {:error, reason} -> {:error, reason}
       end
 
     {:reply, reply, state}
@@ -356,9 +357,9 @@ defmodule Jido.Code.Server.Project.Server do
 
   def handle_call({:conversation_projection, conversation_id, key, timeout}, _from, state) do
     reply =
-      with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
-           {:ok, projection} <- ConversationAgent.projection(pid, key, timeout) do
-        {:ok, projection}
+      case fetch_conversation_pid(state, conversation_id) do
+        {:ok, pid} -> ConversationAgent.projection(pid, key, timeout)
+        {:error, reason} -> {:error, reason}
       end
 
     {:reply, reply, state}
@@ -538,37 +539,7 @@ defmodule Jido.Code.Server.Project.Server do
       |> incident_map_get(:meta)
       |> incident_map_get(:conversation_id)
 
-    next_state =
-      if is_binary(conversation_id) do
-        with {:ok, events} <-
-               Jido.Code.Server.Conversation.ToolBridge.handle_tool_result(
-                 project_ctx(state),
-                 conversation_id,
-                 task_pid,
-                 tool_call,
-                 result
-               ),
-             signals when is_list(signals) <-
-               events_to_signals(events),
-             {:ok, pid} <- fetch_conversation_pid(state, conversation_id) do
-          Enum.each(signals, fn signal ->
-            case ConversationAgent.call(pid, signal, 30_000) do
-              {:ok, _snapshot} ->
-                emit_conversation_ingested(state.project_id, conversation_id, signal)
-
-              _other ->
-                :ok
-            end
-          end)
-
-          {updated_state, _count} = maybe_notify_subscribers_after_call(state, conversation_id)
-          updated_state
-        else
-          _ -> state
-        end
-      else
-        state
-      end
+    next_state = maybe_apply_tool_result(state, conversation_id, task_pid, tool_call, result)
 
     {:noreply, next_state}
   end
@@ -629,6 +600,43 @@ defmodule Jido.Code.Server.Project.Server do
   end
 
   def handle_info(_message, state), do: {:noreply, state}
+
+  defp maybe_apply_tool_result(state, conversation_id, _task_pid, _tool_call, _result)
+       when not is_binary(conversation_id),
+       do: state
+
+  defp maybe_apply_tool_result(state, conversation_id, task_pid, tool_call, result) do
+    with {:ok, events} <-
+           ToolBridge.handle_tool_result(
+             project_ctx(state),
+             conversation_id,
+             task_pid,
+             tool_call,
+             result
+           ),
+         signals when is_list(signals) <- events_to_signals(events),
+         {:ok, pid} <- fetch_conversation_pid(state, conversation_id) do
+      ingest_tool_result_signals(state, conversation_id, pid, signals)
+    else
+      _ -> state
+    end
+  end
+
+  defp ingest_tool_result_signals(state, conversation_id, pid, signals) do
+    Enum.each(signals, fn signal ->
+      maybe_emit_ingested_signal(state.project_id, conversation_id, pid, signal)
+    end)
+
+    {updated_state, _count} = maybe_notify_subscribers_after_call(state, conversation_id)
+    updated_state
+  end
+
+  defp maybe_emit_ingested_signal(project_id, conversation_id, pid, signal) do
+    case ConversationAgent.call(pid, signal, 30_000) do
+      {:ok, _snapshot} -> emit_conversation_ingested(project_id, conversation_id, signal)
+      _other -> :ok
+    end
+  end
 
   defp fetch_conversation_pid(state, conversation_id) do
     case ConversationRegistry.fetch(state.conversation_registry, conversation_id) do
@@ -984,17 +992,7 @@ defmodule Jido.Code.Server.Project.Server do
   defp conversation_snapshots(state) do
     state.conversations
     |> Enum.map(fn {conversation_id, %{pid: pid}} ->
-      if Process.alive?(pid) do
-        case ConversationAgent.projection(pid, :diagnostics) do
-          {:ok, diagnostics} ->
-            Map.put(diagnostics, :conversation_id, conversation_id)
-
-          {:error, _reason} ->
-            %{conversation_id: conversation_id, status: :degraded, pid: pid}
-        end
-      else
-        %{conversation_id: conversation_id, status: :stopped, pid: pid}
-      end
+      conversation_snapshot(conversation_id, pid)
     end)
     |> Enum.sort_by(& &1.conversation_id)
   end
@@ -1005,32 +1003,57 @@ defmodule Jido.Code.Server.Project.Server do
     if MapSet.size(subscribers) == 0 do
       {state, 0}
     else
-      with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
-           {:ok, timeline} <- ConversationAgent.projection(pid, :timeline) do
-        last_index = Map.get(state.last_notified_event_index, conversation_id, 0)
-        pending_events = timeline |> Enum.drop(last_index) |> List.wrap()
-
-        Enum.each(pending_events, fn event ->
-          legacy_event = legacy_timeline_event(event)
-          send_conversation_event(subscribers, conversation_id, legacy_event)
-          maybe_send_conversation_delta(subscribers, conversation_id, legacy_event)
-        end)
-
-        updated_index = last_index + length(pending_events)
-
-        {
-          %{
-            state
-            | last_notified_event_index:
-                Map.put(state.last_notified_event_index, conversation_id, updated_index)
-          },
-          length(pending_events)
-        }
-      else
-        _ -> {state, 0}
-      end
+      notify_subscribers(state, conversation_id, subscribers)
     end
   end
+
+  defp conversation_snapshot(conversation_id, pid) do
+    if Process.alive?(pid) do
+      case ConversationAgent.projection(pid, :diagnostics) do
+        {:ok, diagnostics} ->
+          Map.put(diagnostics, :conversation_id, conversation_id)
+
+        {:error, _reason} ->
+          %{conversation_id: conversation_id, status: :degraded, pid: pid}
+      end
+    else
+      %{conversation_id: conversation_id, status: :stopped, pid: pid}
+    end
+  end
+
+  defp notify_subscribers(state, conversation_id, subscribers) do
+    with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
+         {:ok, timeline} <- ConversationAgent.projection(pid, :timeline) do
+      deliver_subscriber_events(state, conversation_id, subscribers, timeline)
+    else
+      _ -> {state, 0}
+    end
+  end
+
+  defp deliver_subscriber_events(state, conversation_id, subscribers, timeline)
+       when is_list(timeline) do
+    last_index = Map.get(state.last_notified_event_index, conversation_id, 0)
+    pending_events = timeline |> Enum.drop(last_index) |> List.wrap()
+
+    Enum.each(pending_events, fn event ->
+      legacy_event = legacy_timeline_event(event)
+      send_conversation_event(subscribers, conversation_id, legacy_event)
+      maybe_send_conversation_delta(subscribers, conversation_id, legacy_event)
+    end)
+
+    updated_index = last_index + length(pending_events)
+
+    {
+      %{
+        state
+        | last_notified_event_index:
+            Map.put(state.last_notified_event_index, conversation_id, updated_index)
+      },
+      length(pending_events)
+    }
+  end
+
+  defp deliver_subscriber_events(state, _conversation_id, _subscribers, _timeline), do: {state, 0}
 
   defp send_conversation_event(subscribers, conversation_id, event) do
     Enum.each(subscribers, fn pid ->
@@ -1049,32 +1072,34 @@ defmodule Jido.Code.Server.Project.Server do
   end
 
   defp emit_subagent_signal(state, conversation_id, type, payload, reason) do
-    with {:ok, pid} <- fetch_conversation_pid(state, conversation_id) do
-      data =
-        payload
-        |> normalize_payload_map()
-        |> maybe_put_reason(reason)
+    case fetch_conversation_pid(state, conversation_id) do
+      {:ok, pid} ->
+        data =
+          payload
+          |> normalize_payload_map()
+          |> maybe_put_reason(reason)
 
-      correlation_id = incident_map_get(data, :correlation_id)
+        correlation_id = incident_map_get(data, :correlation_id)
 
-      signal =
-        Jido.Signal.new!(type, data,
-          source: "/project/#{state.project_id}/conversation/#{conversation_id}",
-          extensions:
-            if(is_binary(correlation_id), do: %{"correlation_id" => correlation_id}, else: %{})
-        )
+        signal =
+          Jido.Signal.new!(type, data,
+            source: "/project/#{state.project_id}/conversation/#{conversation_id}",
+            extensions:
+              if(is_binary(correlation_id), do: %{"correlation_id" => correlation_id}, else: %{})
+          )
 
-      case ConversationAgent.call(pid, signal, 30_000) do
-        {:ok, _snapshot} ->
-          emit_conversation_ingested(state.project_id, conversation_id, signal)
-          {updated_state, _count} = maybe_notify_subscribers_after_call(state, conversation_id)
-          updated_state
+        case ConversationAgent.call(pid, signal, 30_000) do
+          {:ok, _snapshot} ->
+            emit_conversation_ingested(state.project_id, conversation_id, signal)
+            {updated_state, _count} = maybe_notify_subscribers_after_call(state, conversation_id)
+            updated_state
 
-        _other ->
-          state
-      end
-    else
-      _ -> state
+          _other ->
+            state
+        end
+
+      _ ->
+        state
     end
   end
 
@@ -1190,31 +1215,19 @@ defmodule Jido.Code.Server.Project.Server do
     Map.drop(value, [:id, "id", :time, "time", :source, "source", :extensions, "extensions"])
   end
 
-  defp drop_nondeterministic_fields(value), do: value
-
   defp maybe_put_atom_key(map, key, value) when is_map(map) and is_atom(key) do
     Map.put(map, key, value)
   end
 
   defp maybe_put_string_key(map, key, value) when is_map(map) and is_binary(key) do
-    if Map.has_key?(map, key), do: Map.put(map, key, value), else: Map.put(map, key, value)
+    Map.put(map, key, value)
   end
 
   defp add_existing_atom_keys(value) when is_map(value) do
     Enum.reduce(value, %{}, fn {key, nested}, acc ->
       nested_value = add_existing_atom_keys(nested)
       acc = Map.put(acc, key, nested_value)
-
-      case key do
-        key when is_binary(key) ->
-          case to_existing_atom(key) do
-            nil -> acc
-            atom_key -> Map.put(acc, atom_key, nested_value)
-          end
-
-        _other ->
-          acc
-      end
+      maybe_put_existing_atom_key(acc, key, nested_value)
     end)
   end
 
@@ -1223,6 +1236,15 @@ defmodule Jido.Code.Server.Project.Server do
   end
 
   defp add_existing_atom_keys(value), do: value
+
+  defp maybe_put_existing_atom_key(acc, key, nested_value) when is_binary(key) do
+    case to_existing_atom(key) do
+      nil -> acc
+      atom_key -> Map.put(acc, atom_key, nested_value)
+    end
+  end
+
+  defp maybe_put_existing_atom_key(acc, _key, _nested_value), do: acc
 
   defp to_existing_atom(key) when is_binary(key) do
     String.to_existing_atom(key)
@@ -1259,20 +1281,22 @@ defmodule Jido.Code.Server.Project.Server do
     end)
   end
 
-  defp events_to_signals(_events), do: []
-
   defp maybe_wait_for_orchestration(state, conversation_id) do
     with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
          {:ok, conversation_state} <- ConversationAgent.state(pid) do
-      domain = Map.get(conversation_state, :domain) || %{}
-
-      if Map.get(domain, :orchestration_enabled, false) do
-        wait_for_settle(pid, System.monotonic_time(:millisecond) + 300, %{len: nil, stable: 0})
-      else
-        :ok
-      end
+      maybe_wait_for_settle(pid, conversation_state)
     else
       _ -> :ok
+    end
+  end
+
+  defp maybe_wait_for_settle(pid, conversation_state) do
+    domain = Map.get(conversation_state, :domain) || %{}
+
+    if Map.get(domain, :orchestration_enabled, false) do
+      wait_for_settle(pid, System.monotonic_time(:millisecond) + 300, %{len: nil, stable: 0})
+    else
+      :ok
     end
   end
 
@@ -1280,49 +1304,66 @@ defmodule Jido.Code.Server.Project.Server do
     if System.monotonic_time(:millisecond) >= deadline_ms do
       :ok
     else
-      with {:ok, conversation_state} <- ConversationAgent.state(pid),
-           {:ok, timeline} <- ConversationAgent.projection(pid, :timeline) do
-        domain = Map.get(conversation_state, :domain) || %{}
-        queue_size = Map.get(domain, :queue_size, 0)
-        pending = Map.get(domain, :pending_tool_calls, [])
-        status = Map.get(domain, :status)
-        len = length(List.wrap(timeline))
-
-        cond do
-          queue_size > 0 ->
-            Process.sleep(10)
-            wait_for_settle(pid, deadline_ms, %{len: len, stable: 0})
-
-          pending != [] and pending_async?(pending) ->
-            :ok
-
-          pending != [] ->
-            Process.sleep(10)
-            wait_for_settle(pid, deadline_ms, %{len: len, stable: 0})
-
-          status in [:idle, :cancelled] ->
-            next_tracker =
-              case tracker do
-                %{len: ^len, stable: stable} -> %{len: len, stable: stable + 1}
-                _ -> %{len: len, stable: 0}
-              end
-
-            if next_tracker.stable >= 2 do
-              :ok
-            else
-              Process.sleep(10)
-              wait_for_settle(pid, deadline_ms, next_tracker)
-            end
-
-          true ->
-            Process.sleep(10)
-            wait_for_settle(pid, deadline_ms, %{len: len, stable: 0})
-        end
-      else
-        _ -> :ok
-      end
+      wait_for_settle_iteration(pid, deadline_ms, tracker)
     end
   end
+
+  defp wait_for_settle_iteration(pid, deadline_ms, tracker) do
+    with {:ok, conversation_state} <- ConversationAgent.state(pid),
+         {:ok, timeline} <- ConversationAgent.projection(pid, :timeline) do
+      domain = Map.get(conversation_state, :domain) || %{}
+      len = length(List.wrap(timeline))
+      settle_next_step(pid, deadline_ms, tracker, domain, len)
+    else
+      _ -> :ok
+    end
+  end
+
+  defp settle_next_step(pid, deadline_ms, tracker, domain, len) do
+    queue_size = Map.get(domain, :queue_size, 0)
+    pending = Map.get(domain, :pending_tool_calls, [])
+    status = Map.get(domain, :status)
+
+    cond do
+      queue_size > 0 ->
+        wait_for_next_settle(pid, deadline_ms, reset_tracker(len))
+
+      pending != [] and pending_async?(pending) ->
+        :ok
+
+      pending != [] ->
+        wait_for_next_settle(pid, deadline_ms, reset_tracker(len))
+
+      status in [:idle, :cancelled] ->
+        maybe_settle_stable(pid, deadline_ms, tracker, len)
+
+      true ->
+        wait_for_next_settle(pid, deadline_ms, reset_tracker(len))
+    end
+  end
+
+  defp maybe_settle_stable(pid, deadline_ms, tracker, len) do
+    next_tracker = advance_stable_tracker(tracker, len)
+
+    if next_tracker.stable >= 2 do
+      :ok
+    else
+      wait_for_next_settle(pid, deadline_ms, next_tracker)
+    end
+  end
+
+  defp wait_for_next_settle(pid, deadline_ms, tracker) do
+    Process.sleep(10)
+    wait_for_settle(pid, deadline_ms, tracker)
+  end
+
+  defp reset_tracker(len), do: %{len: len, stable: 0}
+
+  defp advance_stable_tracker(%{len: len, stable: stable}, len) do
+    %{len: len, stable: stable + 1}
+  end
+
+  defp advance_stable_tracker(_tracker, len), do: %{len: len, stable: 0}
 
   defp pending_async?(pending_calls) when is_list(pending_calls) do
     Enum.any?(pending_calls, fn call ->

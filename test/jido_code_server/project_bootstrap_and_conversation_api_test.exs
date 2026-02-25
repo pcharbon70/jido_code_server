@@ -3,6 +3,7 @@ defmodule Jido.Code.Server.ProjectBootstrapAndConversationApiTest do
 
   alias Jido.Code.Server, as: Runtime
 
+  alias Jido.Code.Server.TestSupport.RuntimeSignal
   alias Jido.Code.Server.TestSupport.TempProject
 
   setup do
@@ -62,7 +63,7 @@ defmodule Jido.Code.Server.ProjectBootstrapAndConversationApiTest do
     event = %{"type" => "conversation.user.message", "content" => "hello"}
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "conversation-a",
                event

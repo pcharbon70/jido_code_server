@@ -9,6 +9,8 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunLLMInstruction do
 
   alias Jido.Code.Server.Conversation.LLM
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
+  alias Jido.Code.Server.Project.Policy
+  alias Jido.Code.Server.Project.ToolCatalog
 
   @impl true
   def run(params, context) when is_map(params) and is_map(context) do
@@ -75,66 +77,73 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunLLMInstruction do
   end
 
   defp available_tool_specs(project_ctx) do
-    try do
-      tools = Jido.Code.Server.Project.ToolCatalog.all_tools(project_ctx)
+    tools = ToolCatalog.all_tools(project_ctx)
 
-      filtered_tools =
-        case Map.get(project_ctx, :policy) do
-          nil -> tools
-          policy -> Jido.Code.Server.Project.Policy.filter_tools(policy, tools)
-        end
-
-      filtered_tools
-      |> Enum.map(fn tool ->
-        %{
-          name: tool.name,
-          description: tool.description,
-          input_schema: tool.input_schema
-        }
-      end)
-    rescue
-      _error ->
-        []
-    catch
-      :exit, _reason ->
-        []
-    end
+    project_ctx
+    |> filter_available_tools(tools)
+    |> Enum.map(&tool_spec/1)
+  rescue
+    _error ->
+      []
+  catch
+    :exit, _reason ->
+      []
   end
 
   defp legacy_event_to_signals(raw_event, conversation_id, default_correlation_id)
        when is_map(raw_event) do
-    type = map_get(raw_event, "type")
+    case canonical_event_type(map_get(raw_event, "type")) do
+      nil ->
+        []
 
-    canonical_type =
-      cond do
-        type == "assistant.delta" -> "conversation.assistant.delta"
-        type == "assistant.message" -> "conversation.assistant.message"
-        type == "tool.requested" -> "conversation.tool.requested"
-        type == "tool.completed" -> "conversation.tool.completed"
-        type == "tool.failed" -> "conversation.tool.failed"
-        type == "llm.completed" -> "conversation.llm.completed"
-        type == "llm.failed" -> "conversation.llm.failed"
-        type == "llm.started" -> nil
-        is_binary(type) and String.starts_with?(type, "conversation.") -> type
-        is_binary(type) -> "conversation." <> type
-        true -> nil
-      end
-
-    if is_nil(canonical_type) do
-      []
-    else
-      data = map_get(raw_event, "data") || %{}
-
-      correlation_id =
-        raw_event
-        |> map_get("meta")
-        |> map_get("correlation_id") || default_correlation_id
-
-      [new_signal(canonical_type, normalize_data(data), conversation_id, correlation_id)]
+      canonical_type ->
+        data = map_get(raw_event, "data") || %{}
+        correlation_id = legacy_event_correlation_id(raw_event, default_correlation_id)
+        [new_signal(canonical_type, normalize_data(data), conversation_id, correlation_id)]
     end
   end
 
   defp legacy_event_to_signals(_raw_event, _conversation_id, _default_correlation_id), do: []
+
+  defp canonical_event_type("assistant.delta"), do: "conversation.assistant.delta"
+  defp canonical_event_type("assistant.message"), do: "conversation.assistant.message"
+  defp canonical_event_type("tool.requested"), do: "conversation.tool.requested"
+  defp canonical_event_type("tool.completed"), do: "conversation.tool.completed"
+  defp canonical_event_type("tool.failed"), do: "conversation.tool.failed"
+  defp canonical_event_type("llm.completed"), do: "conversation.llm.completed"
+  defp canonical_event_type("llm.failed"), do: "conversation.llm.failed"
+  defp canonical_event_type("llm.started"), do: nil
+
+  defp canonical_event_type(type) when is_binary(type) do
+    if String.starts_with?(type, "conversation."), do: type, else: "conversation." <> type
+  end
+
+  defp canonical_event_type(_type), do: nil
+
+  defp legacy_event_correlation_id(raw_event, fallback) do
+    raw_event
+    |> map_get("meta")
+    |> map_get("correlation_id")
+    |> case do
+      nil -> fallback
+      correlation_id -> correlation_id
+    end
+  end
+
+  defp filter_available_tools(project_ctx, tools) when is_list(tools) do
+    case Map.get(project_ctx, :policy) do
+      nil -> tools
+      policy -> Policy.filter_tools(policy, tools)
+    end
+  end
+
+  defp tool_spec(tool) do
+    %{
+      name: tool.name,
+      description: tool.description,
+      input_schema: tool.input_schema
+    }
+  end
 
   defp new_signal(type, data, conversation_id, correlation_id) do
     attrs =
@@ -147,7 +156,6 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunLLMInstruction do
   end
 
   defp maybe_put_opt(opts, _key, []), do: opts
-  defp maybe_put_opt(opts, _key, nil), do: opts
   defp maybe_put_opt(opts, key, value), do: Keyword.put(opts, key, value)
 
   defp normalize_data(data) when is_map(data), do: data

@@ -3,6 +3,7 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
 
   alias Jido.Code.Server, as: Runtime
 
+  alias Jido.Code.Server.TestSupport.RuntimeSignal
   alias Jido.Code.Server.TestSupport.TempProject
 
   setup do
@@ -30,7 +31,7 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
              Runtime.start_conversation(project_id, conversation_id: "phase6-c1")
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(project_id, "phase6-c1", %{
+             RuntimeSignal.send_signal(project_id, "phase6-c1", %{
                "type" => "conversation.user.message",
                "content" => "hello"
              })
@@ -61,7 +62,7 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
              Runtime.start_conversation(project_id, conversation_id: "phase6-tools-c1")
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase6-tools-c1",
                %{
@@ -118,7 +119,7 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
              )
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase6-tool-failure-c1",
                %{
@@ -160,7 +161,7 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
              Runtime.start_conversation(project_id, conversation_id: "phase6-cancel-c1")
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase6-cancel-c1",
                %{
@@ -169,7 +170,7 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
              )
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase6-cancel-c1",
                %{
@@ -184,7 +185,7 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
     refute "conversation.llm.requested" in event_types(timeline_before_resume)
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase6-cancel-c1",
                %{
@@ -193,7 +194,7 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
              )
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase6-cancel-c1",
                %{
@@ -229,7 +230,7 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
              Runtime.start_conversation(project_id, conversation_id: "phase6-command-executor-c1")
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase6-command-executor-c1",
                %{

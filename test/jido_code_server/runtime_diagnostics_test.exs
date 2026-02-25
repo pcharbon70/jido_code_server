@@ -5,6 +5,7 @@ defmodule Jido.Code.Server.RuntimeDiagnosticsTest do
 
   alias Jido.Code.Server.Engine.ProjectRegistry
   alias Jido.Code.Server.Telemetry
+  alias Jido.Code.Server.TestSupport.RuntimeSignal
   alias Jido.Code.Server.TestSupport.TempProject
 
   setup do
@@ -34,7 +35,7 @@ defmodule Jido.Code.Server.RuntimeDiagnosticsTest do
              Runtime.start_conversation(project_id, conversation_id: "diag-c1")
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(project_id, "diag-c1", %{
+             RuntimeSignal.send_signal(project_id, "diag-c1", %{
                "type" => "conversation.user.message",
                "content" => "hello"
              })
@@ -105,7 +106,7 @@ defmodule Jido.Code.Server.RuntimeDiagnosticsTest do
              Runtime.start_conversation(project_id, conversation_id: "errors-c1")
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(project_id, "errors-c1", %{
+             RuntimeSignal.send_signal(project_id, "errors-c1", %{
                "type" => "conversation.user.message",
                "content" => "run command",
                "llm" => %{

@@ -56,50 +56,23 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
 
   @spec derive_effect_intents(State.t(), Jido.Signal.t()) :: [effect_intent()]
   def derive_effect_intents(%State{} = state, %Jido.Signal{} = signal) do
-    cond do
-      signal.type == "conversation.cancel" ->
-        intents = [
-          %{
-            kind: :cancel_pending_tools,
-            pending_tool_calls: state.pending_tool_calls,
-            correlation_id: ConversationSignal.correlation_id(signal)
-          }
-        ]
+    case signal.type do
+      "conversation.cancel" ->
+        cancel_effect_intents(state, signal)
 
-        pending_subagents = state.pending_subagents |> Map.values() |> List.wrap()
-
-        if pending_subagents == [] do
-          intents
-        else
-          intents ++
-            [
-              %{
-                kind: :cancel_pending_subagents,
-                pending_subagents: pending_subagents,
-                correlation_id: ConversationSignal.correlation_id(signal),
-                reason: cancel_reason(signal)
-              }
-            ]
-        end
-
-      state.status == :cancelled and signal.type != "conversation.resume" ->
+      _other when state.status == :cancelled and signal.type != "conversation.resume" ->
         []
 
-      state.orchestration_enabled and signal.type == "conversation.user.message" ->
-        [%{kind: :run_llm, source_signal: signal}]
+      "conversation.user.message" ->
+        maybe_run_llm_intent(state, signal)
 
-      signal.type == "conversation.tool.requested" ->
-        case extract_tool_call(signal) do
-          {:ok, tool_call} -> [%{kind: :run_tool, source_signal: signal, tool_call: tool_call}]
-          :error -> []
-        end
+      "conversation.tool.requested" ->
+        tool_requested_intents(signal)
 
-      state.orchestration_enabled and
-        signal.type in ["conversation.tool.completed", "conversation.tool.failed"] and
-          state.pending_tool_calls == [] ->
-        [%{kind: :run_llm, source_signal: signal}]
+      type when type in ["conversation.tool.completed", "conversation.tool.failed"] ->
+        maybe_run_llm_after_tool_intent(state, signal)
 
-      true ->
+      _other ->
         []
     end
   end
@@ -201,16 +174,18 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
   end
 
   defp update_pending_tools_on_requested(%State{} = state, signal) do
-    with {:ok, tool_call} <- extract_tool_call(signal) do
-      existing = state.pending_tool_calls
+    case extract_tool_call(signal) do
+      {:ok, tool_call} ->
+        existing = state.pending_tool_calls
 
-      if pending_tool_exists?(existing, tool_call) do
+        if pending_tool_exists?(existing, tool_call) do
+          state
+        else
+          %{state | pending_tool_calls: existing ++ [tool_call]}
+        end
+
+      :error ->
         state
-      else
-        %{state | pending_tool_calls: existing ++ [tool_call]}
-      end
-    else
-      :error -> state
     end
   end
 
@@ -238,37 +213,87 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
   end
 
   defp extract_tool_call(%Jido.Signal{data: data} = signal) when is_map(data) do
-    cond do
-      is_map(data["tool_call"]) ->
-        {:ok, decorate_tool_call(data["tool_call"], signal)}
-
-      is_map(data[:tool_call]) ->
-        {:ok, decorate_tool_call(data[:tool_call], signal)}
-
-      is_binary(data["name"]) ->
-        {:ok,
-         decorate_tool_call(
-           %{
-             "name" => data["name"],
-             "args" => data["args"] || %{},
-             "meta" => data["meta"] || %{}
-           },
-           signal
-         )}
-
-      is_binary(data[:name]) ->
-        {:ok,
-         decorate_tool_call(
-           %{"name" => data[:name], "args" => data[:args] || %{}, "meta" => data[:meta] || %{}},
-           signal
-         )}
-
-      true ->
-        :error
+    case tool_call_payload(data) do
+      nil -> :error
+      tool_call -> {:ok, decorate_tool_call(tool_call, signal)}
     end
   end
 
   defp extract_tool_call(_signal), do: :error
+
+  defp tool_call_payload(%{"tool_call" => tool_call}) when is_map(tool_call), do: tool_call
+  defp tool_call_payload(%{tool_call: tool_call}) when is_map(tool_call), do: tool_call
+
+  defp tool_call_payload(%{"name" => name} = data) when is_binary(name) do
+    %{
+      "name" => name,
+      "args" => data["args"] || %{},
+      "meta" => data["meta"] || %{}
+    }
+  end
+
+  defp tool_call_payload(%{name: name} = data) when is_binary(name) do
+    %{
+      "name" => name,
+      "args" => data[:args] || %{},
+      "meta" => data[:meta] || %{}
+    }
+  end
+
+  defp tool_call_payload(_data), do: nil
+
+  defp cancel_effect_intents(state, signal) do
+    correlation_id = ConversationSignal.correlation_id(signal)
+
+    intents = [
+      %{
+        kind: :cancel_pending_tools,
+        pending_tool_calls: state.pending_tool_calls,
+        correlation_id: correlation_id
+      }
+    ]
+
+    pending_subagents = state.pending_subagents |> Map.values() |> List.wrap()
+
+    if pending_subagents == [] do
+      intents
+    else
+      intents ++
+        [
+          %{
+            kind: :cancel_pending_subagents,
+            pending_subagents: pending_subagents,
+            correlation_id: correlation_id,
+            reason: cancel_reason(signal)
+          }
+        ]
+    end
+  end
+
+  defp maybe_run_llm_intent(%State{orchestration_enabled: true}, signal) do
+    [%{kind: :run_llm, source_signal: signal}]
+  end
+
+  defp maybe_run_llm_intent(_state, _signal), do: []
+
+  defp tool_requested_intents(signal) do
+    case extract_tool_call(signal) do
+      {:ok, tool_call} ->
+        [%{kind: :run_tool, source_signal: signal, tool_call: tool_call}]
+
+      :error ->
+        []
+    end
+  end
+
+  defp maybe_run_llm_after_tool_intent(
+         %State{orchestration_enabled: true, pending_tool_calls: []},
+         signal
+       ) do
+    [%{kind: :run_llm, source_signal: signal}]
+  end
+
+  defp maybe_run_llm_after_tool_intent(_state, _signal), do: []
 
   defp decorate_tool_call(tool_call, signal) do
     correlation_id = ConversationSignal.correlation_id(signal)
