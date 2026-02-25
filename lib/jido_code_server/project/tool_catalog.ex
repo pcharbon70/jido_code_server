@@ -13,7 +13,7 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
 
   @spec all_tools(map()) :: list(map())
   def all_tools(project_ctx) when is_map(project_ctx) do
-    builtin_tools() ++ asset_tools(project_ctx)
+    builtin_tools() ++ asset_tools(project_ctx) ++ spawn_tools(project_ctx)
   end
 
   @spec get_tool(map(), String.t()) :: {:ok, map()} | :error
@@ -108,6 +108,42 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
       end)
 
     (command_tools ++ workflow_tools)
+    |> Enum.sort_by(& &1.name)
+  end
+
+  defp spawn_tools(project_ctx) do
+    project_ctx
+    |> Map.get(:subagent_templates, [])
+    |> List.wrap()
+    |> Enum.flat_map(fn template ->
+      template_id = Map.get(template, :template_id) || Map.get(template, "template_id")
+
+      if is_binary(template_id) and template_id != "" do
+        [
+          %{
+            name: "agent.spawn.#{template_id}",
+            description: "Spawn a policy-approved sub-agent from template #{template_id}.",
+            input_schema: %{
+              "type" => "object",
+              "properties" => %{
+                "goal" => %{"type" => "string"},
+                "inputs" => %{"type" => "object", "additionalProperties" => true},
+                "ttl_ms" => %{"type" => "integer", "minimum" => 1}
+              },
+              "required" => ["goal"],
+              "additionalProperties" => false
+            },
+            output_schema: %{"type" => "object"},
+            safety: %{sandboxed: true, network_capable: false},
+            kind: :subagent_spawn,
+            template_id: template_id,
+            template: template
+          }
+        ]
+      else
+        []
+      end
+    end)
     |> Enum.sort_by(& &1.name)
   end
 

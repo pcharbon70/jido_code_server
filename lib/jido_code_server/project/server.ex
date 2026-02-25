@@ -11,13 +11,16 @@ defmodule Jido.Code.Server.Project.Server do
   use GenServer
 
   alias Jido.Code.Server.Config
-  alias Jido.Code.Server.Conversation.Server, as: ConversationServer
+  alias Jido.Code.Server.Conversation.Agent, as: ConversationAgent
+  alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
   alias Jido.Code.Server.Project.AssetStore
   alias Jido.Code.Server.Project.ConversationRegistry
   alias Jido.Code.Server.Project.ConversationSupervisor
   alias Jido.Code.Server.Project.Layout
   alias Jido.Code.Server.Project.Naming
   alias Jido.Code.Server.Project.Policy
+  alias Jido.Code.Server.Project.SubAgentManager
+  alias Jido.Code.Server.Project.SubAgentTemplate
   alias Jido.Code.Server.Project.ToolCatalog
   alias Jido.Code.Server.Project.ToolRunner
   alias Jido.Code.Server.Telemetry
@@ -43,9 +46,33 @@ defmodule Jido.Code.Server.Project.Server do
     GenServer.call(server, {:stop_conversation, conversation_id})
   end
 
-  @spec send_event(GenServer.server(), conversation_id(), map()) :: :ok | {:error, term()}
-  def send_event(server, conversation_id, event) when is_map(event) do
-    GenServer.call(server, {:send_event, conversation_id, event})
+  @spec conversation_call(GenServer.server(), conversation_id(), Jido.Signal.t(), timeout()) ::
+          {:ok, map()} | {:error, term()}
+  def conversation_call(server, conversation_id, %Jido.Signal{} = signal, timeout \\ 30_000) do
+    GenServer.call(server, {:conversation_call, conversation_id, signal, timeout}, timeout)
+  end
+
+  @spec conversation_cast(GenServer.server(), conversation_id(), Jido.Signal.t()) ::
+          :ok | {:error, term()}
+  def conversation_cast(server, conversation_id, %Jido.Signal{} = signal) do
+    GenServer.call(server, {:conversation_cast, conversation_id, signal})
+  end
+
+  @spec conversation_state(GenServer.server(), conversation_id(), timeout()) ::
+          {:ok, map()} | {:error, term()}
+  def conversation_state(server, conversation_id, timeout \\ 30_000) do
+    GenServer.call(server, {:conversation_state, conversation_id, timeout}, timeout)
+  end
+
+  @spec conversation_projection(
+          GenServer.server(),
+          conversation_id(),
+          atom() | String.t(),
+          timeout()
+        ) ::
+          {:ok, term()} | {:error, term()}
+  def conversation_projection(server, conversation_id, key, timeout \\ 30_000) do
+    GenServer.call(server, {:conversation_projection, conversation_id, key, timeout}, timeout)
   end
 
   @spec subscribe_conversation(GenServer.server(), conversation_id(), pid()) ::
@@ -58,12 +85,6 @@ defmodule Jido.Code.Server.Project.Server do
           :ok | {:error, term()}
   def unsubscribe_conversation(server, conversation_id, pid \\ self()) when is_pid(pid) do
     GenServer.call(server, {:unsubscribe_conversation, conversation_id, pid})
-  end
-
-  @spec get_projection(GenServer.server(), conversation_id(), atom() | String.t()) ::
-          {:ok, term()} | {:error, term()}
-  def get_projection(server, conversation_id, key) do
-    GenServer.call(server, {:get_projection, conversation_id, key})
   end
 
   @spec list_tools(GenServer.server()) :: [map()]
@@ -137,9 +158,11 @@ defmodule Jido.Code.Server.Project.Server do
     asset_store = Naming.via(project_id, :asset_store)
     policy = Naming.via(project_id, :policy)
     task_supervisor = Naming.via(project_id, :task_supervisor)
+    subagent_manager = Naming.via(project_id, :subagent_manager)
     conversation_registry = Keyword.fetch!(opts, :conversation_registry)
     conversation_supervisor = Keyword.fetch!(opts, :conversation_supervisor)
     runtime_opts = Keyword.get(opts, :runtime_opts, [])
+    subagent_templates = load_subagent_templates(runtime_opts)
 
     with {:ok, canonical_root} <- Layout.canonical_root(root_path),
          {:ok, layout} <- Layout.ensure_layout(canonical_root, data_dir),
@@ -159,9 +182,13 @@ defmodule Jido.Code.Server.Project.Server do
          asset_store: asset_store,
          policy: policy,
          task_supervisor: task_supervisor,
+         subagent_manager: subagent_manager,
+         subagent_templates: subagent_templates,
          conversation_registry: conversation_registry,
          conversation_supervisor: conversation_supervisor,
          conversations: %{},
+         subscribers: %{},
+         last_notified_event_index: %{},
          runtime_opts: runtime_opts,
          opts: opts
        }}
@@ -197,54 +224,37 @@ defmodule Jido.Code.Server.Project.Server do
         {:reply, {:error, {:conversation_already_started, conversation_id}}, state}
 
       :error ->
+        conversation_project_ctx =
+          state
+          |> project_ctx()
+          |> Map.put(:conversation_id, conversation_id)
+          |> Map.put(:conversation_server, self())
+          |> Map.put(:subagent_manager, state.subagent_manager)
+          |> Map.put(:subagent_templates, state.subagent_templates)
+          |> Map.put(
+            :llm_timeout_ms,
+            runtime_opt(state, :llm_timeout_ms, Config.llm_timeout_ms())
+          )
+          |> Map.put(:llm_adapter, Keyword.get(state.runtime_opts, :llm_adapter))
+          |> Map.put(:llm_model, Keyword.get(state.runtime_opts, :llm_model))
+          |> Map.put(:llm_system_prompt, Keyword.get(state.runtime_opts, :llm_system_prompt))
+          |> Map.put(:llm_temperature, Keyword.get(state.runtime_opts, :llm_temperature))
+          |> Map.put(:llm_max_tokens, Keyword.get(state.runtime_opts, :llm_max_tokens))
+
         conversation_opts = [
           project_id: state.project_id,
           conversation_id: conversation_id,
-          root_path: state.root_path,
-          data_dir: state.data_dir,
-          asset_store: state.asset_store,
-          policy: state.policy,
-          task_supervisor: state.task_supervisor,
-          tool_timeout_ms: runtime_opt(state, :tool_timeout_ms, Config.tool_timeout_ms()),
-          tool_max_concurrency:
-            runtime_opt(state, :tool_max_concurrency, Config.tool_max_concurrency()),
-          tool_max_concurrency_per_conversation:
+          project_ctx: conversation_project_ctx,
+          max_queue_size:
+            runtime_opt(state, :conversation_max_queue_size, Config.conversation_max_queue_size()),
+          max_drain_steps:
             runtime_opt(
               state,
-              :tool_max_concurrency_per_conversation,
-              Config.tool_max_concurrency_per_conversation()
+              :conversation_max_drain_steps,
+              Config.conversation_max_drain_steps()
             ),
-          tool_timeout_alert_threshold:
-            runtime_opt(
-              state,
-              :tool_timeout_alert_threshold,
-              Config.tool_timeout_alert_threshold()
-            ),
-          tool_max_output_bytes:
-            runtime_opt(state, :tool_max_output_bytes, Config.tool_max_output_bytes()),
-          tool_max_artifact_bytes:
-            runtime_opt(state, :tool_max_artifact_bytes, Config.tool_max_artifact_bytes()),
-          network_egress_policy:
-            runtime_opt(state, :network_egress_policy, Config.network_egress_policy()),
-          network_allowlist: runtime_opt(state, :network_allowlist, Config.network_allowlist()),
-          network_allowed_schemes:
-            runtime_opt(state, :network_allowed_schemes, Config.network_allowed_schemes()),
-          sensitive_path_denylist:
-            runtime_opt(state, :sensitive_path_denylist, Config.sensitive_path_denylist()),
-          sensitive_path_allowlist:
-            runtime_opt(state, :sensitive_path_allowlist, Config.sensitive_path_allowlist()),
-          outside_root_allowlist:
-            runtime_opt(state, :outside_root_allowlist, Config.outside_root_allowlist()),
-          tool_env_allowlist:
-            runtime_opt(state, :tool_env_allowlist, Config.tool_env_allowlist()),
-          command_executor: runtime_opt(state, :command_executor, nil),
-          llm_timeout_ms: runtime_opt(state, :llm_timeout_ms, Config.llm_timeout_ms()),
           orchestration_enabled: conversation_orchestration_enabled?(state.runtime_opts),
-          llm_adapter: Keyword.get(state.runtime_opts, :llm_adapter),
-          llm_model: Keyword.get(state.runtime_opts, :llm_model),
-          llm_system_prompt: Keyword.get(state.runtime_opts, :llm_system_prompt),
-          llm_temperature: Keyword.get(state.runtime_opts, :llm_temperature),
-          llm_max_tokens: Keyword.get(state.runtime_opts, :llm_max_tokens)
+          subagent_templates: state.subagent_templates
         ]
 
         case ConversationSupervisor.start_conversation(
@@ -258,12 +268,20 @@ defmodule Jido.Code.Server.Project.Server do
             conversations =
               Map.put(state.conversations, conversation_id, %{pid: pid, monitor_ref: monitor_ref})
 
+            last_notified_event_index =
+              Map.put(state.last_notified_event_index, conversation_id, 0)
+
             Telemetry.emit("conversation.started", %{
               project_id: state.project_id,
               conversation_id: conversation_id
             })
 
-            {:reply, {:ok, conversation_id}, %{state | conversations: conversations}}
+            {:reply, {:ok, conversation_id},
+             %{
+               state
+               | conversations: conversations,
+                 last_notified_event_index: last_notified_event_index
+             }}
 
           {:error, reason} ->
             {:reply, {:error, {:start_conversation_failed, reason}}, state}
@@ -278,37 +296,93 @@ defmodule Jido.Code.Server.Project.Server do
         :ok = ConversationRegistry.delete(state.conversation_registry, conversation_id)
         Process.demonitor(monitor_ref, [:flush])
 
+        _ =
+          SubAgentManager.stop_children_for_conversation(state.subagent_manager, conversation_id)
+
         Telemetry.emit("conversation.stopped", %{
           project_id: state.project_id,
           conversation_id: conversation_id
         })
 
         conversations = Map.delete(state.conversations, conversation_id)
-        {:reply, :ok, %{state | conversations: conversations}}
+        subscribers = Map.delete(state.subscribers, conversation_id)
+        last_notified_event_index = Map.delete(state.last_notified_event_index, conversation_id)
+
+        {:reply, :ok,
+         %{
+           state
+           | conversations: conversations,
+             subscribers: subscribers,
+             last_notified_event_index: last_notified_event_index
+         }}
 
       :error ->
         {:reply, {:error, {:conversation_not_found, conversation_id}}, state}
     end
   end
 
-  def handle_call({:send_event, conversation_id, event}, _from, state) do
-    case fetch_conversation_pid(state, conversation_id) do
-      {:ok, pid} ->
-        case ConversationServer.ingest_event_sync(pid, event) do
-          :ok -> {:reply, :ok, state}
-          {:error, reason} -> {:reply, {:error, reason}, state}
-        end
+  def handle_call({:conversation_call, conversation_id, signal, timeout}, _from, state) do
+    reply =
+      with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
+           {:ok, snapshot} <- ConversationAgent.call(pid, signal, timeout) do
+        emit_conversation_ingested(state.project_id, conversation_id, signal)
+        :ok = maybe_wait_for_orchestration(state, conversation_id)
+        {:ok, snapshot}
+      end
 
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
+    {state, _delivered_count} = maybe_notify_subscribers_after_call(state, conversation_id)
+    {:reply, reply, state}
+  end
+
+  def handle_call({:conversation_cast, conversation_id, signal}, _from, state) do
+    reply =
+      with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
+           :ok <- ConversationAgent.cast(pid, signal) do
+        :ok
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:conversation_state, conversation_id, timeout}, _from, state) do
+    reply =
+      with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
+           {:ok, conversation_state} <- ConversationAgent.state(pid, timeout) do
+        {:ok, conversation_state}
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:conversation_projection, conversation_id, key, timeout}, _from, state) do
+    reply =
+      with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
+           {:ok, projection} <- ConversationAgent.projection(pid, key, timeout) do
+        {:ok, projection}
+      end
+
+    {:reply, reply, state}
   end
 
   def handle_call({:subscribe_conversation, conversation_id, pid}, _from, state) do
     case fetch_conversation_pid(state, conversation_id) do
       {:ok, conversation_pid} ->
-        :ok = ConversationServer.subscribe(conversation_pid, pid)
-        {:reply, :ok, state}
+        current_index =
+          case ConversationAgent.projection(conversation_pid, :timeline) do
+            {:ok, timeline} when is_list(timeline) -> length(timeline)
+            _ -> Map.get(state.last_notified_event_index, conversation_id, 0)
+          end
+
+        subscribers =
+          Map.update(state.subscribers, conversation_id, MapSet.new([pid]), &MapSet.put(&1, pid))
+
+        {:reply, :ok,
+         %{
+           state
+           | subscribers: subscribers,
+             last_notified_event_index:
+               Map.put(state.last_notified_event_index, conversation_id, current_index)
+         }}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -317,19 +391,13 @@ defmodule Jido.Code.Server.Project.Server do
 
   def handle_call({:unsubscribe_conversation, conversation_id, pid}, _from, state) do
     case fetch_conversation_pid(state, conversation_id) do
-      {:ok, conversation_pid} ->
-        :ok = ConversationServer.unsubscribe(conversation_pid, pid)
-        {:reply, :ok, state}
+      {:ok, _conversation_pid} ->
+        subscribers =
+          update_in(state.subscribers, [Access.key(conversation_id, MapSet.new())], fn set ->
+            MapSet.delete(set, pid)
+          end)
 
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
-  end
-
-  def handle_call({:get_projection, conversation_id, key}, _from, state) do
-    case fetch_conversation_pid(state, conversation_id) do
-      {:ok, pid} ->
-        {:reply, ConversationServer.get_projection(pid, key), state}
+        {:reply, :ok, %{state | subscribers: subscribers}}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -380,7 +448,15 @@ defmodule Jido.Code.Server.Project.Server do
     reply =
       case fetch_conversation_pid(state, conversation_id) do
         {:ok, pid} ->
-          ConversationServer.diagnostics(pid)
+          case ConversationAgent.projection(pid, :diagnostics) do
+            {:ok, diagnostics} ->
+              diagnostics
+              |> Map.put_new(:project_id, state.project_id)
+              |> Map.put_new(:conversation_id, conversation_id)
+
+            {:error, reason} ->
+              {:error, reason}
+          end
 
         {:error, reason} ->
           {:error, reason}
@@ -430,6 +506,8 @@ defmodule Jido.Code.Server.Project.Server do
     {conversation_id, conversations} = pop_by_monitor_ref(state.conversations, ref, pid)
 
     if conversation_id do
+      _ = SubAgentManager.stop_children_for_conversation(state.subagent_manager, conversation_id)
+
       Telemetry.emit("conversation.stopped", %{
         project_id: state.project_id,
         conversation_id: conversation_id,
@@ -437,11 +515,120 @@ defmodule Jido.Code.Server.Project.Server do
       })
 
       :ok = ConversationRegistry.delete(state.conversation_registry, conversation_id)
-      {:noreply, %{state | conversations: conversations}}
+
+      subscribers = Map.delete(state.subscribers, conversation_id)
+      last_notified_event_index = Map.delete(state.last_notified_event_index, conversation_id)
+
+      {:noreply,
+       %{
+         state
+         | conversations: conversations,
+           subscribers: subscribers,
+           last_notified_event_index: last_notified_event_index
+       }}
     else
       {:noreply, state}
     end
   end
+
+  def handle_info({:tool_result, task_pid, tool_call, result}, state)
+      when is_pid(task_pid) and is_map(tool_call) do
+    conversation_id =
+      tool_call
+      |> incident_map_get(:meta)
+      |> incident_map_get(:conversation_id)
+
+    next_state =
+      if is_binary(conversation_id) do
+        with {:ok, events} <-
+               Jido.Code.Server.Conversation.ToolBridge.handle_tool_result(
+                 project_ctx(state),
+                 conversation_id,
+                 task_pid,
+                 tool_call,
+                 result
+               ),
+             signals when is_list(signals) <-
+               events_to_signals(events),
+             {:ok, pid} <- fetch_conversation_pid(state, conversation_id) do
+          Enum.each(signals, fn signal ->
+            case ConversationAgent.call(pid, signal, 30_000) do
+              {:ok, _snapshot} ->
+                emit_conversation_ingested(state.project_id, conversation_id, signal)
+
+              _other ->
+                :ok
+            end
+          end)
+
+          {updated_state, _count} = maybe_notify_subscribers_after_call(state, conversation_id)
+          updated_state
+        else
+          _ -> state
+        end
+      else
+        state
+      end
+
+    {:noreply, next_state}
+  end
+
+  def handle_info({:subagent_started, conversation_id, subagent_ref}, state) do
+    {:noreply,
+     emit_subagent_signal(
+       state,
+       conversation_id,
+       "conversation.subagent.started",
+       subagent_ref,
+       nil
+     )}
+  end
+
+  def handle_info({:subagent_completed, conversation_id, subagent_ref, reason}, state) do
+    {:noreply,
+     emit_subagent_signal(
+       state,
+       conversation_id,
+       "conversation.subagent.completed",
+       subagent_ref,
+       reason
+     )}
+  end
+
+  def handle_info({:subagent_failed, conversation_id, subagent_ref, reason}, state) do
+    {:noreply,
+     emit_subagent_signal(
+       state,
+       conversation_id,
+       "conversation.subagent.failed",
+       subagent_ref,
+       reason
+     )}
+  end
+
+  def handle_info({:subagent_stopped, conversation_id, subagent_ref}, state) do
+    {:noreply,
+     emit_subagent_signal(
+       state,
+       conversation_id,
+       "conversation.subagent.stopped",
+       subagent_ref,
+       nil
+     )}
+  end
+
+  def handle_info({:subagent_stopped, conversation_id, subagent_ref, reason}, state) do
+    {:noreply,
+     emit_subagent_signal(
+       state,
+       conversation_id,
+       "conversation.subagent.stopped",
+       subagent_ref,
+       reason
+     )}
+  end
+
+  def handle_info(_message, state), do: {:noreply, state}
 
   defp fetch_conversation_pid(state, conversation_id) do
     case ConversationRegistry.fetch(state.conversation_registry, conversation_id) do
@@ -514,14 +701,22 @@ defmodule Jido.Code.Server.Project.Server do
       outside_root_allowlist:
         runtime_opt(state, :outside_root_allowlist, Config.outside_root_allowlist()),
       tool_env_allowlist: runtime_opt(state, :tool_env_allowlist, Config.tool_env_allowlist()),
-      command_executor: runtime_opt(state, :command_executor, nil)
+      command_executor: runtime_opt(state, :command_executor, nil),
+      subagent_manager: state.subagent_manager,
+      subagent_templates: state.subagent_templates,
+      llm_timeout_ms: runtime_opt(state, :llm_timeout_ms, Config.llm_timeout_ms()),
+      llm_adapter: Keyword.get(state.runtime_opts, :llm_adapter),
+      llm_model: Keyword.get(state.runtime_opts, :llm_model),
+      llm_system_prompt: Keyword.get(state.runtime_opts, :llm_system_prompt),
+      llm_temperature: Keyword.get(state.runtime_opts, :llm_temperature),
+      llm_max_tokens: Keyword.get(state.runtime_opts, :llm_max_tokens)
     }
   end
 
   defp build_incident_timeline(state, conversation_id, opts)
        when is_binary(conversation_id) and is_list(opts) do
     with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
-         {:ok, timeline} <- ConversationServer.get_projection(pid, :timeline) do
+         {:ok, timeline} <- ConversationAgent.projection(pid, :timeline) do
       limit = incident_timeline_limit(opts)
       correlation_id = incident_timeline_correlation_id(opts)
       telemetry = Telemetry.snapshot(state.project_id)
@@ -636,7 +831,12 @@ defmodule Jido.Code.Server.Project.Server do
           :tool_env_allowlist,
           :command_executor,
           :protocol_allowlist,
-          :llm_timeout_ms
+          :llm_timeout_ms,
+          :conversation_max_queue_size,
+          :conversation_max_drain_steps,
+          :subagent_templates,
+          :subagent_max_children,
+          :subagent_ttl_ms
         ]),
       health: %{
         status: if(telemetry.recent_errors == [], do: :ok, else: :degraded),
@@ -676,11 +876,12 @@ defmodule Jido.Code.Server.Project.Server do
     timeline
     |> Enum.map(fn event ->
       event_correlation = incident_event_correlation(event)
+      event_name = event |> incident_map_get(:type) |> legacy_event_type(event)
 
       %{
         source: :conversation,
         at: incident_event_at(event),
-        event: incident_map_get(event, :type),
+        event: event_name,
         conversation_id: conversation_id,
         correlation_id: event_correlation,
         payload: event
@@ -701,11 +902,12 @@ defmodule Jido.Code.Server.Project.Server do
     end)
     |> Enum.map(fn event ->
       event_correlation = Map.get(event, :correlation_id) || Map.get(event, "correlation_id")
+      event_name = Map.get(event, :event) || Map.get(event, "event")
 
       %{
         source: :telemetry,
         at: Map.get(event, :at) || Map.get(event, "at"),
-        event: Map.get(event, :event) || Map.get(event, "event"),
+        event: normalize_telemetry_event_name(event_name),
         conversation_id: conversation_id,
         correlation_id: event_correlation,
         payload: event
@@ -726,10 +928,19 @@ defmodule Jido.Code.Server.Project.Server do
     event
     |> incident_map_get(:meta)
     |> incident_map_get(:correlation_id)
+    |> case do
+      nil ->
+        event
+        |> incident_map_get(:extensions)
+        |> incident_map_get(:correlation_id)
+
+      value ->
+        value
+    end
   end
 
   defp incident_event_at(event) do
-    incident_map_get(event, :at)
+    incident_map_get(event, :at) || incident_map_get(event, :time)
   end
 
   defp incident_map_get(map, key) when is_map(map) do
@@ -774,12 +985,351 @@ defmodule Jido.Code.Server.Project.Server do
     state.conversations
     |> Enum.map(fn {conversation_id, %{pid: pid}} ->
       if Process.alive?(pid) do
-        diag = ConversationServer.diagnostics(pid)
-        Map.put(diag, :conversation_id, conversation_id)
+        case ConversationAgent.projection(pid, :diagnostics) do
+          {:ok, diagnostics} ->
+            Map.put(diagnostics, :conversation_id, conversation_id)
+
+          {:error, _reason} ->
+            %{conversation_id: conversation_id, status: :degraded, pid: pid}
+        end
       else
         %{conversation_id: conversation_id, status: :stopped, pid: pid}
       end
     end)
     |> Enum.sort_by(& &1.conversation_id)
   end
+
+  defp maybe_notify_subscribers_after_call(state, conversation_id) do
+    subscribers = Map.get(state.subscribers, conversation_id, MapSet.new())
+
+    if MapSet.size(subscribers) == 0 do
+      {state, 0}
+    else
+      with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
+           {:ok, timeline} <- ConversationAgent.projection(pid, :timeline) do
+        last_index = Map.get(state.last_notified_event_index, conversation_id, 0)
+        pending_events = timeline |> Enum.drop(last_index) |> List.wrap()
+
+        Enum.each(pending_events, fn event ->
+          legacy_event = legacy_timeline_event(event)
+          send_conversation_event(subscribers, conversation_id, legacy_event)
+          maybe_send_conversation_delta(subscribers, conversation_id, legacy_event)
+        end)
+
+        updated_index = last_index + length(pending_events)
+
+        {
+          %{
+            state
+            | last_notified_event_index:
+                Map.put(state.last_notified_event_index, conversation_id, updated_index)
+          },
+          length(pending_events)
+        }
+      else
+        _ -> {state, 0}
+      end
+    end
+  end
+
+  defp send_conversation_event(subscribers, conversation_id, event) do
+    Enum.each(subscribers, fn pid ->
+      send(pid, {:conversation_event, conversation_id, event})
+    end)
+  end
+
+  defp maybe_send_conversation_delta(subscribers, conversation_id, event) do
+    type = incident_map_get(event, :type)
+
+    if type in ["conversation.assistant.delta", "assistant.delta"] do
+      Enum.each(subscribers, fn pid ->
+        send(pid, {:conversation_delta, conversation_id, event})
+      end)
+    end
+  end
+
+  defp emit_subagent_signal(state, conversation_id, type, payload, reason) do
+    with {:ok, pid} <- fetch_conversation_pid(state, conversation_id) do
+      data =
+        payload
+        |> normalize_payload_map()
+        |> maybe_put_reason(reason)
+
+      correlation_id = incident_map_get(data, :correlation_id)
+
+      signal =
+        Jido.Signal.new!(type, data,
+          source: "/project/#{state.project_id}/conversation/#{conversation_id}",
+          extensions:
+            if(is_binary(correlation_id), do: %{"correlation_id" => correlation_id}, else: %{})
+        )
+
+      case ConversationAgent.call(pid, signal, 30_000) do
+        {:ok, _snapshot} ->
+          emit_conversation_ingested(state.project_id, conversation_id, signal)
+          {updated_state, _count} = maybe_notify_subscribers_after_call(state, conversation_id)
+          updated_state
+
+        _other ->
+          state
+      end
+    else
+      _ -> state
+    end
+  end
+
+  defp normalize_payload_map(payload) when is_map(payload) do
+    Enum.reduce(payload, %{}, fn {key, value}, acc ->
+      normalized_key = if(is_atom(key), do: Atom.to_string(key), else: key)
+      Map.put(acc, normalized_key, value)
+    end)
+  end
+
+  defp normalize_payload_map(_payload), do: %{}
+
+  defp maybe_put_reason(payload, nil), do: payload
+  defp maybe_put_reason(payload, reason), do: Map.put(payload, "reason", inspect(reason))
+
+  defp load_subagent_templates(runtime_opts) do
+    templates =
+      case Keyword.get(runtime_opts, :subagent_templates) do
+        nil -> Config.subagent_templates()
+        value -> value
+      end
+
+    templates
+    |> List.wrap()
+    |> Enum.flat_map(fn raw ->
+      case SubAgentTemplate.from_map(raw,
+             default_max_children: Config.default_subagent_max_children(),
+             default_ttl_ms: Config.default_subagent_ttl_ms()
+           ) do
+        {:ok, template} -> [template]
+        {:error, _reason} -> []
+      end
+    end)
+  end
+
+  defp legacy_timeline_event(event) when is_map(event) do
+    type = incident_map_get(event, :type) |> legacy_event_type(event)
+    data = event |> incident_map_get(:data) |> add_existing_atom_keys()
+    meta = event |> incident_map_get(:meta) |> add_existing_atom_keys()
+
+    event
+    |> maybe_put_atom_key(:type, type)
+    |> maybe_put_string_key("type", type)
+    |> maybe_put_atom_key(:data, data)
+    |> maybe_put_atom_key(:meta, meta)
+    |> maybe_put_atom_key(:content, incident_map_get(event, :content))
+    |> maybe_put_atom_key(:id, incident_map_get(event, :id))
+    |> maybe_put_atom_key(:source, incident_map_get(event, :source))
+    |> maybe_put_atom_key(:time, incident_map_get(event, :time))
+    |> maybe_put_atom_key(:extensions, incident_map_get(event, :extensions))
+    |> drop_nondeterministic_fields()
+    |> drop_conversation_id_fields()
+  end
+
+  defp legacy_timeline_event(event), do: event
+
+  defp legacy_event_type(type, event)
+
+  defp legacy_event_type("conversation.llm.requested", _event), do: "llm.started"
+  defp legacy_event_type("conversation.llm.completed", _event), do: "llm.completed"
+  defp legacy_event_type("conversation.llm.failed", _event), do: "llm.failed"
+  defp legacy_event_type("conversation.assistant.delta", _event), do: "assistant.delta"
+  defp legacy_event_type("conversation.assistant.message", _event), do: "assistant.message"
+  defp legacy_event_type("conversation.user.message", _event), do: "user.message"
+  defp legacy_event_type("conversation.cancel", _event), do: "conversation.cancel"
+  defp legacy_event_type("conversation.resume", _event), do: "conversation.resume"
+  defp legacy_event_type("conversation.tool.requested", _event), do: "tool.requested"
+  defp legacy_event_type("conversation.tool.completed", _event), do: "tool.completed"
+
+  defp legacy_event_type("conversation.tool.failed", event) do
+    reason = event |> incident_map_get(:data) |> incident_map_get(:reason)
+
+    if reason in ["conversation_cancelled", :conversation_cancelled] do
+      "tool.cancelled"
+    else
+      "tool.failed"
+    end
+  end
+
+  defp legacy_event_type("conversation.tool.cancelled", _event), do: "tool.cancelled"
+
+  defp legacy_event_type(type, _event) when is_binary(type) do
+    if String.starts_with?(type, "conversation.") do
+      String.replace_prefix(type, "conversation.", "")
+    else
+      type
+    end
+  end
+
+  defp legacy_event_type(type, _event), do: type
+
+  defp normalize_telemetry_event_name(name) when is_binary(name) do
+    legacy_event_type(name, %{})
+  end
+
+  defp normalize_telemetry_event_name(name), do: name
+
+  defp drop_conversation_id_fields(value) when is_map(value) do
+    value
+    |> Map.drop([:conversation_id, "conversation_id"])
+    |> Enum.reduce(%{}, fn {key, nested}, acc ->
+      Map.put(acc, key, drop_conversation_id_fields(nested))
+    end)
+  end
+
+  defp drop_conversation_id_fields(value) when is_list(value) do
+    Enum.map(value, &drop_conversation_id_fields/1)
+  end
+
+  defp drop_conversation_id_fields(value), do: value
+
+  defp drop_nondeterministic_fields(value) when is_map(value) do
+    Map.drop(value, [:id, "id", :time, "time", :source, "source", :extensions, "extensions"])
+  end
+
+  defp drop_nondeterministic_fields(value), do: value
+
+  defp maybe_put_atom_key(map, key, value) when is_map(map) and is_atom(key) do
+    Map.put(map, key, value)
+  end
+
+  defp maybe_put_string_key(map, key, value) when is_map(map) and is_binary(key) do
+    if Map.has_key?(map, key), do: Map.put(map, key, value), else: Map.put(map, key, value)
+  end
+
+  defp add_existing_atom_keys(value) when is_map(value) do
+    Enum.reduce(value, %{}, fn {key, nested}, acc ->
+      nested_value = add_existing_atom_keys(nested)
+      acc = Map.put(acc, key, nested_value)
+
+      case key do
+        key when is_binary(key) ->
+          case to_existing_atom(key) do
+            nil -> acc
+            atom_key -> Map.put(acc, atom_key, nested_value)
+          end
+
+        _other ->
+          acc
+      end
+    end)
+  end
+
+  defp add_existing_atom_keys(value) when is_list(value) do
+    Enum.map(value, &add_existing_atom_keys/1)
+  end
+
+  defp add_existing_atom_keys(value), do: value
+
+  defp to_existing_atom(key) when is_binary(key) do
+    String.to_existing_atom(key)
+  rescue
+    ArgumentError -> nil
+  end
+
+  defp emit_conversation_ingested(project_id, conversation_id, %Jido.Signal{} = signal) do
+    Telemetry.emit("conversation.event_ingested", %{
+      project_id: project_id,
+      conversation_id: conversation_id,
+      event_type: signal.type,
+      correlation_id: ConversationSignal.correlation_id(signal)
+    })
+
+    if signal.type == "conversation.tool.cancelled" do
+      Telemetry.emit("tool.cancelled", %{
+        project_id: project_id,
+        conversation_id: conversation_id,
+        correlation_id: ConversationSignal.correlation_id(signal)
+      })
+    end
+
+    :ok
+  end
+
+  defp events_to_signals(events) when is_list(events) do
+    events
+    |> Enum.flat_map(fn event ->
+      case ConversationSignal.normalize(event) do
+        {:ok, signal} -> [signal]
+        _ -> []
+      end
+    end)
+  end
+
+  defp events_to_signals(_events), do: []
+
+  defp maybe_wait_for_orchestration(state, conversation_id) do
+    with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
+         {:ok, conversation_state} <- ConversationAgent.state(pid) do
+      domain = Map.get(conversation_state, :domain) || %{}
+
+      if Map.get(domain, :orchestration_enabled, false) do
+        wait_for_settle(pid, System.monotonic_time(:millisecond) + 300, %{len: nil, stable: 0})
+      else
+        :ok
+      end
+    else
+      _ -> :ok
+    end
+  end
+
+  defp wait_for_settle(pid, deadline_ms, tracker) do
+    if System.monotonic_time(:millisecond) >= deadline_ms do
+      :ok
+    else
+      with {:ok, conversation_state} <- ConversationAgent.state(pid),
+           {:ok, timeline} <- ConversationAgent.projection(pid, :timeline) do
+        domain = Map.get(conversation_state, :domain) || %{}
+        queue_size = Map.get(domain, :queue_size, 0)
+        pending = Map.get(domain, :pending_tool_calls, [])
+        status = Map.get(domain, :status)
+        len = length(List.wrap(timeline))
+
+        cond do
+          queue_size > 0 ->
+            Process.sleep(10)
+            wait_for_settle(pid, deadline_ms, %{len: len, stable: 0})
+
+          pending != [] and pending_async?(pending) ->
+            :ok
+
+          pending != [] ->
+            Process.sleep(10)
+            wait_for_settle(pid, deadline_ms, %{len: len, stable: 0})
+
+          status in [:idle, :cancelled] ->
+            next_tracker =
+              case tracker do
+                %{len: ^len, stable: stable} -> %{len: len, stable: stable + 1}
+                _ -> %{len: len, stable: 0}
+              end
+
+            if next_tracker.stable >= 2 do
+              :ok
+            else
+              Process.sleep(10)
+              wait_for_settle(pid, deadline_ms, next_tracker)
+            end
+
+          true ->
+            Process.sleep(10)
+            wait_for_settle(pid, deadline_ms, %{len: len, stable: 0})
+        end
+      else
+        _ -> :ok
+      end
+    end
+  end
+
+  defp pending_async?(pending_calls) when is_list(pending_calls) do
+    Enum.any?(pending_calls, fn call ->
+      meta = incident_map_get(call, :meta) || %{}
+      incident_map_get(meta, :run_mode) == "async" or incident_map_get(meta, :async) == true
+    end)
+  end
+
+  defp pending_async?(_pending_calls), do: false
 end

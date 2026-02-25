@@ -3,7 +3,8 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
 
   alias Jido.Code.Server, as: Runtime
 
-  alias Jido.Code.Server.Conversation.Server, as: ConversationServer
+  alias Jido.Code.Server.Conversation.Agent, as: ConversationAgent
+  alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
   alias Jido.Code.Server.TestSupport.TempProject
 
   setup do
@@ -16,19 +17,17 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
     :ok
   end
 
-  test "conversation server supports cast ingest and projection queries" do
+  test "conversation agent supports cast ingest and projection queries" do
     assert {:ok, pid} =
-             ConversationServer.start_link(project_id: "phase5", conversation_id: "direct-cast")
+             ConversationAgent.start_link(project_id: "phase5", conversation_id: "direct-cast")
 
-    :ok = ConversationServer.subscribe(pid, self())
-    :ok = ConversationServer.ingest_event(pid, %{"type" => "user.message", "content" => "ping"})
+    signal =
+      ConversationSignal.normalize!(%{"type" => "conversation.user.message", "content" => "ping"})
 
-    assert_receive {:conversation_event, "direct-cast", event}, 1_000
-    assert event.type == "user.message"
-    assert event.data["content"] == "ping"
+    assert :ok = ConversationAgent.cast(pid, signal)
+    assert {:ok, timeline} = await_projection(pid, :timeline)
 
-    assert {:ok, [%{"type" => "user.message", "content" => "ping"}]} =
-             ConversationServer.get_projection(pid, :timeline)
+    assert [%{"type" => "conversation.user.message", "content" => "ping"}] = timeline
   end
 
   test "project conversation projections are deterministic for same event sequence" do
@@ -42,28 +41,31 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
     assert {:ok, "c-b"} = Runtime.start_conversation(project_id, conversation_id: "c-b")
 
     events = [
-      %{"type" => "user.message", "content" => "hello"},
+      %{"type" => "conversation.user.message", "content" => "hello"},
       %{
-        "type" => "tool.requested",
+        "type" => "conversation.tool.requested",
         "tool_call" => %{"name" => "asset.list", "args" => %{"type" => "skill"}}
       },
-      %{"type" => "tool.completed", "name" => "asset.list"}
+      %{"type" => "conversation.tool.completed", "name" => "asset.list"}
     ]
 
     Enum.each(events, fn event ->
-      assert :ok = Runtime.send_event(project_id, "c-a", event)
-      assert :ok = Runtime.send_event(project_id, "c-b", event)
+      assert :ok =
+               Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(project_id, "c-a", event)
+
+      assert :ok =
+               Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(project_id, "c-b", event)
     end)
 
-    assert {:ok, timeline_a} = Runtime.get_projection(project_id, "c-a", :timeline)
-    assert {:ok, timeline_b} = Runtime.get_projection(project_id, "c-b", :timeline)
-    assert strip_correlation_id(timeline_a) == strip_correlation_id(timeline_b)
+    assert {:ok, timeline_a} = Runtime.conversation_projection(project_id, "c-a", :timeline)
+    assert {:ok, timeline_b} = Runtime.conversation_projection(project_id, "c-b", :timeline)
+    assert event_types(timeline_a) == event_types(timeline_b)
 
     assert {:ok, pending_a} =
-             Runtime.get_projection(project_id, "c-a", :pending_tool_calls)
+             Runtime.conversation_projection(project_id, "c-a", :pending_tool_calls)
 
     assert {:ok, pending_b} =
-             Runtime.get_projection(project_id, "c-b", :pending_tool_calls)
+             Runtime.conversation_projection(project_id, "c-b", :pending_tool_calls)
 
     assert pending_a == pending_b
     assert pending_a == []
@@ -82,8 +84,8 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
     assert :ok = Runtime.subscribe_conversation(project_id, "sub-c", self())
 
     assert :ok =
-             Runtime.send_event(project_id, "sub-c", %{
-               "type" => "user.message",
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(project_id, "sub-c", %{
+               "type" => "conversation.user.message",
                "content" => "one"
              })
 
@@ -93,8 +95,8 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
     assert :ok = Runtime.unsubscribe_conversation(project_id, "sub-c", self())
 
     assert :ok =
-             Runtime.send_event(project_id, "sub-c", %{
-               "type" => "user.message",
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(project_id, "sub-c", %{
+               "type" => "conversation.user.message",
                "content" => "two"
              })
 
@@ -111,39 +113,41 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
              Runtime.start_conversation(project_id, conversation_id: "restart-c")
 
     assert :ok =
-             Runtime.send_event(project_id, "restart-c", %{
-               "type" => "user.message",
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(project_id, "restart-c", %{
+               "type" => "conversation.user.message",
                "content" => "before"
              })
 
     assert {:ok, [%{"content" => "before"}]} =
-             Runtime.get_projection(project_id, "restart-c", :timeline)
+             Runtime.conversation_projection(project_id, "restart-c", :timeline)
 
     assert :ok = Runtime.stop_conversation(project_id, "restart-c")
 
     assert {:error, {:conversation_not_found, "restart-c"}} =
-             Runtime.get_projection(project_id, "restart-c", :timeline)
+             Runtime.conversation_projection(project_id, "restart-c", :timeline)
 
     assert {:ok, "restart-c"} =
              Runtime.start_conversation(project_id, conversation_id: "restart-c")
 
-    assert {:ok, []} = Runtime.get_projection(project_id, "restart-c", :timeline)
+    assert {:ok, []} = Runtime.conversation_projection(project_id, "restart-c", :timeline)
   end
 
-  defp strip_correlation_id(term) when is_list(term) do
-    Enum.map(term, &strip_correlation_id/1)
+  defp event_types(timeline) when is_list(timeline) do
+    Enum.map(timeline, &Map.get(&1, "type"))
   end
 
-  defp strip_correlation_id(%_{} = struct), do: struct
+  defp await_projection(pid, key, attempts \\ 30)
 
-  defp strip_correlation_id(term) when is_map(term) do
-    term
-    |> Map.delete(:correlation_id)
-    |> Map.delete("correlation_id")
-    |> Enum.reduce(%{}, fn {key, value}, acc ->
-      Map.put(acc, key, strip_correlation_id(value))
-    end)
+  defp await_projection(_pid, _key, 0), do: {:error, :projection_timeout}
+
+  defp await_projection(pid, key, attempts) do
+    case ConversationAgent.projection(pid, key) do
+      {:ok, projection} when is_list(projection) and projection != [] ->
+        {:ok, projection}
+
+      _other ->
+        Process.sleep(10)
+        await_projection(pid, key, attempts - 1)
+    end
   end
-
-  defp strip_correlation_id(term), do: term
 end

@@ -46,10 +46,30 @@ defmodule Jido.Code.Server.Engine.Project do
     GenServer.call(pid, {:stop_conversation, conversation_id})
   end
 
-  @spec send_event(pid(), String.t(), map()) :: :ok | {:error, term()}
-  def send_event(pid, conversation_id, event)
-      when is_pid(pid) and is_binary(conversation_id) and is_map(event) do
-    GenServer.call(pid, {:send_event, conversation_id, event})
+  @spec conversation_call(pid(), String.t(), Jido.Signal.t(), timeout()) ::
+          {:ok, map()} | {:error, term()}
+  def conversation_call(pid, conversation_id, %Jido.Signal{} = signal, timeout \\ 30_000)
+      when is_pid(pid) and is_binary(conversation_id) do
+    GenServer.call(pid, {:conversation_call, conversation_id, signal, timeout}, timeout)
+  end
+
+  @spec conversation_cast(pid(), String.t(), Jido.Signal.t()) :: :ok | {:error, term()}
+  def conversation_cast(pid, conversation_id, %Jido.Signal{} = signal)
+      when is_pid(pid) and is_binary(conversation_id) do
+    GenServer.call(pid, {:conversation_cast, conversation_id, signal})
+  end
+
+  @spec conversation_state(pid(), String.t(), timeout()) :: {:ok, map()} | {:error, term()}
+  def conversation_state(pid, conversation_id, timeout \\ 30_000)
+      when is_pid(pid) and is_binary(conversation_id) do
+    GenServer.call(pid, {:conversation_state, conversation_id, timeout}, timeout)
+  end
+
+  @spec conversation_projection(pid(), String.t(), atom() | String.t(), timeout()) ::
+          {:ok, term()} | {:error, term()}
+  def conversation_projection(pid, conversation_id, key, timeout \\ 30_000)
+      when is_pid(pid) and is_binary(conversation_id) do
+    GenServer.call(pid, {:conversation_projection, conversation_id, key, timeout}, timeout)
   end
 
   @spec subscribe_conversation(pid(), String.t(), pid()) :: :ok | {:error, term()}
@@ -62,11 +82,6 @@ defmodule Jido.Code.Server.Engine.Project do
   def unsubscribe_conversation(pid, conversation_id, subscriber_pid \\ self())
       when is_pid(pid) and is_binary(conversation_id) and is_pid(subscriber_pid) do
     GenServer.call(pid, {:unsubscribe_conversation, conversation_id, subscriber_pid})
-  end
-
-  @spec get_projection(pid(), String.t(), atom() | String.t()) :: {:ok, term()} | {:error, term()}
-  def get_projection(pid, conversation_id, key) when is_pid(pid) and is_binary(conversation_id) do
-    GenServer.call(pid, {:get_projection, conversation_id, key})
   end
 
   @spec list_tools(pid()) :: [map()]
@@ -150,7 +165,8 @@ defmodule Jido.Code.Server.Engine.Project do
              :network_allowed_schemes,
              :sensitive_path_denylist,
              :sensitive_path_allowlist,
-             :outside_root_allowlist
+             :outside_root_allowlist,
+             :subagent_templates_allowlist
            ]) do
         [] -> supervisor_opts
         policy_opts -> Keyword.put(supervisor_opts, :policy, policy_opts)
@@ -233,10 +249,40 @@ defmodule Jido.Code.Server.Engine.Project do
     {:reply, reply, state}
   end
 
-  def handle_call({:send_event, conversation_id, event}, _from, state) do
+  def handle_call({:conversation_call, conversation_id, signal, timeout}, _from, state) do
     reply =
       delegate(fn ->
-        Server.send_event(state.project_server, conversation_id, event)
+        Server.conversation_call(state.project_server, conversation_id, signal, timeout)
+      end)
+      |> unwrap_delegate()
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:conversation_cast, conversation_id, signal}, _from, state) do
+    reply =
+      delegate(fn ->
+        Server.conversation_cast(state.project_server, conversation_id, signal)
+      end)
+      |> unwrap_delegate()
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:conversation_state, conversation_id, timeout}, _from, state) do
+    reply =
+      delegate(fn ->
+        Server.conversation_state(state.project_server, conversation_id, timeout)
+      end)
+      |> unwrap_delegate()
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:conversation_projection, conversation_id, key, timeout}, _from, state) do
+    reply =
+      delegate(fn ->
+        Server.conversation_projection(state.project_server, conversation_id, key, timeout)
       end)
       |> unwrap_delegate()
 
@@ -257,16 +303,6 @@ defmodule Jido.Code.Server.Engine.Project do
     reply =
       delegate(fn ->
         Server.unsubscribe_conversation(state.project_server, conversation_id, subscriber_pid)
-      end)
-      |> unwrap_delegate()
-
-    {:reply, reply, state}
-  end
-
-  def handle_call({:get_projection, conversation_id, key}, _from, state) do
-    reply =
-      delegate(fn ->
-        Server.get_projection(state.project_server, conversation_id, key)
       end)
       |> unwrap_delegate()
 

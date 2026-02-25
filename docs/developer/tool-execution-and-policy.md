@@ -16,6 +16,8 @@ All tool execution goes through a unified project path:
   - `command.run.<name>`
 - Asset-backed workflow tools:
   - `workflow.run.<name>`
+- Sub-agent spawn tools:
+  - `agent.spawn.<template_id>`
 
 For valid command/workflow definitions, `input_schema` includes richer typed fields (including nested `params`/`inputs` hints).
 
@@ -52,6 +54,7 @@ Runtime result handling includes:
 - Sensitive artifact detection flags
 - Timeout escalation telemetry
 - Security telemetry for denied env usage
+- Sub-agent spawn execution with template-gated policy checks
 
 ## Command and Workflow Runtime Bridges
 
@@ -76,6 +79,7 @@ Optional executor mode:
 - Network egress policy, scheme, and allowlist controls
 - Network target extraction from nested, JSON-wrapped, and opaque serialized payloads
 - Policy decision audit records and security signal emission
+- Sub-agent template allowlist checks (`subagent_templates_allowlist`)
 
 > Security Aside
 > 

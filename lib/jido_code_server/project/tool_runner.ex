@@ -7,6 +7,7 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   alias Jido.Code.Server.Correlation
   alias Jido.Code.Server.Project.AssetStore
   alias Jido.Code.Server.Project.Policy
+  alias Jido.Code.Server.Project.SubAgentManager
   alias Jido.Code.Server.Project.ToolCatalog
   alias Jido.Code.Server.Telemetry
   alias Jido.Code.Server.Types.ToolCall
@@ -162,7 +163,7 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
               response =
                 call
-                |> success_response(spec, duration_ms, result)
+                |> success_response(project_ctx.project_id, spec, duration_ms, result)
                 |> maybe_flag_sensitive_result(project_ctx)
 
               Telemetry.emit("tool.completed", response)
@@ -186,7 +187,7 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
   defp run_failed(project_ctx, tool_call, started_at, reason) do
     duration_ms = System.monotonic_time(:millisecond) - started_at
-    error = error_response(tool_call, duration_ms, reason)
+    error = error_response(project_ctx.project_id, tool_call, duration_ms, reason)
     maybe_emit_timeout_signals(project_ctx, tool_call, reason)
     maybe_emit_env_signals(project_ctx, tool_call, reason)
     Telemetry.emit("tool.failed", error)
@@ -256,10 +257,106 @@ defmodule Jido.Code.Server.Project.ToolRunner do
       :workflow_run ->
         run_asset_tool(project_ctx, :workflow, spec.asset_name, call)
 
+      :subagent_spawn ->
+        spawn_subagent_tool(project_ctx, spec, call)
+
       _other ->
         {:error, :unsupported_tool}
     end
   end
+
+  defp spawn_subagent_tool(project_ctx, spec, call) do
+    template = Map.get(spec, :template) || %{}
+    template_id = Map.get(spec, :template_id)
+    conversation_id = conversation_id_from_call(call)
+
+    with true <- is_binary(conversation_id),
+         true <- is_binary(template_id) and template_id != "",
+         :ok <- ensure_subagent_manager(project_ctx),
+         :ok <-
+           Policy.authorize_subagent_spawn(project_ctx.policy, template_id, %{
+             project_id: Map.get(project_ctx, :project_id),
+             conversation_id: conversation_id,
+             correlation_id: correlation_id_from_call(call)
+           }),
+         {:ok, request} <- subagent_spawn_request(call.args, template),
+         {:ok, subagent_ref} <-
+           SubAgentManager.spawn_from_template(
+             project_ctx.subagent_manager,
+             template,
+             conversation_id,
+             request,
+             %{
+               project_id: Map.get(project_ctx, :project_id),
+               conversation_id: conversation_id,
+               correlation_id: correlation_id_from_call(call)
+             }
+           ) do
+      {:ok, %{subagent: subagent_ref_payload(subagent_ref)}}
+    else
+      false -> {:error, :missing_conversation_id}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp ensure_subagent_manager(project_ctx) do
+    manager = Map.get(project_ctx, :subagent_manager)
+    if is_nil(manager), do: {:error, :subagent_manager_unavailable}, else: :ok
+  end
+
+  defp subagent_spawn_request(args, template) when is_map(args) do
+    goal = map_get_value(args, "goal")
+    inputs = map_get_value(args, "inputs")
+    ttl_ms = map_get_value(args, "ttl_ms")
+
+    cond do
+      not is_binary(goal) or String.trim(goal) == "" ->
+        {:error, :invalid_spawn_goal}
+
+      not is_nil(inputs) and not is_map(inputs) ->
+        {:error, :invalid_spawn_inputs}
+
+      not is_nil(ttl_ms) and (not is_integer(ttl_ms) or ttl_ms <= 0) ->
+        {:error, :invalid_spawn_ttl}
+
+      true ->
+        {:ok,
+         %{
+           "goal" => goal,
+           "inputs" => if(is_map(inputs), do: inputs, else: %{}),
+           "ttl_ms" => bounded_ttl(ttl_ms, template)
+         }}
+    end
+  end
+
+  defp subagent_spawn_request(_args, _template), do: {:error, :invalid_spawn_request}
+
+  defp bounded_ttl(nil, template) do
+    Map.get(template, :ttl_ms) || 300_000
+  end
+
+  defp bounded_ttl(ttl_ms, template) when is_integer(ttl_ms) do
+    max_ttl = Map.get(template, :ttl_ms) || ttl_ms
+    min(ttl_ms, max_ttl)
+  end
+
+  defp subagent_ref_payload(%_{} = ref) do
+    %{
+      child_id: Map.get(ref, :child_id),
+      template_id: Map.get(ref, :template_id),
+      owner_conversation_id: Map.get(ref, :owner_conversation_id),
+      pid: inspect(Map.get(ref, :pid)),
+      started_at: format_started_at(Map.get(ref, :started_at)),
+      status: normalize_status(Map.get(ref, :status)),
+      correlation_id: Map.get(ref, :correlation_id)
+    }
+  end
+
+  defp format_started_at(%DateTime{} = started_at), do: DateTime.to_iso8601(started_at)
+  defp format_started_at(started_at), do: started_at
+
+  defp normalize_status(status) when is_atom(status), do: Atom.to_string(status)
+  defp normalize_status(status), do: status
 
   defp run_asset_tool(project_ctx, type, asset_name, call) do
     case AssetStore.get(project_ctx.asset_store, type, asset_name) do
@@ -802,9 +899,10 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     :ok
   end
 
-  defp success_response(call, spec, duration_ms, result) do
+  defp success_response(call, project_id, spec, duration_ms, result) do
     %{
       status: :ok,
+      project_id: project_id,
       tool: call.name,
       conversation_id: conversation_id_from_call(call),
       correlation_id: correlation_id_from_call(call),
@@ -814,9 +912,10 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     }
   end
 
-  defp error_response(tool_call, duration_ms, reason) do
+  defp error_response(project_id, tool_call, duration_ms, reason) do
     %{
       status: :error,
+      project_id: project_id,
       tool: tool_name(tool_call),
       conversation_id: conversation_id_from_call(tool_call),
       correlation_id: correlation_id_from_call(tool_call),

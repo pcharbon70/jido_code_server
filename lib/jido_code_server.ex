@@ -7,7 +7,6 @@ defmodule Jido.Code.Server do
 
   @type project_id :: String.t()
   @type conversation_id :: String.t()
-  @type event :: map()
 
   @spec start_project(String.t(), keyword()) :: {:ok, project_id()} | {:error, term()}
   def start_project(root_path, opts \\ []), do: Engine.start_project(root_path, opts)
@@ -25,9 +24,25 @@ defmodule Jido.Code.Server do
   def stop_conversation(project_id, conversation_id),
     do: Engine.stop_conversation(project_id, conversation_id)
 
-  @spec send_event(project_id(), conversation_id(), event()) :: :ok | {:error, term()}
-  def send_event(project_id, conversation_id, event),
-    do: Engine.send_event(project_id, conversation_id, event)
+  @spec conversation_call(project_id(), conversation_id(), Jido.Signal.t(), timeout()) ::
+          {:ok, map()} | {:error, term()}
+  def conversation_call(project_id, conversation_id, %Jido.Signal{} = signal, timeout \\ 30_000),
+    do: Engine.conversation_call(project_id, conversation_id, signal, timeout)
+
+  @spec conversation_cast(project_id(), conversation_id(), Jido.Signal.t()) ::
+          :ok | {:error, term()}
+  def conversation_cast(project_id, conversation_id, %Jido.Signal{} = signal),
+    do: Engine.conversation_cast(project_id, conversation_id, signal)
+
+  @spec conversation_state(project_id(), conversation_id(), timeout()) ::
+          {:ok, map()} | {:error, term()}
+  def conversation_state(project_id, conversation_id, timeout \\ 30_000),
+    do: Engine.conversation_state(project_id, conversation_id, timeout)
+
+  @spec conversation_projection(project_id(), conversation_id(), atom() | String.t(), timeout()) ::
+          {:ok, term()} | {:error, term()}
+  def conversation_projection(project_id, conversation_id, key, timeout \\ 30_000),
+    do: Engine.conversation_projection(project_id, conversation_id, key, timeout)
 
   @spec subscribe_conversation(project_id(), conversation_id(), pid()) :: :ok | {:error, term()}
   def subscribe_conversation(project_id, conversation_id, subscriber_pid \\ self()),
@@ -37,11 +52,6 @@ defmodule Jido.Code.Server do
           :ok | {:error, term()}
   def unsubscribe_conversation(project_id, conversation_id, subscriber_pid \\ self()),
     do: Engine.unsubscribe_conversation(project_id, conversation_id, subscriber_pid)
-
-  @spec get_projection(project_id(), conversation_id(), atom() | String.t()) ::
-          {:ok, term()} | {:error, term()}
-  def get_projection(project_id, conversation_id, key),
-    do: Engine.get_projection(project_id, conversation_id, key)
 
   @spec list_tools(project_id()) :: list(map())
   def list_tools(project_id), do: Engine.list_tools(project_id)

@@ -20,7 +20,11 @@ defmodule Jido.Code.Server.Engine do
     :tool_max_artifact_bytes,
     :tool_max_concurrency,
     :llm_timeout_ms,
-    :watcher_debounce_ms
+    :watcher_debounce_ms,
+    :conversation_max_queue_size,
+    :conversation_max_drain_steps,
+    :subagent_max_children,
+    :subagent_ttl_ms
   ]
   @non_negative_integer_runtime_opts [:tool_max_concurrency_per_conversation]
   @boolean_runtime_opts [:watcher, :conversation_orchestration, :strict_asset_loading]
@@ -31,7 +35,8 @@ defmodule Jido.Code.Server.Engine do
     :sensitive_path_denylist,
     :sensitive_path_allowlist,
     :tool_env_allowlist,
-    :protocol_allowlist
+    :protocol_allowlist,
+    :subagent_templates_allowlist
   ]
   @passthrough_runtime_opts [:project_id, :data_dir, :llm_adapter]
   @allowed_command_executors [WorkspaceShell]
@@ -105,9 +110,36 @@ defmodule Jido.Code.Server.Engine do
     with_project(project_id, fn pid -> Project.stop_conversation(pid, conversation_id) end)
   end
 
-  @spec send_event(project_id(), conversation_id(), map()) :: :ok | {:error, term()}
-  def send_event(project_id, conversation_id, event) do
-    with_project(project_id, fn pid -> Project.send_event(pid, conversation_id, event) end)
+  @spec conversation_call(project_id(), conversation_id(), Jido.Signal.t(), timeout()) ::
+          {:ok, map()} | {:error, term()}
+  def conversation_call(project_id, conversation_id, %Jido.Signal{} = signal, timeout \\ 30_000) do
+    with_project(project_id, fn pid ->
+      Project.conversation_call(pid, conversation_id, signal, timeout)
+    end)
+  end
+
+  @spec conversation_cast(project_id(), conversation_id(), Jido.Signal.t()) ::
+          :ok | {:error, term()}
+  def conversation_cast(project_id, conversation_id, %Jido.Signal{} = signal) do
+    with_project(project_id, fn pid ->
+      Project.conversation_cast(pid, conversation_id, signal)
+    end)
+  end
+
+  @spec conversation_state(project_id(), conversation_id(), timeout()) ::
+          {:ok, map()} | {:error, term()}
+  def conversation_state(project_id, conversation_id, timeout \\ 30_000) do
+    with_project(project_id, fn pid ->
+      Project.conversation_state(pid, conversation_id, timeout)
+    end)
+  end
+
+  @spec conversation_projection(project_id(), conversation_id(), atom() | String.t(), timeout()) ::
+          {:ok, term()} | {:error, term()}
+  def conversation_projection(project_id, conversation_id, key, timeout \\ 30_000) do
+    with_project(project_id, fn pid ->
+      Project.conversation_projection(pid, conversation_id, key, timeout)
+    end)
   end
 
   @spec subscribe_conversation(project_id(), conversation_id(), pid()) :: :ok | {:error, term()}
@@ -125,12 +157,6 @@ defmodule Jido.Code.Server.Engine do
     with_project(project_id, fn pid ->
       Project.unsubscribe_conversation(pid, conversation_id, subscriber_pid)
     end)
-  end
-
-  @spec get_projection(project_id(), conversation_id(), atom() | String.t()) ::
-          {:ok, term()} | {:error, term()}
-  def get_projection(project_id, conversation_id, key) do
-    with_project(project_id, fn pid -> Project.get_projection(pid, conversation_id, key) end)
   end
 
   @spec list_tools(project_id()) :: list(map())
@@ -336,6 +362,9 @@ defmodule Jido.Code.Server.Engine do
   defp validate_runtime_opt(:outside_root_allowlist, value),
     do: validate_outside_root_allowlist(value)
 
+  defp validate_runtime_opt(:subagent_templates, value),
+    do: validate_subagent_templates(value)
+
   defp validate_runtime_opt(:llm_model, value), do: validate_optional_binary(value)
 
   defp validate_runtime_opt(:llm_system_prompt, value), do: validate_optional_binary(value)
@@ -347,6 +376,16 @@ defmodule Jido.Code.Server.Engine do
   defp validate_runtime_opt(:command_executor, value), do: validate_command_executor(value)
 
   defp validate_runtime_opt(_key, _value), do: {:error, :unknown_option}
+
+  defp validate_subagent_templates(value) when is_list(value) do
+    if Enum.all?(value, &is_map/1) do
+      {:ok, value}
+    else
+      {:error, :expected_list_of_maps}
+    end
+  end
+
+  defp validate_subagent_templates(_value), do: {:error, :expected_list}
 
   defp validate_positive_integer(value) when is_integer(value) and value > 0, do: {:ok, value}
   defp validate_positive_integer(_value), do: {:error, :expected_positive_integer}

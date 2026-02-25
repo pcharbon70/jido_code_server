@@ -5,6 +5,7 @@ defmodule Jido.Code.Server.Project.Supervisor do
 
   use Supervisor
 
+  alias Jido.Code.Server.Config
   alias Jido.Code.Server.Project.Naming
 
   @spec start_link(keyword()) :: Supervisor.on_start()
@@ -25,6 +26,7 @@ defmodule Jido.Code.Server.Project.Supervisor do
     conversation_supervisor = Naming.via(project_id, :conversation_supervisor)
 
     task_supervisor = Naming.via(project_id, :task_supervisor)
+    subagent_manager = Naming.via(project_id, :subagent_manager)
     asset_store = Naming.via(project_id, :asset_store)
     policy = Naming.via(project_id, :policy)
     project_server = Naming.via(project_id, :project_server)
@@ -46,6 +48,14 @@ defmodule Jido.Code.Server.Project.Supervisor do
       {Jido.Code.Server.Project.Policy,
        Keyword.merge([name: policy, project_id: project_id, root_path: root_path], policy_opts)},
       {Jido.Code.Server.Project.TaskSupervisor, name: task_supervisor},
+      {Jido.Code.Server.Project.SubAgentManager,
+       [
+         name: subagent_manager,
+         project_id: project_id,
+         notify: project_server,
+         default_max_children: Config.default_subagent_max_children(),
+         default_ttl_ms: Config.default_subagent_ttl_ms()
+       ]},
       {Jido.Code.Server.Project.ProtocolSupervisor, name: protocol_supervisor},
       {Jido.Code.Server.Project.Server,
        [

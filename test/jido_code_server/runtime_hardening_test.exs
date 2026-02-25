@@ -143,13 +143,18 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              Runtime.start_conversation(project_id, conversation_id: "phase9-corr-c1")
 
     assert :ok =
-             Runtime.send_event(project_id, "phase9-corr-c1", %{
-               "type" => "user.message",
-               "content" => "please list skills",
-               "meta" => %{"correlation_id" => correlation_id}
-             })
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase9-corr-c1",
+               %{
+                 "type" => "conversation.user.message",
+                 "content" => "please list skills",
+                 "meta" => %{"correlation_id" => correlation_id}
+               }
+             )
 
-    assert {:ok, timeline} = Runtime.get_projection(project_id, "phase9-corr-c1", :timeline)
+    assert {:ok, timeline} =
+             Runtime.conversation_projection(project_id, "phase9-corr-c1", :timeline)
 
     correlation_ids =
       timeline
@@ -163,12 +168,17 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
 
     assert correlation_ids == [correlation_id]
 
-    assert Enum.any?(timeline, fn event -> map_lookup(event, :type) == "tool.requested" end)
-    assert Enum.any?(timeline, fn event -> map_lookup(event, :type) == "tool.completed" end)
+    assert Enum.any?(timeline, fn event ->
+             map_lookup(event, :type) == "conversation.tool.requested"
+           end)
+
+    assert Enum.any?(timeline, fn event ->
+             map_lookup(event, :type) == "conversation.tool.completed"
+           end)
 
     tool_completed =
       Enum.find(timeline, fn event ->
-        map_lookup(event, :type) == "tool.completed"
+        map_lookup(event, :type) == "conversation.tool.completed"
       end)
 
     result = map_lookup(tool_completed, :data) |> map_lookup(:result)
@@ -199,12 +209,17 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              Runtime.start_conversation(project_id, conversation_id: "phase9-corr-c2")
 
     assert :ok =
-             Runtime.send_event(project_id, "phase9-corr-c2", %{
-               "type" => "user.message",
-               "content" => "hello"
-             })
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase9-corr-c2",
+               %{
+                 "type" => "conversation.user.message",
+                 "content" => "hello"
+               }
+             )
 
-    assert {:ok, timeline} = Runtime.get_projection(project_id, "phase9-corr-c2", :timeline)
+    assert {:ok, timeline} =
+             Runtime.conversation_projection(project_id, "phase9-corr-c2", :timeline)
 
     correlation_ids =
       timeline
@@ -237,11 +252,15 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              Runtime.start_conversation(project_id, conversation_id: "phase9-incident-c1")
 
     assert :ok =
-             Runtime.send_event(project_id, "phase9-incident-c1", %{
-               "type" => "user.message",
-               "content" => "please list skills",
-               "meta" => %{"correlation_id" => correlation_id}
-             })
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase9-incident-c1",
+               %{
+                 "type" => "conversation.user.message",
+                 "content" => "please list skills",
+                 "meta" => %{"correlation_id" => correlation_id}
+               }
+             )
 
     assert {:ok, timeline} =
              Runtime.incident_timeline(project_id, "phase9-incident-c1",
@@ -520,37 +539,50 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              Runtime.start_conversation(project_id, conversation_id: "phase9-cancel-c1")
 
     assert :ok =
-             Runtime.send_event(project_id, "phase9-cancel-c1", %{
-               "type" => "conversation.cancel"
-             })
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase9-cancel-c1",
+               %{
+                 "type" => "conversation.cancel"
+               }
+             )
 
     assert :ok =
-             Runtime.send_event(project_id, "phase9-cancel-c1", %{
-               "type" => "tool.requested",
-               "data" => %{
-                 "name" => "asset.list",
-                 "args" => %{"type" => "skill"}
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase9-cancel-c1",
+               %{
+                 "type" => "conversation.tool.requested",
+                 "data" => %{
+                   "name" => "asset.list",
+                   "args" => %{"type" => "skill"}
+                 }
                }
-             })
+             )
 
     assert {:ok, pending_before_cancel} =
-             Runtime.get_projection(project_id, "phase9-cancel-c1", :pending_tool_calls)
+             Runtime.conversation_projection(project_id, "phase9-cancel-c1", :pending_tool_calls)
 
     assert length(pending_before_cancel) == 1
 
     correlation_id = "corr-phase9-cancel-c1"
 
     assert :ok =
-             Runtime.send_event(project_id, "phase9-cancel-c1", %{
-               "type" => "conversation.cancel",
-               "meta" => %{"correlation_id" => correlation_id}
-             })
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase9-cancel-c1",
+               %{
+                 "type" => "conversation.cancel",
+                 "meta" => %{"correlation_id" => correlation_id}
+               }
+             )
 
-    assert {:ok, timeline} = Runtime.get_projection(project_id, "phase9-cancel-c1", :timeline)
+    assert {:ok, timeline} =
+             Runtime.conversation_projection(project_id, "phase9-cancel-c1", :timeline)
 
     cancelled_event =
       Enum.find(timeline, fn event ->
-        map_lookup(event, :type) == "tool.cancelled"
+        map_lookup(event, :type) == "conversation.tool.cancelled"
       end)
 
     assert cancelled_event
@@ -558,7 +590,8 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert map_lookup(cancelled_event, :data) |> map_lookup(:reason) == "conversation_cancelled"
     assert map_lookup(cancelled_event, :meta) |> map_lookup(:correlation_id) == correlation_id
 
-    assert {:ok, []} = Runtime.get_projection(project_id, "phase9-cancel-c1", :pending_tool_calls)
+    assert {:ok, []} =
+             Runtime.conversation_projection(project_id, "phase9-cancel-c1", :pending_tool_calls)
 
     diagnostics = Runtime.diagnostics(project_id)
     assert event_count(diagnostics, "tool.cancelled") >= 1
@@ -580,38 +613,43 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              Runtime.start_conversation(project_id, conversation_id: "phase9-async-c1")
 
     assert :ok =
-             Runtime.send_event(project_id, "phase9-async-c1", %{
-               "type" => "tool.requested",
-               "meta" => %{"correlation_id" => correlation_id},
-               "data" => %{
-                 "name" => "command.run.example_command",
-                 "args" => %{
-                   "path" => ".jido/commands/example_command.md",
-                   "simulate_delay_ms" => 150
-                 },
-                 "meta" => %{"run_mode" => "async"}
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase9-async-c1",
+               %{
+                 "type" => "conversation.tool.requested",
+                 "meta" => %{"correlation_id" => correlation_id},
+                 "data" => %{
+                   "name" => "command.run.example_command",
+                   "args" => %{
+                     "path" => ".jido/commands/example_command.md",
+                     "simulate_delay_ms" => 150
+                   },
+                   "meta" => %{"run_mode" => "async"}
+                 }
                }
-             })
+             )
 
     assert {:ok, timeline_before} =
-             Runtime.get_projection(project_id, "phase9-async-c1", :timeline)
+             Runtime.conversation_projection(project_id, "phase9-async-c1", :timeline)
 
     refute Enum.any?(timeline_before, fn event ->
-             map_lookup(event, :type) == "tool.completed"
+             map_lookup(event, :type) == "conversation.tool.completed"
            end)
 
     assert_eventually(fn ->
-      {:ok, timeline_after} = Runtime.get_projection(project_id, "phase9-async-c1", :timeline)
+      {:ok, timeline_after} =
+        Runtime.conversation_projection(project_id, "phase9-async-c1", :timeline)
 
       Enum.any?(timeline_after, fn event ->
-        map_lookup(event, :type) == "tool.completed" and
+        map_lookup(event, :type) == "conversation.tool.completed" and
           map_lookup(event, :meta) |> map_lookup(:correlation_id) == correlation_id
       end)
     end)
 
     assert_eventually(fn ->
       {:ok, pending_calls} =
-        Runtime.get_projection(project_id, "phase9-async-c1", :pending_tool_calls)
+        Runtime.conversation_projection(project_id, "phase9-async-c1", :pending_tool_calls)
 
       pending_calls == []
     end)
@@ -634,18 +672,22 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              Runtime.start_conversation(project_id, conversation_id: "phase9-async-c2")
 
     assert :ok =
-             Runtime.send_event(project_id, "phase9-async-c2", %{
-               "type" => "tool.requested",
-               "meta" => %{"correlation_id" => request_correlation_id},
-               "data" => %{
-                 "name" => "command.run.example_command",
-                 "args" => %{
-                   "path" => ".jido/commands/example_command.md",
-                   "simulate_delay_ms" => 500
-                 },
-                 "meta" => %{"run_mode" => "async"}
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase9-async-c2",
+               %{
+                 "type" => "conversation.tool.requested",
+                 "meta" => %{"correlation_id" => request_correlation_id},
+                 "data" => %{
+                   "name" => "command.run.example_command",
+                   "args" => %{
+                     "path" => ".jido/commands/example_command.md",
+                     "simulate_delay_ms" => 500
+                   },
+                   "meta" => %{"run_mode" => "async"}
+                 }
                }
-             })
+             )
 
     pending_task_pid = wait_for_pending_task_pid(project_id, "phase9-async-c2")
     child_pid = spawn(fn -> Process.sleep(:infinity) end)
@@ -658,26 +700,32 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     :ok = ToolRunner.register_child_process(pending_task_pid, child_pid)
 
     assert :ok =
-             Runtime.send_event(project_id, "phase9-async-c2", %{
-               "type" => "conversation.cancel",
-               "meta" => %{"correlation_id" => cancel_correlation_id}
-             })
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase9-async-c2",
+               %{
+                 "type" => "conversation.cancel",
+                 "meta" => %{"correlation_id" => cancel_correlation_id}
+               }
+             )
 
     assert_eventually(fn ->
-      {:ok, timeline} = Runtime.get_projection(project_id, "phase9-async-c2", :timeline)
+      {:ok, timeline} = Runtime.conversation_projection(project_id, "phase9-async-c2", :timeline)
 
       Enum.any?(timeline, fn event ->
-        map_lookup(event, :type) == "tool.cancelled" and
+        map_lookup(event, :type) == "conversation.tool.cancelled" and
           map_lookup(event, :data) |> map_lookup(:reason) == "conversation_cancelled" and
           map_lookup(event, :meta) |> map_lookup(:correlation_id) == cancel_correlation_id
       end)
     end)
 
     Process.sleep(600)
-    assert {:ok, timeline} = Runtime.get_projection(project_id, "phase9-async-c2", :timeline)
+
+    assert {:ok, timeline} =
+             Runtime.conversation_projection(project_id, "phase9-async-c2", :timeline)
 
     refute Enum.any?(timeline, fn event ->
-             map_lookup(event, :type) == "tool.completed" and
+             map_lookup(event, :type) == "conversation.tool.completed" and
                map_lookup(event, :data) |> map_lookup(:name) == "command.run.example_command" and
                map_lookup(event, :meta) |> map_lookup(:correlation_id) == request_correlation_id
            end)
@@ -708,14 +756,18 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              Runtime.start_conversation(project_id, conversation_id: "phase9-workspace-child-c1")
 
     assert :ok =
-             Runtime.send_event(project_id, "phase9-workspace-child-c1", %{
-               "type" => "tool.requested",
-               "data" => %{
-                 "name" => "command.run.example_command",
-                 "args" => %{"path" => ".jido/commands/example_command.md"},
-                 "meta" => %{"run_mode" => "async"}
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase9-workspace-child-c1",
+               %{
+                 "type" => "conversation.tool.requested",
+                 "data" => %{
+                   "name" => "command.run.example_command",
+                   "args" => %{"path" => ".jido/commands/example_command.md"},
+                   "meta" => %{"run_mode" => "async"}
+                 }
                }
-             })
+             )
 
     pending_task_pid = wait_for_pending_task_pid(project_id, "phase9-workspace-child-c1")
 
@@ -724,15 +776,20 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     end)
 
     assert :ok =
-             Runtime.send_event(project_id, "phase9-workspace-child-c1", %{
-               "type" => "conversation.cancel"
-             })
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase9-workspace-child-c1",
+               %{
+                 "type" => "conversation.cancel"
+               }
+             )
 
     assert_eventually(fn ->
-      {:ok, timeline} = Runtime.get_projection(project_id, "phase9-workspace-child-c1", :timeline)
+      {:ok, timeline} =
+        Runtime.conversation_projection(project_id, "phase9-workspace-child-c1", :timeline)
 
       Enum.any?(timeline, fn event ->
-        map_lookup(event, :type) == "tool.cancelled"
+        map_lookup(event, :type) == "conversation.tool.cancelled"
       end)
     end)
 
@@ -1632,23 +1689,31 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              Runtime.start_conversation(project_id, conversation_id: "phase9-llm-c1")
 
     assert :ok =
-             Runtime.send_event(project_id, "phase9-llm-c1", %{
-               "type" => "user.message",
-               "content" => "hello"
-             })
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase9-llm-c1",
+               %{
+                 "type" => "conversation.user.message",
+                 "content" => "hello"
+               }
+             )
 
     assert :ok =
-             Runtime.send_event(project_id, "phase9-llm-c1", %{
-               "type" => "user.message",
-               "content" => "still there?"
-             })
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+               project_id,
+               "phase9-llm-c1",
+               %{
+                 "type" => "conversation.user.message",
+                 "content" => "still there?"
+               }
+             )
 
     assert {:ok, timeline} =
-             Runtime.get_projection(project_id, "phase9-llm-c1", :timeline)
+             Runtime.conversation_projection(project_id, "phase9-llm-c1", :timeline)
 
     failed_count =
       timeline
-      |> Enum.count(&(map_lookup(&1, :type) == "llm.failed"))
+      |> Enum.count(&(map_lookup(&1, :type) == "conversation.llm.failed"))
 
     assert failed_count >= 2
 
@@ -1725,8 +1790,8 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
           message = "load-message #{project_id}/#{conversation_id}"
 
           :ok =
-            Runtime.send_event(project_id, conversation_id, %{
-              "type" => "user.message",
+            Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(project_id, conversation_id, %{
+              "type" => "conversation.user.message",
               "content" => message
             })
 
@@ -1741,15 +1806,15 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
 
     Enum.each(results, fn {:ok, {project_id, conversation_id, message}} ->
       assert {:ok, timeline} =
-               Runtime.get_projection(project_id, conversation_id, :timeline)
+               Runtime.conversation_projection(project_id, conversation_id, :timeline)
 
       user_messages =
         timeline
-        |> Enum.filter(&(map_lookup(&1, :type) == "user.message"))
+        |> Enum.filter(&(map_lookup(&1, :type) == "conversation.user.message"))
         |> Enum.map(&map_lookup(&1, :content))
 
       assert user_messages == [message]
-      assert Enum.any?(timeline, &(map_lookup(&1, :type) == "assistant.message"))
+      assert Enum.any?(timeline, &(map_lookup(&1, :type) == "conversation.assistant.message"))
     end)
   end
 
@@ -1898,7 +1963,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
   defp emit_redaction_probe(0), do: nil
 
   defp emit_redaction_probe(attempts) do
-    Telemetry.emit("tool.failed", %{
+    Telemetry.emit("conversation.tool.failed", %{
       project_id: "phase9-redaction",
       error: %{
         "api_key" => "sk-ABCDEF1234567890ABCDEF1234567890",

@@ -8,6 +8,7 @@ defmodule Jido.Code.Server.Benchmark.Phase9Harness do
   """
 
   alias Jido.Code.Server, as: Runtime
+  alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
   alias Jido.Code.Server.Project.Layout
 
   @default_project_count 3
@@ -273,8 +274,8 @@ defmodule Jido.Code.Server.Benchmark.Phase9Harness do
     started_at = System.monotonic_time(:millisecond)
 
     result =
-      Runtime.send_event(event.project_id, event.conversation_id, %{
-        "type" => "user.message",
+      send_signal(event.project_id, event.conversation_id, %{
+        "type" => "conversation.user.message",
         "content" => event.content
       })
 
@@ -314,7 +315,7 @@ defmodule Jido.Code.Server.Benchmark.Phase9Harness do
   end
 
   defp projection_failure(project_id, conversation_id, expected_messages) do
-    case Runtime.get_projection(project_id, conversation_id, :timeline) do
+    case Runtime.conversation_projection(project_id, conversation_id, :timeline) do
       {:ok, timeline} when is_list(timeline) ->
         actual = actual_benchmark_messages(timeline)
         missing = expected_messages -- actual
@@ -347,9 +348,17 @@ defmodule Jido.Code.Server.Benchmark.Phase9Harness do
 
   defp actual_benchmark_messages(timeline) do
     timeline
-    |> Enum.filter(&(map_lookup(&1, :type) == "user.message"))
+    |> Enum.filter(&(map_lookup(&1, :type) == "conversation.user.message"))
     |> Enum.map(&map_lookup(&1, :content))
     |> Enum.filter(&(is_binary(&1) and String.starts_with?(&1, @event_prefix)))
+  end
+
+  defp send_signal(project_id, conversation_id, raw_signal) do
+    with {:ok, signal} <- ConversationSignal.normalize(raw_signal),
+         {:ok, _snapshot} <-
+           Runtime.conversation_call(project_id, conversation_id, signal, 30_000) do
+      :ok
+    end
   end
 
   defp expected_messages_by_conversation(workload) do

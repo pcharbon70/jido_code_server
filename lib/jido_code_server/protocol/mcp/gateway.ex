@@ -64,9 +64,11 @@ defmodule Jido.Code.Server.Protocol.MCP.Gateway do
   def handle_call({:send_message, project_id, conversation_id, content, opts}, _from, state) do
     reply =
       with :ok <- ensure_protocol_access(project_id, "mcp", "message.send"),
-           :ok <- validate_content(content) do
-        event = message_event(content, opts)
-        Engine.send_event(project_id, conversation_id, event)
+           :ok <- validate_content(content),
+           {:ok, signal} <- message_signal(content, opts),
+           {:ok, _snapshot} <-
+             Engine.conversation_call(project_id, conversation_id, signal, 30_000) do
+        :ok
       end
 
     {:reply, reply, state}
@@ -99,17 +101,21 @@ defmodule Jido.Code.Server.Protocol.MCP.Gateway do
     end
   end
 
-  defp message_event(content, opts) do
+  defp message_signal(content, opts) do
     meta =
       opts
       |> Keyword.get(:meta, %{})
       |> Map.new()
       |> Map.put_new("protocol", "mcp")
 
-    %{
-      "type" => "user.message",
-      "content" => content,
-      "meta" => meta
-    }
+    signal =
+      Jido.Signal.new!(
+        "conversation.user.message",
+        %{"content" => content},
+        source: "/protocol/mcp",
+        extensions: meta
+      )
+
+    {:ok, signal}
   end
 end

@@ -20,7 +20,7 @@ defmodule Jido.Code.Server.Project.ConversationSupervisor do
 
   @spec start_conversation(GenServer.server(), keyword()) :: DynamicSupervisor.on_start_child()
   def start_conversation(supervisor, opts) do
-    DynamicSupervisor.start_child(supervisor, {Jido.Code.Server.Conversation.Server, opts})
+    DynamicSupervisor.start_child(supervisor, {Jido.Code.Server.Conversation.Agent, opts})
   end
 
   @spec stop_conversation(GenServer.server(), pid()) :: :ok | {:error, term()}

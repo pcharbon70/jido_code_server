@@ -60,6 +60,8 @@ defmodule Jido.Code.Server.Project.Policy do
           Keyword.get(opts, :outside_root_allowlist, Config.outside_root_allowlist()),
           root_path
         ),
+      subagent_templates_allowlist:
+        normalize_optional_string_list(Keyword.get(opts, :subagent_templates_allowlist)),
       recent_decisions: []
     }
 
@@ -128,6 +130,13 @@ defmodule Jido.Code.Server.Project.Policy do
     GenServer.call(server, {:authorize_tool, tool_name, args, meta, tool_safety, ctx})
   end
 
+  @spec authorize_subagent_spawn(GenServer.server(), String.t(), map()) ::
+          :ok | {:error, :denied}
+  def authorize_subagent_spawn(server, template_id, ctx)
+      when is_binary(template_id) and is_map(ctx) do
+    GenServer.call(server, {:authorize_subagent_spawn, template_id, ctx})
+  end
+
   @spec filter_tools(GenServer.server(), list(map())) :: list(map())
   def filter_tools(server, tool_specs) when is_list(tool_specs) do
     GenServer.call(server, {:filter_tools, tool_specs})
@@ -167,12 +176,32 @@ defmodule Jido.Code.Server.Project.Policy do
     {:reply, reply, store_decision(state, decision)}
   end
 
+  def handle_call({:authorize_subagent_spawn, template_id, ctx}, _from, state) do
+    reply =
+      if subagent_template_allowed?(state, template_id) do
+        :ok
+      else
+        Telemetry.emit("security.subagent.spawn_denied", %{
+          project_id: state.project_id || Map.get(ctx, :project_id),
+          conversation_id: Map.get(ctx, :conversation_id),
+          correlation_id: Map.get(ctx, :correlation_id),
+          template_id: template_id,
+          reason: :denied
+        })
+
+        {:error, :denied}
+      end
+
+    {:reply, reply, state}
+  end
+
   def handle_call({:filter_tools, tool_specs}, _from, state) do
     filtered =
       Enum.filter(tool_specs, fn spec ->
         spec_name = Map.get(spec, :name) || Map.get(spec, "name")
 
         is_binary(spec_name) and tool_allowed?(state, spec_name) and
+          subagent_tool_visible?(state, spec_name) and
           tool_visible_under_network_policy?(state, spec)
       end)
 
@@ -191,6 +220,7 @@ defmodule Jido.Code.Server.Project.Policy do
       sensitive_path_denylist: state.sensitive_path_denylist,
       sensitive_path_allowlist: state.sensitive_path_allowlist,
       outside_root_allowlist: state.outside_root_allowlist,
+      subagent_templates_allowlist: state.subagent_templates_allowlist,
       recent_decisions: state.recent_decisions
     }
 
@@ -395,6 +425,25 @@ defmodule Jido.Code.Server.Project.Policy do
       {:error, :denied}
     end
   end
+
+  defp subagent_template_allowed?(state, template_id) do
+    allowlist = state.subagent_templates_allowlist
+    is_nil(allowlist) or template_id in allowlist
+  end
+
+  defp subagent_tool_visible?(state, tool_name) when is_binary(tool_name) do
+    case subagent_tool_template_id(tool_name) do
+      nil -> true
+      template_id -> subagent_template_allowed?(state, template_id)
+    end
+  end
+
+  defp subagent_tool_visible?(_state, _tool_name), do: false
+
+  defp subagent_tool_template_id("agent.spawn." <> template_id) when template_id != "",
+    do: template_id
+
+  defp subagent_tool_template_id(_tool_name), do: nil
 
   defp network_allowed_with_reason(state, args, tool_safety) do
     if network_access_required?(tool_safety),
@@ -696,6 +745,19 @@ defmodule Jido.Code.Server.Project.Policy do
   end
 
   defp normalize_tool_set(_other), do: MapSet.new()
+
+  defp normalize_optional_string_list(nil), do: nil
+
+  defp normalize_optional_string_list(list) when is_list(list) do
+    list
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp normalize_optional_string_list(_other), do: nil
 
   defp normalize_network_policy(:allow), do: :allow
   defp normalize_network_policy("allow"), do: :allow

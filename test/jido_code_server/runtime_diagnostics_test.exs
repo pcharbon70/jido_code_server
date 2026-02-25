@@ -34,8 +34,8 @@ defmodule Jido.Code.Server.RuntimeDiagnosticsTest do
              Runtime.start_conversation(project_id, conversation_id: "diag-c1")
 
     assert :ok =
-             Runtime.send_event(project_id, "diag-c1", %{
-               "type" => "user.message",
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(project_id, "diag-c1", %{
+               "type" => "conversation.user.message",
                "content" => "hello"
              })
 
@@ -105,8 +105,8 @@ defmodule Jido.Code.Server.RuntimeDiagnosticsTest do
              Runtime.start_conversation(project_id, conversation_id: "errors-c1")
 
     assert :ok =
-             Runtime.send_event(project_id, "errors-c1", %{
-               "type" => "user.message",
+             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(project_id, "errors-c1", %{
+               "type" => "conversation.user.message",
                "content" => "run command",
                "llm" => %{
                  "tool_calls" => [%{"name" => "command.run.example_command", "args" => %{}}]

@@ -18,7 +18,7 @@ flowchart TD
     C -->|No| D["security.protocol_denied"]
     C -->|Yes| E{"Operation type"}
     E -->|Tool list or call| F["Engine.list_tools or Engine.run_tool"]
-    E -->|Conversation message| G["Engine.send_event"]
+    E -->|Conversation message| G["Engine.conversation_call"]
     E -->|Task lifecycle| H["Engine.start/stop/subscribe conversation"]
 ```
 

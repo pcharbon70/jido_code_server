@@ -95,12 +95,9 @@ defmodule Jido.Code.Server.Protocol.A2A.Gateway do
       with :ok <- ensure_protocol_access(project_id, "a2a", "task.create"),
            :ok <- validate_content(content),
            {:ok, conversation_id} <- Engine.start_conversation(project_id, start_opts(opts)),
-           :ok <-
-             Engine.send_event(
-               project_id,
-               conversation_id,
-               user_message_event(content, opts, "a2a.task.create")
-             ) do
+           {:ok, signal} <- user_message_signal(content, opts, "a2a.task.create"),
+           {:ok, _snapshot} <-
+             Engine.conversation_call(project_id, conversation_id, signal, 30_000) do
         {:ok,
          %{
            task_id: conversation_id,
@@ -116,12 +113,10 @@ defmodule Jido.Code.Server.Protocol.A2A.Gateway do
   def handle_call({:message_send, project_id, task_id, content, opts}, _from, state) do
     reply =
       with :ok <- ensure_protocol_access(project_id, "a2a", "message.send"),
-           :ok <- validate_content(content) do
-        Engine.send_event(
-          project_id,
-          task_id,
-          user_message_event(content, opts, "a2a.message.send")
-        )
+           :ok <- validate_content(content),
+           {:ok, signal} <- user_message_signal(content, opts, "a2a.message.send"),
+           {:ok, _snapshot} <- Engine.conversation_call(project_id, task_id, signal, 30_000) do
+        :ok
       end
 
     {:reply, reply, state}
@@ -131,15 +126,10 @@ defmodule Jido.Code.Server.Protocol.A2A.Gateway do
     reason = Keyword.get(opts, :reason, :cancelled)
 
     reply =
-      with :ok <- ensure_protocol_access(project_id, "a2a", "task.cancel") do
-        Engine.send_event(project_id, task_id, %{
-          "type" => "conversation.cancel",
-          "meta" => %{
-            "protocol" => "a2a",
-            "source" => "a2a.task.cancel",
-            "reason" => normalize_reason(reason)
-          }
-        })
+      with :ok <- ensure_protocol_access(project_id, "a2a", "task.cancel"),
+           {:ok, signal} <- task_cancel_signal(reason),
+           {:ok, _snapshot} <- Engine.conversation_call(project_id, task_id, signal, 30_000) do
+        :ok
       end
 
     {:reply, reply, state}
@@ -197,7 +187,7 @@ defmodule Jido.Code.Server.Protocol.A2A.Gateway do
     end
   end
 
-  defp user_message_event(content, opts, source) do
+  defp user_message_signal(content, opts, source) do
     meta =
       opts
       |> Keyword.get(:meta, %{})
@@ -205,11 +195,27 @@ defmodule Jido.Code.Server.Protocol.A2A.Gateway do
       |> Map.put_new("protocol", "a2a")
       |> Map.put_new("source", source)
 
-    %{
-      "type" => "user.message",
-      "content" => content,
-      "meta" => meta
-    }
+    signal =
+      Jido.Signal.new!(
+        "conversation.user.message",
+        %{"content" => content},
+        source: "/protocol/a2a",
+        extensions: meta
+      )
+
+    {:ok, signal}
+  end
+
+  defp task_cancel_signal(reason) do
+    signal =
+      Jido.Signal.new!(
+        "conversation.cancel",
+        %{"reason" => normalize_reason(reason)},
+        source: "/protocol/a2a",
+        extensions: %{"protocol" => "a2a", "source" => "a2a.task.cancel"}
+      )
+
+    {:ok, signal}
   end
 
   defp normalize_reason(reason) when is_binary(reason), do: reason
