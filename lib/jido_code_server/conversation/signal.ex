@@ -50,7 +50,7 @@ defmodule Jido.Code.Server.Conversation.Signal do
       "source" => signal.source,
       "time" => signal.time,
       "data" => data,
-      "extensions" => signal.extensions || %{}
+      "extensions" => signal.extensions
     }
 
     base
