@@ -14,16 +14,20 @@ defmodule Jido.Code.Server.Project.ToolActionBridge do
   @bridge_tags ["tool", "jido_code_server", "tool_runner_bridge"]
 
   @type tool_name :: String.t()
-  @type action_registry :: %{tool_name() => module()}
+  @type action_name :: String.t()
+  @type action_registry :: %{action_name() => module()}
 
   @doc """
-  Builds a tool-name => action-module registry for a started project.
+  Builds an action-name => action-module registry for a started project.
   """
   @spec action_registry(String.t()) :: {:ok, action_registry()}
   def action_registry(project_id) when is_binary(project_id) do
-    project_id
-    |> Runtime.list_tools()
-    |> build_registry_for_specs(project_id)
+    with {:ok, registry, _tool_name_by_action} <-
+           project_id
+           |> Runtime.list_tools()
+           |> build_registry_for_specs(project_id) do
+      {:ok, registry}
+    end
   end
 
   @doc """
@@ -36,12 +40,18 @@ defmodule Jido.Code.Server.Project.ToolActionBridge do
   """
   @spec tool_calling_context(String.t(), keyword()) :: {:ok, map()}
   def tool_calling_context(project_id, opts \\ []) when is_binary(project_id) and is_list(opts) do
-    with {:ok, tools} <- action_registry(project_id) do
+    with {:ok, tools, tool_name_by_action} <-
+           project_id
+           |> Runtime.list_tools()
+           |> build_registry_for_specs(project_id) do
       base = %{
         project_id: project_id,
         tools: tools,
         tool_calling: %{tools: tools},
-        jido_code_server: %{project_id: project_id}
+        jido_code_server: %{
+          project_id: project_id,
+          tool_name_by_action: tool_name_by_action
+        }
       }
 
       context =
@@ -92,31 +102,36 @@ defmodule Jido.Code.Server.Project.ToolActionBridge do
 
   defp build_registry_for_specs(tool_specs, project_id) when is_list(tool_specs) do
     tool_specs
-    |> Enum.reduce({:ok, %{}}, fn spec, {:ok, acc} ->
+    |> Enum.reduce({:ok, %{}, %{}}, fn spec, {:ok, action_registry, tool_name_by_action} ->
       with {:ok, tool_name} <- fetch_tool_name(spec),
            {:ok, description} <- fetch_tool_description(spec),
-           {:ok, module_name} <- ensure_action_module(project_id, tool_name, description) do
-        {:ok, Map.put(acc, tool_name, module_name)}
+           action_name <- action_name_for_tool(tool_name),
+           {:ok, module_name} <-
+             ensure_action_module(project_id, tool_name, action_name, description) do
+        {:ok, Map.put(action_registry, action_name, module_name),
+         Map.put(tool_name_by_action, action_name, tool_name)}
       else
         {:error, _reason} ->
-          {:ok, acc}
+          {:ok, action_registry, tool_name_by_action}
       end
     end)
   end
 
-  defp ensure_action_module(project_id, tool_name, description)
-       when is_binary(project_id) and is_binary(tool_name) and is_binary(description) do
+  defp ensure_action_module(project_id, tool_name, action_name, description)
+       when is_binary(project_id) and is_binary(tool_name) and is_binary(action_name) and
+              is_binary(description) do
     module_name = generated_module_name(project_id, tool_name)
 
     if Code.ensure_loaded?(module_name) do
       {:ok, module_name}
     else
-      define_action_module(module_name, tool_name, description)
+      define_action_module(module_name, tool_name, action_name, description)
     end
   end
 
-  defp define_action_module(module_name, tool_name, description) when is_atom(module_name) do
-    quoted = generated_action_ast(tool_name, description)
+  defp define_action_module(module_name, tool_name, action_name, description)
+       when is_atom(module_name) do
+    quoted = generated_action_ast(tool_name, action_name, description)
 
     try do
       Module.create(module_name, quoted, Macro.Env.location(__ENV__))
@@ -131,63 +146,34 @@ defmodule Jido.Code.Server.Project.ToolActionBridge do
     end
   end
 
-  defp generated_action_ast(tool_name, description)
-       when is_binary(tool_name) and is_binary(description) do
+  defp generated_action_ast(tool_name, action_name, description)
+       when is_binary(tool_name) and is_binary(action_name) and is_binary(description) do
     bridge_module = __MODULE__
 
     quote do
-      unquote(generated_action_attributes_ast(tool_name, description, bridge_module))
-      unquote(generated_action_metadata_ast())
-      unquote(generated_action_validation_ast())
-      unquote(generated_action_run_ast())
+      use Jido.Action,
+        name: unquote(action_name),
+        description: unquote(description),
+        category: "jido_code_server",
+        tags: unquote(@bridge_tags),
+        schema: []
+
+      unquote(generated_action_runtime_ast(tool_name, bridge_module))
     end
   end
 
-  defp generated_action_attributes_ast(tool_name, description, bridge_module) do
+  defp generated_action_runtime_ast(tool_name, bridge_module) do
     quote do
       @moduledoc false
       @tool_name unquote(tool_name)
-      @tool_description unquote(description)
-      @tool_schema []
       @bridge_module unquote(bridge_module)
-    end
-  end
 
-  defp generated_action_metadata_ast do
-    quote do
-      def __action_metadata__ do
-        %{
-          name: @tool_name,
-          description: @tool_description,
-          category: "jido_code_server",
-          tags: unquote(@bridge_tags),
-          vsn: "1.0.0",
-          schema: @tool_schema,
-          output_schema: []
-        }
-      end
-
-      def name, do: @tool_name
-      def description, do: @tool_description
-      def schema, do: @tool_schema
-      def strict?, do: false
-    end
-  end
-
-  defp generated_action_validation_ast do
-    quote do
-      def validate_params(params) when is_map(params), do: {:ok, params}
-      def validate_params(_), do: {:error, :invalid_tool_params}
-    end
-  end
-
-  defp generated_action_run_ast do
-    quote do
-      def run(params, context)
-          when is_map(params) and is_map(context) do
+      @impl true
+      def run(params, context) when is_map(params) and is_map(context) do
         @bridge_module.execute_from_action(@tool_name, params, context)
       end
 
+      @impl true
       def run(_params, _context), do: {:error, :invalid_tool_call}
     end
   end
@@ -201,6 +187,34 @@ defmodule Jido.Code.Server.Project.ToolActionBridge do
       |> binary_part(0, 16)
 
     Module.concat([@generated_root, "M#{hash}"])
+  end
+
+  defp action_name_for_tool(tool_name) when is_binary(tool_name) do
+    normalized_base =
+      tool_name
+      |> String.downcase()
+      |> String.replace(~r/[^a-z0-9]+/u, "_")
+      |> String.trim("_")
+      |> ensure_starts_with_letter()
+      |> String.slice(0, 48)
+
+    suffix =
+      :sha256
+      |> :crypto.hash(tool_name)
+      |> Base.encode16(case: :lower)
+      |> binary_part(0, 8)
+
+    "jcs_#{normalized_base}_#{suffix}"
+  end
+
+  defp ensure_starts_with_letter(""), do: "tool"
+
+  defp ensure_starts_with_letter(value) when is_binary(value) do
+    if Regex.match?(~r/^[a-z]/, value) do
+      value
+    else
+      "t_#{value}"
+    end
   end
 
   defp fetch_tool_name(%{} = spec) do

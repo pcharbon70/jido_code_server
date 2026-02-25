@@ -33,11 +33,15 @@ defmodule Jido.Code.Server.ToolActionBridgeTest do
       |> Enum.map(& &1.name)
       |> MapSet.new()
 
-    assert MapSet.new(Map.keys(registry)) == runtime_tool_names
+    assert map_size(registry) == MapSet.size(runtime_tool_names)
 
-    assert is_atom(registry["asset.list"])
-    assert registry["asset.list"].name() == "asset.list"
-    assert is_binary(registry["asset.list"].description())
+    assert Enum.all?(Map.keys(registry), fn action_name ->
+             Regex.match?(~r/^[a-zA-Z][a-zA-Z0-9_]*$/, action_name)
+           end)
+
+    assert Enum.all?(registry, fn {action_name, module} ->
+             is_atom(module) and module.name() == action_name
+           end)
   end
 
   test "tool_calling_context works with Jido.AI ExecuteTool and preserves tool metadata" do
@@ -56,14 +60,27 @@ defmodule Jido.Code.Server.ToolActionBridgeTest do
                correlation_id: "bridge-corr"
              )
 
-    assert {:ok, %{tool_name: "asset.list", status: :success, result: result}} =
+    tool_name_by_action =
+      context
+      |> Map.fetch!(:jido_code_server)
+      |> Map.fetch!(:tool_name_by_action)
+
+    action_name =
+      Enum.find_value(tool_name_by_action, fn {candidate_action_name, candidate_tool_name} ->
+        if candidate_tool_name == "asset.list", do: candidate_action_name
+      end)
+
+    assert is_binary(action_name)
+
+    assert {:ok, %{tool_name: resolved_action_name, status: :success, result: result}} =
              Jido.Exec.run(
                Jido.AI.Actions.ToolCalling.ExecuteTool,
-               %{tool_name: "asset.list", params: %{"type" => "skill"}},
+               %{tool_name: action_name, params: %{"type" => "skill"}},
                context,
                log_level: :error
              )
 
+    assert resolved_action_name == action_name
     assert result.status == :ok
     assert result.tool == "asset.list"
     assert result.conversation_id == "bridge-c1"
