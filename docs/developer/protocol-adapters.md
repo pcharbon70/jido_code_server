@@ -44,6 +44,10 @@ Each operation checks project protocol access via `Engine.protocol_allowed?/2`.
 
 A2A task IDs map directly to conversation IDs.
 
+Task subscriptions are passthrough conversation subscriptions, so subscribers receive canonical
+conversation signals (`{:conversation_signal, conversation_id, signal_map}`) rather than legacy
+event-translated payloads.
+
 ## Project-Scoped MCP Server
 
 `Protocol.MCP.ProjectServer` is a per-project wrapper delegating to the global MCP gateway logic.

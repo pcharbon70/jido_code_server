@@ -24,16 +24,6 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     end
   end
 
-  defmodule ArtifactProbeExecutor do
-    @behaviour JidoCommand.Extensibility.CommandRuntime
-
-    @impl true
-    def execute(_definition, _prompt, _params, _context) do
-      {:ok,
-       %{"artifacts" => [%{"type" => "text/plain", "content" => String.duplicate("A", 256)}]}}
-    end
-  end
-
   setup do
     Telemetry.reset()
 
@@ -1827,6 +1817,18 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
       - asset.list
     ---
     Execute path={{path}} query={{query}}
+    """
+  end
+
+  defp valid_workspace_sleep_command_markdown do
+    """
+    ---
+    name: example_command
+    description: Workspace shell sleep fixture for cancellation tests
+    allowed-tools:
+      - asset.list
+    ---
+    sleep 10
     """
   end
 
