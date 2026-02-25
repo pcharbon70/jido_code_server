@@ -339,8 +339,19 @@ defmodule Jido.Code.Server.Project.Server do
   def handle_call({:conversation_cast, conversation_id, signal}, _from, state) do
     reply =
       case fetch_conversation_pid(state, conversation_id) do
-        {:ok, pid} -> ConversationAgent.cast(pid, signal)
-        {:error, reason} -> {:error, reason}
+        {:ok, pid} ->
+          case ConversationAgent.cast(pid, signal) do
+            :ok ->
+              emit_conversation_ingested(state.project_id, conversation_id, signal)
+              send(self(), {:conversation_cast_dispatched, conversation_id})
+              :ok
+
+            {:error, _reason} = error ->
+              error
+          end
+
+        {:error, reason} ->
+          {:error, reason}
       end
 
     {:reply, reply, state}
@@ -499,6 +510,11 @@ defmodule Jido.Code.Server.Project.Server do
   end
 
   @impl true
+  def handle_info({:conversation_cast_dispatched, conversation_id}, state) do
+    {state, _delivered_count} = maybe_notify_subscribers_after_call(state, conversation_id)
+    {:noreply, state}
+  end
+
   def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
     {conversation_id, conversations} = pop_by_monitor_ref(state.conversations, ref, pid)
 
