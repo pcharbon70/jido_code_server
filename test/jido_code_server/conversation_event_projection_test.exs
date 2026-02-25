@@ -5,6 +5,7 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
 
   alias Jido.Code.Server.Conversation.Agent, as: ConversationAgent
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
+  alias Jido.Code.Server.TestSupport.RuntimeSignal
   alias Jido.Code.Server.TestSupport.TempProject
 
   setup do
@@ -51,10 +52,10 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
 
     Enum.each(events, fn event ->
       assert :ok =
-               Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(project_id, "c-a", event)
+               RuntimeSignal.send_signal(project_id, "c-a", event)
 
       assert :ok =
-               Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(project_id, "c-b", event)
+               RuntimeSignal.send_signal(project_id, "c-b", event)
     end)
 
     assert {:ok, timeline_a} = Runtime.conversation_projection(project_id, "c-a", :timeline)
@@ -84,7 +85,7 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
     assert :ok = Runtime.subscribe_conversation(project_id, "sub-c", self())
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(project_id, "sub-c", %{
+             RuntimeSignal.send_signal(project_id, "sub-c", %{
                "type" => "conversation.user.message",
                "content" => "one"
              })
@@ -95,7 +96,7 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
     assert :ok = Runtime.unsubscribe_conversation(project_id, "sub-c", self())
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(project_id, "sub-c", %{
+             RuntimeSignal.send_signal(project_id, "sub-c", %{
                "type" => "conversation.user.message",
                "content" => "two"
              })
@@ -113,7 +114,7 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
              Runtime.start_conversation(project_id, conversation_id: "restart-c")
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(project_id, "restart-c", %{
+             RuntimeSignal.send_signal(project_id, "restart-c", %{
                "type" => "conversation.user.message",
                "content" => "before"
              })

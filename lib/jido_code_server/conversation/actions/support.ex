@@ -2,14 +2,14 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
   @moduledoc false
 
   alias Jido.Agent.Directive
+  alias Jido.Code.Server.Conversation.Actions.HandleInstructionResultAction
   alias Jido.Code.Server.Conversation.Domain.Reducer
   alias Jido.Code.Server.Conversation.Domain.State
-  alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
-  alias Jido.Code.Server.Conversation.Actions.HandleInstructionResultAction
   alias Jido.Code.Server.Conversation.Instructions.CancelPendingToolsInstruction
   alias Jido.Code.Server.Conversation.Instructions.CancelSubagentsInstruction
   alias Jido.Code.Server.Conversation.Instructions.RunLLMInstruction
   alias Jido.Code.Server.Conversation.Instructions.RunToolInstruction
+  alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
 
   @spec current_state(map()) :: {:ok, map()} | {:error, term()}
   def current_state(context) when is_map(context) do

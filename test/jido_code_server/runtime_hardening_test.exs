@@ -9,20 +9,11 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
   alias Jido.Code.Server.Project.Policy
   alias Jido.Code.Server.Project.ToolRunner
   alias Jido.Code.Server.Telemetry
+  alias Jido.Code.Server.TestSupport.RuntimeSignal
   alias Jido.Code.Server.TestSupport.TempProject
 
   @pending_task_table Module.concat(Jido.Code.Server.Conversation.ToolBridge, PendingTasks)
   @child_process_table Module.concat(Jido.Code.Server.Project.ToolRunner, ChildProcesses)
-
-  defmodule ArtifactProbeExecutor do
-    @behaviour JidoCommand.Extensibility.CommandRuntime
-
-    @impl true
-    def execute(_definition, _prompt, _params, _context) do
-      {:ok,
-       %{"artifacts" => [%{"type" => "text/plain", "content" => String.duplicate("A", 256)}]}}
-    end
-  end
 
   defmodule ArtifactProbeExecutor do
     @behaviour JidoCommand.Extensibility.CommandRuntime
@@ -143,7 +134,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              Runtime.start_conversation(project_id, conversation_id: "phase9-corr-c1")
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase9-corr-c1",
                %{
@@ -209,7 +200,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              Runtime.start_conversation(project_id, conversation_id: "phase9-corr-c2")
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase9-corr-c2",
                %{
@@ -252,7 +243,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              Runtime.start_conversation(project_id, conversation_id: "phase9-incident-c1")
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase9-incident-c1",
                %{
@@ -539,7 +530,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              Runtime.start_conversation(project_id, conversation_id: "phase9-cancel-c1")
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase9-cancel-c1",
                %{
@@ -548,7 +539,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              )
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase9-cancel-c1",
                %{
@@ -568,7 +559,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     correlation_id = "corr-phase9-cancel-c1"
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase9-cancel-c1",
                %{
@@ -613,7 +604,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              Runtime.start_conversation(project_id, conversation_id: "phase9-async-c1")
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase9-async-c1",
                %{
@@ -672,7 +663,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              Runtime.start_conversation(project_id, conversation_id: "phase9-async-c2")
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase9-async-c2",
                %{
@@ -700,7 +691,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     :ok = ToolRunner.register_child_process(pending_task_pid, child_pid)
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase9-async-c2",
                %{
@@ -756,7 +747,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              Runtime.start_conversation(project_id, conversation_id: "phase9-workspace-child-c1")
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase9-workspace-child-c1",
                %{
@@ -776,7 +767,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     end)
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase9-workspace-child-c1",
                %{
@@ -1689,7 +1680,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              Runtime.start_conversation(project_id, conversation_id: "phase9-llm-c1")
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase9-llm-c1",
                %{
@@ -1699,7 +1690,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              )
 
     assert :ok =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(
+             RuntimeSignal.send_signal(
                project_id,
                "phase9-llm-c1",
                %{
@@ -1790,7 +1781,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
           message = "load-message #{project_id}/#{conversation_id}"
 
           :ok =
-            Jido.Code.Server.TestSupport.RuntimeSignal.send_signal(project_id, conversation_id, %{
+            RuntimeSignal.send_signal(project_id, conversation_id, %{
               "type" => "conversation.user.message",
               "content" => message
             })
@@ -1827,6 +1818,18 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
       - asset.list
     ---
     Execute path={{path}} query={{query}}
+    """
+  end
+
+  defp valid_workspace_sleep_command_markdown do
+    """
+    ---
+    name: example_command
+    description: Workspace shell sleep fixture for cancellation tests
+    allowed-tools:
+      - asset.list
+    ---
+    sleep 10
     """
   end
 

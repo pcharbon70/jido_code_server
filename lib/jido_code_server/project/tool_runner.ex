@@ -231,39 +231,40 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     end
   end
 
-  defp execute_tool(project_ctx, spec, call) do
-    case spec.kind do
-      :asset_list ->
-        type = fetch_string_arg(call.args, "type")
-        {:ok, %{items: AssetStore.list(project_ctx.asset_store, type)}}
+  defp execute_tool(project_ctx, %{kind: :asset_list}, call) do
+    type = fetch_string_arg(call.args, "type")
+    {:ok, %{items: AssetStore.list(project_ctx.asset_store, type)}}
+  end
 
-      :asset_search ->
-        type = fetch_string_arg(call.args, "type")
-        query = fetch_string_arg(call.args, "query")
-        {:ok, %{items: AssetStore.search(project_ctx.asset_store, type, query)}}
+  defp execute_tool(project_ctx, %{kind: :asset_search}, call) do
+    type = fetch_string_arg(call.args, "type")
+    query = fetch_string_arg(call.args, "query")
+    {:ok, %{items: AssetStore.search(project_ctx.asset_store, type, query)}}
+  end
 
-      :asset_get ->
-        type = fetch_string_arg(call.args, "type")
-        key = fetch_string_arg(call.args, "key")
+  defp execute_tool(project_ctx, %{kind: :asset_get}, call) do
+    type = fetch_string_arg(call.args, "type")
+    key = fetch_string_arg(call.args, "key")
 
-        case AssetStore.get(project_ctx.asset_store, type, key) do
-          {:ok, asset} -> {:ok, %{asset: asset}}
-          :error -> {:error, :asset_not_found}
-        end
-
-      :command_run ->
-        run_asset_tool(project_ctx, :command, spec.asset_name, call)
-
-      :workflow_run ->
-        run_asset_tool(project_ctx, :workflow, spec.asset_name, call)
-
-      :subagent_spawn ->
-        spawn_subagent_tool(project_ctx, spec, call)
-
-      _other ->
-        {:error, :unsupported_tool}
+    case AssetStore.get(project_ctx.asset_store, type, key) do
+      {:ok, asset} -> {:ok, %{asset: asset}}
+      :error -> {:error, :asset_not_found}
     end
   end
+
+  defp execute_tool(project_ctx, %{kind: :command_run, asset_name: asset_name}, call) do
+    run_asset_tool(project_ctx, :command, asset_name, call)
+  end
+
+  defp execute_tool(project_ctx, %{kind: :workflow_run, asset_name: asset_name}, call) do
+    run_asset_tool(project_ctx, :workflow, asset_name, call)
+  end
+
+  defp execute_tool(project_ctx, %{kind: :subagent_spawn} = spec, call) do
+    spawn_subagent_tool(project_ctx, spec, call)
+  end
+
+  defp execute_tool(_project_ctx, _spec, _call), do: {:error, :unsupported_tool}
 
   defp spawn_subagent_tool(project_ctx, spec, call) do
     template = Map.get(spec, :template) || %{}
@@ -309,27 +310,33 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     inputs = map_get_value(args, "inputs")
     ttl_ms = map_get_value(args, "ttl_ms")
 
-    cond do
-      not is_binary(goal) or String.trim(goal) == "" ->
-        {:error, :invalid_spawn_goal}
-
-      not is_nil(inputs) and not is_map(inputs) ->
-        {:error, :invalid_spawn_inputs}
-
-      not is_nil(ttl_ms) and (not is_integer(ttl_ms) or ttl_ms <= 0) ->
-        {:error, :invalid_spawn_ttl}
-
-      true ->
-        {:ok,
-         %{
-           "goal" => goal,
-           "inputs" => if(is_map(inputs), do: inputs, else: %{}),
-           "ttl_ms" => bounded_ttl(ttl_ms, template)
-         }}
+    with :ok <- validate_spawn_goal(goal),
+         :ok <- validate_spawn_inputs(inputs),
+         :ok <- validate_spawn_ttl(ttl_ms) do
+      {:ok,
+       %{
+         "goal" => goal,
+         "inputs" => if(is_map(inputs), do: inputs, else: %{}),
+         "ttl_ms" => bounded_ttl(ttl_ms, template)
+       }}
     end
   end
 
   defp subagent_spawn_request(_args, _template), do: {:error, :invalid_spawn_request}
+
+  defp validate_spawn_goal(goal) when is_binary(goal) do
+    if String.trim(goal) == "", do: {:error, :invalid_spawn_goal}, else: :ok
+  end
+
+  defp validate_spawn_goal(_goal), do: {:error, :invalid_spawn_goal}
+
+  defp validate_spawn_inputs(nil), do: :ok
+  defp validate_spawn_inputs(inputs) when is_map(inputs), do: :ok
+  defp validate_spawn_inputs(_inputs), do: {:error, :invalid_spawn_inputs}
+
+  defp validate_spawn_ttl(nil), do: :ok
+  defp validate_spawn_ttl(ttl_ms) when is_integer(ttl_ms) and ttl_ms > 0, do: :ok
+  defp validate_spawn_ttl(_ttl_ms), do: {:error, :invalid_spawn_ttl}
 
   defp bounded_ttl(nil, template) do
     Map.get(template, :ttl_ms) || 300_000

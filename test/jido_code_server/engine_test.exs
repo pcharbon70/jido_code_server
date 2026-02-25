@@ -4,6 +4,7 @@ defmodule Jido.Code.Server.EngineTest do
   alias Jido.Code.Server, as: Runtime
 
   alias Jido.Code.Server.Engine
+  alias Jido.Code.Server.TestSupport.RuntimeSignal
   alias Jido.Code.Server.TestSupport.TempProject
 
   setup do
@@ -201,7 +202,7 @@ defmodule Jido.Code.Server.EngineTest do
              Runtime.stop_conversation("missing-project", "c1")
 
     assert {:error, {:project_not_found, "missing-project"}} =
-             Jido.Code.Server.TestSupport.RuntimeSignal.send_signal("missing-project", "c1", %{
+             RuntimeSignal.send_signal("missing-project", "c1", %{
                "type" => "conversation.user.message"
              })
 

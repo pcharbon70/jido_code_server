@@ -7,9 +7,9 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunToolInstruction do
     name: "jido_code_server_conversation_run_tool_instruction",
     schema: []
 
-  alias Jido.Code.Server.Correlation
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
   alias Jido.Code.Server.Conversation.ToolBridge
+  alias Jido.Code.Server.Correlation
 
   @impl true
   def run(params, context) when is_map(params) and is_map(context) do
@@ -39,30 +39,28 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunToolInstruction do
     normalized = normalize_string_map(raw_call)
     name = map_get(normalized, "name")
 
-    cond do
-      not is_binary(name) or String.trim(name) == "" ->
-        {:error, :invalid_tool_call_name}
+    if not is_binary(name) or String.trim(name) == "" do
+      {:error, :invalid_tool_call_name}
+    else
+      incoming_correlation_id = map_get(normalized, "correlation_id")
 
-      true ->
-        incoming_correlation_id = map_get(normalized, "correlation_id")
+      meta =
+        normalize_string_map(map_get(normalized, "meta") || %{})
+        |> maybe_put_correlation(incoming_correlation_id)
 
-        meta =
-          normalize_string_map(map_get(normalized, "meta") || %{})
-          |> maybe_put_correlation(incoming_correlation_id)
+      {correlation_id, meta} = Correlation.ensure(meta)
 
-        {correlation_id, meta} = Correlation.ensure(meta)
+      meta =
+        meta
+        |> Map.put_new("conversation_id", conversation_id)
+        |> Map.put_new("correlation_id", correlation_id)
 
-        meta =
-          meta
-          |> Map.put_new("conversation_id", conversation_id)
-          |> Map.put_new("correlation_id", correlation_id)
-
-        {:ok,
-         %{
-           name: name,
-           args: normalize_string_map(map_get(normalized, "args") || %{}),
-           meta: meta
-         }}
+      {:ok,
+       %{
+         name: name,
+         args: normalize_string_map(map_get(normalized, "args") || %{}),
+         meta: meta
+       }}
     end
   end
 
@@ -91,16 +89,16 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunToolInstruction do
     end
   end
 
-  defp subagent_requested_signals(_tool_call, _conversation_id), do: []
-
   defp events_to_signal_maps(event, conversation_id) when is_map(event) do
     event = normalize_string_map(event)
 
-    with {:ok, signal} <- ConversationSignal.normalize(event) do
-      base = [ConversationSignal.to_map(signal)]
-      base ++ maybe_subagent_signal(event, conversation_id)
-    else
-      _ -> []
+    case ConversationSignal.normalize(event) do
+      {:ok, signal} ->
+        base = [ConversationSignal.to_map(signal)]
+        base ++ maybe_subagent_signal(event, conversation_id)
+
+      _ ->
+        []
     end
   end
 
