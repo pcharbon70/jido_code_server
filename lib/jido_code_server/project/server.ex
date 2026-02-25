@@ -760,7 +760,7 @@ defmodule Jido.Code.Server.Project.Server do
         ConversationAgent.projection(pid, :timeline)
 
       {:error, {:conversation_not_found, ^conversation_id}} ->
-        timeline = JournalBridge.timeline(state.project_id, conversation_id)
+        timeline = JournalBridge.events(state.project_id, conversation_id)
 
         if timeline == [] do
           {:error, {:conversation_not_found, conversation_id}}

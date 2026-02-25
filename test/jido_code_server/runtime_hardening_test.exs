@@ -346,6 +346,74 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
            end)
   end
 
+  test "incident timeline correlation filters still work after conversation stop with canonical history" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+    correlation_id = "corr-phase9-incident-stopped-filter-c1"
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-incident-stopped-filter",
+               conversation_orchestration: true,
+               llm_adapter: :deterministic
+             )
+
+    assert {:ok, "phase9-incident-stopped-filter-c1"} =
+             Runtime.start_conversation(project_id,
+               conversation_id: "phase9-incident-stopped-filter-c1"
+             )
+
+    assert :ok =
+             RuntimeSignal.send_signal(
+               project_id,
+               "phase9-incident-stopped-filter-c1",
+               %{
+                 "type" => "conversation.user.message",
+                 "content" => "preserve correlation",
+                 "meta" => %{"correlation_id" => correlation_id}
+               }
+             )
+
+    assert_eventually(fn ->
+      case Runtime.conversation_projection(
+             project_id,
+             "phase9-incident-stopped-filter-c1",
+             :canonical_timeline
+           ) do
+        {:ok, timeline} ->
+          Enum.any?(timeline, fn entry ->
+            map_lookup(entry, :type) == "conv.in.message.received"
+          end)
+
+        _ ->
+          false
+      end
+    end)
+
+    assert :ok = Runtime.stop_conversation(project_id, "phase9-incident-stopped-filter-c1")
+
+    assert {:ok, timeline} =
+             Runtime.incident_timeline(project_id, "phase9-incident-stopped-filter-c1",
+               correlation_id: correlation_id,
+               limit: 50
+             )
+
+    assert timeline.project_id == project_id
+    assert timeline.conversation_id == "phase9-incident-stopped-filter-c1"
+    assert timeline.correlation_id == correlation_id
+    assert timeline.total_entries >= length(timeline.entries)
+    assert timeline.entries != []
+
+    assert Enum.all?(timeline.entries, fn entry ->
+             entry.conversation_id == "phase9-incident-stopped-filter-c1" and
+               entry.correlation_id == correlation_id
+           end)
+
+    assert Enum.any?(timeline.entries, fn entry ->
+             entry.source == :conversation and entry.event == "conv.in.message.received"
+           end)
+  end
+
   test "incident timeline API returns conversation-not-found error for unknown conversation" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
