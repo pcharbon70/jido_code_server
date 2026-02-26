@@ -1044,7 +1044,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
 
     diagnostics = Runtime.diagnostics(project_id)
     assert event_count(diagnostics, "conversation.tool.cancelled") >= 1
-    assert event_count(diagnostics, "tool.child_processes_terminated") >= 1
+    assert event_count(diagnostics, "conversation.tool.child_processes_terminated") >= 1
   end
 
   test "workspace executor sessions are tracked as child processes for async cancellation" do
@@ -1108,7 +1108,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     end)
 
     diagnostics = Runtime.diagnostics(project_id)
-    assert event_count(diagnostics, "tool.child_processes_terminated") >= 1
+    assert event_count(diagnostics, "conversation.tool.child_processes_terminated") >= 1
   end
 
   test "workspace executor sessions are terminated on timeout without manual PID registration" do
@@ -1145,7 +1145,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     end)
 
     diagnostics = %{telemetry: Telemetry.snapshot("phase9-workspace-timeout-cleanup")}
-    assert event_count(diagnostics, "tool.child_processes_terminated") >= 1
+    assert event_count(diagnostics, "conversation.tool.child_processes_terminated") >= 1
   end
 
   test "tool runner prunes dead child registrations after successful execution" do
@@ -1784,7 +1784,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              ToolRunner.run(project_ctx, %{name: "asset.list", args: %{"type" => "skill"}})
 
     diagnostics = %{telemetry: Telemetry.snapshot("phase9-timeout")}
-    assert event_count(diagnostics, "tool.timeout") >= 2
+    assert event_count(diagnostics, "conversation.tool.timeout") >= 2
     assert event_count(diagnostics, "security.repeated_timeout_failures") >= 1
   end
 
@@ -1813,7 +1813,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert_eventually(fn -> not Process.alive?(child_pid) end)
 
     diagnostics = %{telemetry: Telemetry.snapshot("phase9-timeout-child-termination")}
-    assert event_count(diagnostics, "tool.child_processes_terminated") >= 1
+    assert event_count(diagnostics, "conversation.tool.child_processes_terminated") >= 1
   end
 
   test "project runtime options tune tool guardrails" do
@@ -1887,7 +1887,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
 
     assert_eventually(fn ->
       diagnostics = %{telemetry: Telemetry.snapshot("phase9-project-cap")}
-      event_count(diagnostics, "tool.started") >= 1
+      event_count(diagnostics, "conversation.tool.started") >= 1
     end)
 
     assert {:error, %{status: :error, reason: :max_concurrency_reached}} =

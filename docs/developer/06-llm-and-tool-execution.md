@@ -37,7 +37,7 @@ sequenceDiagram
     TR->>P: authorize_tool
     P-->>TR: allow or deny
     TR-->>TB: result or error
-    TB-->>Conv: tool.completed or tool.failed signal
+    TB-->>Conv: conversation.tool.completed or conversation.tool.failed signal
 ```
 
 ## Tool Catalog Composition
@@ -75,7 +75,7 @@ After execution:
 
 - output and artifact size enforcement
 - sensitive artifact scanning
-- telemetry emission (`tool.started`, `tool.completed`, `tool.failed`, timeout/security events)
+- telemetry emission (`conversation.tool.started`, `conversation.tool.completed`, `conversation.tool.failed`, timeout/security events)
 
 ## Jido Tool Calling Integration
 

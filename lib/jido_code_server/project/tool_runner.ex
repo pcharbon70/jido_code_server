@@ -894,7 +894,7 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   end
 
   defp emit_started(project_ctx, call, spec) do
-    Telemetry.emit("tool.started", %{
+    Telemetry.emit("conversation.tool.started", %{
       project_id: project_ctx.project_id,
       conversation_id: conversation_id_from_call(call),
       correlation_id: correlation_id_from_call(call),
@@ -1354,7 +1354,7 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     conversation_id = conversation_id_from_call(tool_call)
     correlation_id = correlation_id_from_call(tool_call)
 
-    Telemetry.emit("tool.timeout", %{
+    Telemetry.emit("conversation.tool.timeout", %{
       project_id: project_ctx.project_id,
       conversation_id: conversation_id,
       correlation_id: correlation_id,
@@ -1378,7 +1378,7 @@ defmodule Jido.Code.Server.Project.ToolRunner do
 
   defp maybe_emit_child_process_termination(project_ctx, tool_call, reason, terminated_count)
        when is_map(project_ctx) and is_integer(terminated_count) and terminated_count > 0 do
-    Telemetry.emit("tool.child_processes_terminated", %{
+    Telemetry.emit("conversation.tool.child_processes_terminated", %{
       project_id: project_ctx.project_id,
       conversation_id: conversation_id_from_call(tool_call),
       correlation_id: correlation_id_from_call(tool_call),

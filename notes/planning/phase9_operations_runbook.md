@@ -39,17 +39,17 @@
 
 ### Tool execution
 
-- `tool.failed`:
+- `conversation.tool.failed`:
   - alert when sustained failure ratio exceeds 5% over 5 minutes.
   - if reason is `conversation_max_concurrency_reached`, treat as conversation-level saturation and tune `tool_max_concurrency_per_conversation` as needed.
   - if reason contains `invalid_tool_args`, inspect nested schema-path failures (`params.*`, `inputs.*`) and align caller payload shape with published tool `input_schema`.
   - if reason contains `workspace_command_failed`, inspect `command_executor` configuration (`workspace_shell` alias/module) and command prompt compatibility with workspace-shell command semantics.
-- `tool.cancelled`:
+- `conversation.tool.cancelled`:
   - expected after `conversation.cancel` when pending tool calls exist; alert only if cancellation volume is unexpectedly high.
-  - async requests (`meta.run_mode = "async"`) should transition to `tool.completed`/`tool.failed` unless conversation cancellation occurs first.
-- `tool.timeout`:
+  - async requests (`meta.run_mode = "async"`) should transition to `conversation.tool.completed`/`conversation.tool.failed` unless conversation cancellation occurs first.
+- `conversation.tool.timeout`:
   - investigate immediately if timeout count spikes > 10 in 5 minutes for any project.
-- `tool.child_processes_terminated`:
+- `conversation.tool.child_processes_terminated`:
   - expected during timeout/cancel cleanup when tools spawn registered child processes.
   - investigate if frequent under normal load; indicates persistent long-running or stuck child execution.
 - `security.repeated_timeout_failures`:

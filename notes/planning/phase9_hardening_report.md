@@ -56,7 +56,7 @@
 
 - Tool runner tracks timeout counts per `{project_id, tool}`.
 - Emits:
-  - `tool.timeout` on each timeout
+  - `conversation.tool.timeout` on each timeout
   - `security.repeated_timeout_failures` when threshold is reached
 - Threshold configured by:
   - `tool_timeout_alert_threshold` (default `3`)
@@ -137,7 +137,7 @@
 - LLM lifecycle events (`llm.started`, `assistant.delta`, `tool.requested`, `assistant.message`, `llm.completed`) carry the same correlation ID.
 - Tool bridge and tool runner propagate correlation ID through:
   - tool call metadata
-  - tool response payloads (`tool.completed`, `tool.failed`, timeout/escalation telemetry)
+  - tool response payloads (`conversation.tool.completed`, `conversation.tool.failed`, timeout/escalation telemetry)
   - policy decision records (`recent_decisions`, `policy.allowed`, `policy.denied`)
 - This enables end-to-end incident stitching by `project_id` + `conversation_id` + `correlation_id`.
 
@@ -185,10 +185,10 @@
 ### 13. Deterministic pending-tool cancellation events
 
 - Conversation cancellation now emits deterministic tool cancellation events when pending calls exist:
-  - event type: `tool.cancelled`
+  - event type: `conversation.tool.cancelled`
   - reason payload: `"conversation_cancelled"`
 - Correlation behavior:
-  - `tool.cancelled` events inherit correlation from the triggering `conversation.cancel` event.
+  - `conversation.tool.cancelled` events inherit correlation from the triggering `conversation.cancel` event.
 - State behavior:
   - pending tool calls are cleared on `conversation.cancel`
   - pending projection is consistent with emitted cancellation events (`pending_tool_calls == []` after cancel)
@@ -198,14 +198,14 @@
 - Tool bridge now supports async request mode (`meta.run_mode = "async"`) for `tool.requested` events.
 - Async execution model:
   - `ToolBridge` starts background tool tasks through `ToolRunner.run_async/3`
-  - `Conversation.Server` ingests async result messages and emits `tool.completed` / `tool.failed` events
+  - `Conversation.Server` ingests async result messages and emits `conversation.tool.completed` / `conversation.tool.failed` events
 - Cancellable behavior:
   - pending async task PIDs are tracked per `{project_id, conversation_id}`
   - `conversation.cancel` terminates tracked in-flight tasks and suppresses stale late-arriving task results
-  - timeout and cancellation paths terminate registered child processes and emit `tool.child_processes_terminated`
+  - timeout and cancellation paths terminate registered child processes and emit `conversation.tool.child_processes_terminated`
 - Test coverage validates:
   - async completion updates timeline and clears `pending_tool_calls`
-  - cancellation path emits `tool.cancelled` and avoids stale `tool.completed` after cancel
+  - cancellation path emits `conversation.tool.cancelled` and avoids stale `conversation.tool.completed` after cancel
 
 ### 15. Runtime option validation and normalization
 
@@ -358,7 +358,7 @@
 - Command runtime context building now validates required project context fields before execution.
 - If conversation/direct runtime context is malformed and missing `root_path`, command execution fails deterministically with:
   - `{:invalid_project_context, :missing_root_path}`
-- This prevents task-level `KeyError` exits from bubbling out of command execution and keeps failures auditable via normal `tool.failed` paths.
+- This prevents task-level `KeyError` exits from bubbling out of command execution and keeps failures auditable via normal `conversation.tool.failed` paths.
 
 ### 27. Root-bound workspace mount for command executor isolation
 
@@ -387,7 +387,7 @@
 - Tool execution context now propagates a `task_owner_pid` for command runtimes so workspace session PIDs can be tracked via `ToolRunner` child-process registry.
 - Resulting behavior:
   - async conversation cancellation can terminate workspace session processes without manual PID registration
-  - timeout and cancellation cleanup telemetry (`tool.child_processes_terminated`) reflects real workspace session cleanup activity
+  - timeout and cancellation cleanup telemetry (`conversation.tool.child_processes_terminated`) reflects real workspace session cleanup activity
   - child-process registry entries for cancelled workspace tasks are drained deterministically
   - timeout cleanup paths also terminate tracked workspace sessions without manual child PID injection
 
@@ -415,7 +415,7 @@
   - sandbox violation security signal
   - allowlisted outside-root exception signal with reason code
   - conversation-scoped concurrency quota enforcement
-  - deterministic `tool.cancelled` events on conversation cancellation
+  - deterministic `conversation.tool.cancelled` events on conversation cancellation
   - cancellable async tool bridge execution path
   - runtime option validation and normalization
   - environment passthrough deny-by-default with explicit allowlist control
@@ -431,7 +431,7 @@
   - synthetic load/soak benchmark harness with structured report output
   - secret redaction behavior
   - repeated timeout escalation signal
-  - timeout/cancellation child-process cleanup signal (`tool.child_processes_terminated`)
+  - timeout/cancellation child-process cleanup signal (`conversation.tool.child_processes_terminated`)
   - per-project protocol boundary enforcement across MCP/A2A adapters with security telemetry
   - command runtime execution via `jido_command` for valid command markdown and compatibility fallback for invalid definitions
   - workflow runtime execution via `jido_workflow` for valid workflow markdown and compatibility fallback for invalid definitions

@@ -1277,6 +1277,11 @@ defmodule Jido.Code.Server.Project.Server do
   defp incident_event_type("conv.out.tool.status", event), do: canonical_tool_status_event(event)
 
   defp incident_event_type("tool.completed", _event), do: "conversation.tool.completed"
+  defp incident_event_type("tool.started", _event), do: "conversation.tool.started"
+  defp incident_event_type("tool.timeout", _event), do: "conversation.tool.timeout"
+
+  defp incident_event_type("tool.child_processes_terminated", _event),
+    do: "conversation.tool.child_processes_terminated"
 
   defp incident_event_type("tool.failed", event) do
     canonical_failed_tool_status_event(event)

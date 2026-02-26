@@ -233,7 +233,7 @@ Suggested cadence: 9 phases across ~10-12 weeks for one engineer, or ~6-8 weeks 
    - task-supervisor execution with timeouts/concurrency limits
    - normalized success/error payload schema
 5. Ensure `Project.Server.list_tools/0` returns policy-filtered inventory.
-6. Emit `tool.started`, `tool.completed`, `tool.failed`.
+6. Emit `conversation.tool.started`, `conversation.tool.completed`, `conversation.tool.failed`.
 
 ### Deliverables
 
@@ -317,7 +317,7 @@ Suggested cadence: 9 phases across ~10-12 weeks for one engineer, or ~6-8 weeks 
    - stream delta events back into conversation
 2. Convert LLM tool-call intents into `tool.requested` events.
 3. Implement `ToolBridge` to execute requests through project `ToolRunner`.
-4. Feed `tool.completed`/`tool.failed` back into conversation ingest loop.
+4. Feed `conversation.tool.completed`/`conversation.tool.failed` back into conversation ingest loop.
 5. Add cancellation semantics (`conversation.cancel` -> LLM cancel + task cancel).
 
 ### Deliverables
