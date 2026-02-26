@@ -11,7 +11,7 @@ Next: [07. Sub Agent Runtime](./07-subagent-runtime.md)
 2. Builds available tool specs from `ToolCatalog`
 3. Filters tools through `Policy.filter_tools/2`
 4. Calls `Conversation.LLM.start_completion/4`
-5. Converts legacy LLM events to canonical conversation signals
+5. Re-ingests completion output as canonical conversation signals
 
 `Conversation.LLM` supports adapters:
 

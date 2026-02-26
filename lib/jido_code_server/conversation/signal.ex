@@ -6,20 +6,31 @@ defmodule Jido.Code.Server.Conversation.Signal do
   alias Jido.Code.Server.Correlation
 
   @default_source "/jido/code/server/conversation"
-  @legacy_type_prefixes [
-    "user.",
-    "assistant.",
-    "llm.",
-    "tool.",
-    "conversation.cancel",
-    "conversation.resume",
-    "conversation.queue.overflow",
-    "conversation.subagent."
-  ]
+  @canonical_type_prefix "conversation."
 
   @spec normalize(Jido.Signal.t() | map()) :: {:ok, Jido.Signal.t()} | {:error, term()}
-  def normalize(%Jido.Signal{} = signal) do
-    {:ok, ensure_correlation(signal)}
+  def normalize(%Jido.Signal{type: type} = signal) when is_binary(type) do
+    if canonical_type?(type) do
+      {:ok, ensure_correlation(signal)}
+    else
+      {:error, {:invalid_type, String.trim(type)}}
+    end
+  end
+
+  def normalize(%Jido.Signal{}), do: {:error, :missing_type}
+
+  def normalize(%{type: type} = raw) when is_binary(type) do
+    with {:ok, type} <- extract_type(raw),
+         {:ok, signal} <- build_signal(raw, type) do
+      {:ok, ensure_correlation(signal)}
+    end
+  end
+
+  def normalize(%{"type" => type} = raw) when is_binary(type) do
+    with {:ok, type} <- extract_type(raw),
+         {:ok, signal} <- build_signal(raw, type) do
+      {:ok, ensure_correlation(signal)}
+    end
   end
 
   def normalize(raw) when is_map(raw) do
@@ -95,22 +106,18 @@ defmodule Jido.Code.Server.Conversation.Signal do
         {:error, :missing_type}
 
       true ->
-        {:ok, normalize_type(type)}
+        normalized = String.trim(type)
+
+        if canonical_type?(normalized) do
+          {:ok, normalized}
+        else
+          {:error, {:invalid_type, normalized}}
+        end
     end
   end
 
-  defp normalize_type(type) when is_binary(type) do
-    type = String.trim(type)
-
-    if String.starts_with?(type, "conversation.") do
-      type
-    else
-      if Enum.any?(@legacy_type_prefixes, &String.starts_with?(type, &1)) do
-        "conversation." <> type
-      else
-        type
-      end
-    end
+  defp canonical_type?(type) when is_binary(type) do
+    String.starts_with?(type, @canonical_type_prefix)
   end
 
   defp extract_source(raw) do

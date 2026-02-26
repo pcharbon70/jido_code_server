@@ -32,30 +32,9 @@ defmodule Jido.Code.Server.ConversationLLMTest do
     assert get_in(assistant_message, [:data, "content"]) == "Tool asset.list completed."
   end
 
-  test "deterministic completion accepts legacy tool completed source events via normalization" do
+  test "deterministic completion infers tool calls from canonical user source events" do
     source_event = %{
-      "type" => "tool.completed",
-      "data" => %{"name" => "asset.list"}
-    }
-
-    assert {:ok, %{events: events}} =
-             LLM.start_completion(
-               %{llm_adapter: :deterministic},
-               "conversation-2",
-               %{messages: []},
-               source_event: source_event
-             )
-
-    assistant_message =
-      Enum.find(events, fn event -> Map.get(event, :type) == "conversation.assistant.message" end)
-
-    assert assistant_message
-    assert get_in(assistant_message, [:data, "content"]) == "Tool asset.list completed."
-  end
-
-  test "deterministic completion accepts legacy user message source events via normalization" do
-    source_event = %{
-      "type" => "user.message",
+      "type" => "conversation.user.message",
       "content" => "please list skills"
     }
 
