@@ -23,6 +23,20 @@ defmodule Jido.Code.Server.ConversationSignalTest do
              })
   end
 
+  test "rejects raw map signals with non-map data values" do
+    assert {:error, :invalid_data} =
+             ConversationSignal.normalize(%{
+               "type" => "conversation.user.message",
+               "data" => "hello"
+             })
+
+    assert {:error, :invalid_data} =
+             ConversationSignal.normalize(%{
+               type: "conversation.user.message",
+               data: ["hello"]
+             })
+  end
+
   test "to_map keeps payload fields inside data envelope" do
     signal = Jido.Signal.new!("conversation.user.message", %{"content" => "hello"})
     mapped = ConversationSignal.to_map(signal)

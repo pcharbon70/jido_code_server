@@ -165,17 +165,25 @@ defmodule Jido.Code.Server.Conversation.Signal do
   end
 
   defp extract_data(raw) do
-    case raw[:data] || raw["data"] do
-      data when is_map(data) ->
+    data = raw[:data] || raw["data"]
+
+    cond do
+      is_map(data) ->
         {:ok, data}
 
-      _ ->
-        if has_flat_payload_fields?(raw) do
-          {:error, :missing_data_envelope}
-        else
-          {:ok, %{}}
-        end
+      data_key_present?(raw) and not is_nil(data) ->
+        {:error, :invalid_data}
+
+      has_flat_payload_fields?(raw) ->
+        {:error, :missing_data_envelope}
+
+      true ->
+        {:ok, %{}}
     end
+  end
+
+  defp data_key_present?(raw) when is_map(raw) do
+    Map.has_key?(raw, :data) or Map.has_key?(raw, "data")
   end
 
   defp has_flat_payload_fields?(raw) when is_map(raw) do
