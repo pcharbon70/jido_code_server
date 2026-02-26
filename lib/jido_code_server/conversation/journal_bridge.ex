@@ -189,5 +189,6 @@ defmodule Jido.Code.Server.Conversation.JournalBridge do
 
   defp normalize_tool_status_message(nil), do: nil
   defp normalize_tool_status_message(message) when is_binary(message), do: message
+  defp normalize_tool_status_message(message) when is_atom(message), do: Atom.to_string(message)
   defp normalize_tool_status_message(message), do: inspect(message)
 end

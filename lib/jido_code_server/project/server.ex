@@ -1255,7 +1255,7 @@ defmodule Jido.Code.Server.Project.Server do
   defp legacy_event_type("conversation.tool.failed", event) do
     reason = event |> incident_map_get(:data) |> incident_map_get(:reason)
 
-    if reason in ["conversation_cancelled", :conversation_cancelled] do
+    if cancelled_tool_reason?(reason) do
       "tool.cancelled"
     else
       "tool.failed"
@@ -1305,14 +1305,35 @@ defmodule Jido.Code.Server.Project.Server do
     reason =
       event
       |> incident_map_get(:data)
-      |> incident_map_get(:message)
+      |> canonical_tool_failure_reason()
 
-    if reason in ["conversation_cancelled", :conversation_cancelled] do
+    if cancelled_tool_reason?(reason) do
       "tool.cancelled"
     else
       "tool.failed"
     end
   end
+
+  defp canonical_tool_failure_reason(data) when is_map(data) do
+    incident_map_get(data, :message) || incident_map_get(data, :reason)
+  end
+
+  defp canonical_tool_failure_reason(_data), do: nil
+
+  defp cancelled_tool_reason?(reason) when is_binary(reason) do
+    normalized =
+      reason
+      |> String.trim()
+      |> String.trim_leading(":")
+
+    normalized == "conversation_cancelled"
+  end
+
+  defp cancelled_tool_reason?(reason) when is_atom(reason) do
+    reason == :conversation_cancelled
+  end
+
+  defp cancelled_tool_reason?(_reason), do: false
 
   defp drop_conversation_id_fields(value) when is_map(value) do
     value
