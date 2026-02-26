@@ -924,7 +924,7 @@ defmodule Jido.Code.Server.Project.Server do
     timeline
     |> Enum.map(fn event ->
       event_correlation = incident_event_correlation(event)
-      event_name = event |> incident_map_get(:type) |> legacy_event_type(event)
+      event_name = event |> incident_map_get(:type) |> incident_event_type(event)
 
       %{
         source: :conversation,
@@ -1280,9 +1280,9 @@ defmodule Jido.Code.Server.Project.Server do
 
   defp normalize_telemetry_event_name(name, payload) when is_binary(name) and is_map(payload) do
     if telemetry_cancelled_tool_event?(name, payload) do
-      "tool.cancelled"
+      cancelled_tool_event_name(name)
     else
-      legacy_event_type(name, %{})
+      incident_event_type(name, payload)
     end
   end
 
@@ -1309,11 +1309,11 @@ defmodule Jido.Code.Server.Project.Server do
       |> normalize_tool_status()
 
     case status do
-      "requested" -> "tool.requested"
-      "completed" -> "tool.completed"
-      "cancelled" -> "tool.cancelled"
+      "requested" -> "conversation.tool.requested"
+      "completed" -> "conversation.tool.completed"
+      "cancelled" -> "conversation.tool.cancelled"
       "failed" -> canonical_failed_tool_status_event(event)
-      _ -> "tool.status"
+      _ -> "conversation.tool.status"
     end
   end
 
@@ -1324,9 +1324,42 @@ defmodule Jido.Code.Server.Project.Server do
       |> canonical_tool_failure_reason()
 
     if cancelled_tool_reason?(reason) do
-      "tool.cancelled"
+      "conversation.tool.cancelled"
     else
-      "tool.failed"
+      "conversation.tool.failed"
+    end
+  end
+
+  defp incident_event_type(type, event)
+
+  defp incident_event_type("conv.in.message.received", _event), do: "conversation.user.message"
+  defp incident_event_type("conv.out.assistant.delta", _event), do: "conversation.assistant.delta"
+
+  defp incident_event_type("conv.out.assistant.completed", _event),
+    do: "conversation.assistant.message"
+
+  defp incident_event_type("conv.out.tool.status", event), do: canonical_tool_status_event(event)
+
+  defp incident_event_type("conversation.tool.failed", event) do
+    reason =
+      event
+      |> incident_map_get(:data)
+      |> canonical_tool_failure_reason()
+
+    if cancelled_tool_reason?(reason) do
+      "conversation.tool.cancelled"
+    else
+      "conversation.tool.failed"
+    end
+  end
+
+  defp incident_event_type(type, _event), do: type
+
+  defp cancelled_tool_event_name(event_name) when is_binary(event_name) do
+    if String.starts_with?(event_name, "conversation.") do
+      "conversation.tool.cancelled"
+    else
+      "tool.cancelled"
     end
   end
 
