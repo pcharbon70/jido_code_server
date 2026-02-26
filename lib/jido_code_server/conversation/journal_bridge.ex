@@ -29,6 +29,12 @@ defmodule Jido.Code.Server.Conversation.JournalBridge do
     JidoConversation.timeline(project_id, conversation_id, opts)
   end
 
+  @spec events(project_id(), conversation_id()) :: [Jido.Signal.t()]
+  def events(project_id, conversation_id)
+      when is_binary(project_id) and is_binary(conversation_id) do
+    JidoConversation.Ingest.conversation_events(project_id, conversation_id)
+  end
+
   @spec llm_context(project_id(), conversation_id(), keyword()) :: [map()]
   def llm_context(project_id, conversation_id, opts \\ [])
       when is_binary(project_id) and is_binary(conversation_id) and is_list(opts) do
