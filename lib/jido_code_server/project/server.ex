@@ -54,6 +54,27 @@ defmodule Jido.Code.Server.Project.Server do
     GenServer.call(server, {:conversation_call, conversation_id, signal, timeout}, timeout)
   end
 
+  @doc false
+  @spec conversation_internal_call(
+          GenServer.server(),
+          conversation_id(),
+          Jido.Signal.t(),
+          timeout()
+        ) ::
+          {:ok, map()} | {:error, term()}
+  def conversation_internal_call(
+        server,
+        conversation_id,
+        %Jido.Signal{} = signal,
+        timeout \\ 30_000
+      ) do
+    GenServer.call(
+      server,
+      {:conversation_internal_call, conversation_id, signal, timeout},
+      timeout
+    )
+  end
+
   @spec conversation_cast(GenServer.server(), conversation_id(), Jido.Signal.t()) ::
           :ok | {:error, term()}
   def conversation_cast(server, conversation_id, %Jido.Signal{} = signal) do
@@ -324,13 +345,14 @@ defmodule Jido.Code.Server.Project.Server do
   end
 
   def handle_call({:conversation_call, conversation_id, signal, timeout}, _from, state) do
-    reply =
-      with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
-           {:ok, snapshot} <- ConversationAgent.call(pid, signal, timeout) do
-        emit_conversation_ingested(state.project_id, conversation_id, signal)
-        :ok = maybe_wait_for_orchestration(state, conversation_id)
-        {:ok, snapshot}
-      end
+    reply = conversation_call_reply(state, conversation_id, signal, timeout, :external)
+
+    {state, _delivered_count} = maybe_notify_subscribers_after_call(state, conversation_id)
+    {:reply, reply, state}
+  end
+
+  def handle_call({:conversation_internal_call, conversation_id, signal, timeout}, _from, state) do
+    reply = conversation_call_reply(state, conversation_id, signal, timeout, :internal)
 
     {state, _delivered_count} = maybe_notify_subscribers_after_call(state, conversation_id)
     {:reply, reply, state}
@@ -644,7 +666,7 @@ defmodule Jido.Code.Server.Project.Server do
   end
 
   defp maybe_emit_ingested_signal(project_id, conversation_id, pid, signal) do
-    case ConversationAgent.call(pid, signal, 30_000) do
+    case ConversationAgent.internal_call(pid, signal, 30_000) do
       {:ok, _snapshot} -> emit_conversation_ingested(project_id, conversation_id, signal)
       _other -> :ok
     end
@@ -1167,7 +1189,7 @@ defmodule Jido.Code.Server.Project.Server do
               if(is_binary(correlation_id), do: %{"correlation_id" => correlation_id}, else: %{})
           )
 
-        case ConversationAgent.call(pid, signal, 30_000) do
+        case ConversationAgent.internal_call(pid, signal, 30_000) do
           {:ok, _snapshot} ->
             emit_conversation_ingested(state.project_id, conversation_id, signal)
             {updated_state, _count} = maybe_notify_subscribers_after_call(state, conversation_id)
@@ -1180,6 +1202,23 @@ defmodule Jido.Code.Server.Project.Server do
       _ ->
         state
     end
+  end
+
+  defp conversation_call_reply(state, conversation_id, signal, timeout, mode) do
+    with {:ok, pid} <- fetch_conversation_pid(state, conversation_id),
+         {:ok, snapshot} <- conversation_agent_call(pid, signal, timeout, mode) do
+      emit_conversation_ingested(state.project_id, conversation_id, signal)
+      :ok = maybe_wait_for_orchestration(state, conversation_id)
+      {:ok, snapshot}
+    end
+  end
+
+  defp conversation_agent_call(pid, signal, timeout, :external) do
+    ConversationAgent.call(pid, signal, timeout)
+  end
+
+  defp conversation_agent_call(pid, signal, timeout, :internal) do
+    ConversationAgent.internal_call(pid, signal, timeout)
   end
 
   defp normalize_payload_map(payload) when is_map(payload) do

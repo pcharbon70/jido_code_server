@@ -24,6 +24,13 @@ defmodule Jido.Code.Server.Conversation.Agent do
   alias Jido.Code.Server.Conversation.Domain.State
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
 
+  @external_signal_types [
+    "conversation.user.message",
+    "conversation.cancel",
+    "conversation.resume"
+  ]
+  @external_signal_type_set MapSet.new(@external_signal_types)
+
   @type snapshot :: %{
           project_id: String.t(),
           conversation_id: String.t(),
@@ -88,8 +95,17 @@ defmodule Jido.Code.Server.Conversation.Agent do
   def call(server, %Jido.Signal{} = signal, timeout \\ 30_000) do
     with {:ok, normalized_signal} <- ConversationSignal.normalize(signal),
          :ok <- validate_external_signal_type(normalized_signal.type),
-         {:ok, _agent} <-
-           Jido.AgentServer.call(server, ingest_command_signal(normalized_signal), timeout),
+         {:ok, _agent} <- ingest_signal_call(server, normalized_signal, timeout),
+         {:ok, state} <- state(server) do
+      {:ok, snapshot(state)}
+    end
+  end
+
+  @spec internal_call(pid(), Jido.Signal.t(), timeout()) :: {:ok, snapshot()} | {:error, term()}
+  def internal_call(server, %Jido.Signal{} = signal, timeout \\ 30_000) do
+    with {:ok, normalized_signal} <- ConversationSignal.normalize(signal),
+         :ok <- validate_internal_signal_type(normalized_signal.type),
+         {:ok, _agent} <- ingest_signal_call(server, normalized_signal, timeout),
          {:ok, state} <- state(server) do
       {:ok, snapshot(state)}
     end
@@ -99,9 +115,23 @@ defmodule Jido.Code.Server.Conversation.Agent do
   def cast(server, %Jido.Signal{} = signal) do
     with {:ok, normalized_signal} <- ConversationSignal.normalize(signal),
          :ok <- validate_external_signal_type(normalized_signal.type) do
-      Jido.AgentServer.cast(server, ingest_command_signal(normalized_signal))
+      ingest_signal_cast(server, normalized_signal)
     end
   end
+
+  @spec internal_cast(pid(), Jido.Signal.t()) :: :ok | {:error, term()}
+  def internal_cast(server, %Jido.Signal{} = signal) do
+    with {:ok, normalized_signal} <- ConversationSignal.normalize(signal),
+         :ok <- validate_internal_signal_type(normalized_signal.type) do
+      ingest_signal_cast(server, normalized_signal)
+    end
+  end
+
+  @spec external_signal_type?(String.t()) :: boolean()
+  def external_signal_type?(type) when is_binary(type),
+    do: MapSet.member?(@external_signal_type_set, type)
+
+  def external_signal_type?(_type), do: false
 
   @spec cancel(pid(), String.t()) :: {:ok, snapshot()} | {:error, term()}
   def cancel(server, reason \\ "cancelled") do
@@ -151,6 +181,14 @@ defmodule Jido.Code.Server.Conversation.Agent do
     )
   end
 
+  defp ingest_signal_call(server, %Jido.Signal{} = normalized_signal, timeout) do
+    Jido.AgentServer.call(server, ingest_command_signal(normalized_signal), timeout)
+  end
+
+  defp ingest_signal_cast(server, %Jido.Signal{} = normalized_signal) do
+    Jido.AgentServer.cast(server, ingest_command_signal(normalized_signal))
+  end
+
   defp snapshot(state) do
     domain = state.domain
     diagnostics = domain.projection_cache[:diagnostics] || %{}
@@ -195,5 +233,16 @@ defmodule Jido.Code.Server.Conversation.Agent do
   defp validate_external_signal_type("conversation.cmd." <> _suffix),
     do: {:error, {:reserved_type, "conversation.cmd.*"}}
 
-  defp validate_external_signal_type(_type), do: :ok
+  defp validate_external_signal_type(type) when is_binary(type) do
+    if external_signal_type?(type) do
+      :ok
+    else
+      {:error, {:external_type_not_allowed, type}}
+    end
+  end
+
+  defp validate_internal_signal_type("conversation.cmd." <> _suffix),
+    do: {:error, {:reserved_type, "conversation.cmd.*"}}
+
+  defp validate_internal_signal_type(_type), do: :ok
 end
