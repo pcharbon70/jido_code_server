@@ -33,7 +33,7 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
     assert :ok =
              RuntimeSignal.send_signal(project_id, "phase6-c1", %{
                "type" => "conversation.user.message",
-               "content" => "hello"
+               "data" => %{"content" => "hello"}
              })
 
     assert {:ok, timeline} = Runtime.conversation_projection(project_id, "phase6-c1", :timeline)
@@ -67,7 +67,7 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
                "phase6-tools-c1",
                %{
                  "type" => "conversation.user.message",
-                 "content" => "please list skills"
+                 "data" => %{"content" => "please list skills"}
                }
              )
 
@@ -124,9 +124,11 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
                "phase6-tool-failure-c1",
                %{
                  "type" => "conversation.user.message",
-                 "content" => "run command",
-                 "llm" => %{
-                   "tool_calls" => [%{"name" => "command.run.example_command", "args" => %{}}]
+                 "data" => %{
+                   "content" => "run command",
+                   "llm" => %{
+                     "tool_calls" => [%{"name" => "command.run.example_command", "args" => %{}}]
+                   }
                  }
                }
              )
@@ -175,7 +177,7 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
                "phase6-cancel-c1",
                %{
                  "type" => "conversation.user.message",
-                 "content" => "ignored"
+                 "data" => %{"content" => "ignored"}
                }
              )
 
@@ -199,7 +201,7 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
                "phase6-cancel-c1",
                %{
                  "type" => "conversation.user.message",
-                 "content" => "active again"
+                 "data" => %{"content" => "active again"}
                }
              )
 
@@ -235,14 +237,16 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
                "phase6-command-executor-c1",
                %{
                  "type" => "conversation.user.message",
-                 "content" => "run workspace command",
-                 "llm" => %{
-                   "tool_calls" => [
-                     %{
-                       "name" => "command.run.example_command",
-                       "args" => %{"path" => ".jido/commands/example_command.md"}
-                     }
-                   ]
+                 "data" => %{
+                   "content" => "run workspace command",
+                   "llm" => %{
+                     "tool_calls" => [
+                       %{
+                         "name" => "command.run.example_command",
+                         "args" => %{"path" => ".jido/commands/example_command.md"}
+                       }
+                     ]
+                   }
                  }
                }
              )

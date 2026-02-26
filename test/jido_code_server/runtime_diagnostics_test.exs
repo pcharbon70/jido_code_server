@@ -37,7 +37,7 @@ defmodule Jido.Code.Server.RuntimeDiagnosticsTest do
     assert :ok =
              RuntimeSignal.send_signal(project_id, "diag-c1", %{
                "type" => "conversation.user.message",
-               "content" => "hello"
+               "data" => %{"content" => "hello"}
              })
 
     diagnostics = Runtime.diagnostics(project_id)
@@ -108,9 +108,11 @@ defmodule Jido.Code.Server.RuntimeDiagnosticsTest do
     assert :ok =
              RuntimeSignal.send_signal(project_id, "errors-c1", %{
                "type" => "conversation.user.message",
-               "content" => "run command",
-               "llm" => %{
-                 "tool_calls" => [%{"name" => "command.run.example_command", "args" => %{}}]
+               "data" => %{
+                 "content" => "run command",
+                 "llm" => %{
+                   "tool_calls" => [%{"name" => "command.run.example_command", "args" => %{}}]
+                 }
                }
              })
 

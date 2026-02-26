@@ -21,55 +21,10 @@ defmodule Jido.Code.Server.TestSupport.RuntimeSignal do
 
   defp normalize_test_signal(%Jido.Signal{} = signal), do: ConversationSignal.normalize(signal)
 
-  defp normalize_test_signal(raw_signal) when is_map(raw_signal) do
-    raw_signal
-    |> ensure_data_envelope()
-    |> ConversationSignal.normalize()
-  end
+  defp normalize_test_signal(raw_signal) when is_map(raw_signal),
+    do: ConversationSignal.normalize(raw_signal)
 
   defp normalize_test_signal(raw_signal), do: ConversationSignal.normalize(raw_signal)
-
-  defp ensure_data_envelope(raw_signal) do
-    case raw_signal[:data] || raw_signal["data"] do
-      data when is_map(data) ->
-        raw_signal
-
-      _other ->
-        payload = build_payload(raw_signal)
-        put_payload(raw_signal, payload)
-    end
-  end
-
-  defp build_payload(raw_signal) do
-    raw_signal
-    |> Map.drop([
-      :id,
-      "id",
-      :type,
-      "type",
-      :source,
-      "source",
-      :time,
-      "time",
-      :meta,
-      "meta",
-      :extensions,
-      "extensions",
-      :data,
-      "data",
-      :specversion,
-      "specversion"
-    ])
-    |> Enum.reduce(%{}, fn {key, value}, acc ->
-      Map.put(acc, normalize_payload_key(key), value)
-    end)
-  end
-
-  defp normalize_payload_key(key) when is_atom(key), do: Atom.to_string(key)
-  defp normalize_payload_key(key), do: key
-
-  defp put_payload(%{data: _} = raw_signal, payload), do: Map.put(raw_signal, :data, payload)
-  defp put_payload(raw_signal, payload), do: Map.put(raw_signal, "data", payload)
 
   defp dispatch_signal(project_id, conversation_id, signal, timeout) do
     if ConversationAgent.external_signal_type?(signal.type) do

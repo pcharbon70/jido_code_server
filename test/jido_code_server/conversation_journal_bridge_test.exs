@@ -36,7 +36,7 @@ defmodule Jido.Code.Server.ConversationJournalBridgeTest do
     assert :ok =
              RuntimeSignal.send_signal(project_id, conversation_id, %{
                "type" => "conversation.user.message",
-               "content" => "hello bridge"
+               "data" => %{"content" => "hello bridge"}
              })
 
     assert {:ok, canonical_timeline} =
@@ -77,13 +77,13 @@ defmodule Jido.Code.Server.ConversationJournalBridgeTest do
     assert :ok =
              RuntimeSignal.send_signal(project_a, conversation_id, %{
                "type" => "conversation.user.message",
-               "content" => "hello from project a"
+               "data" => %{"content" => "hello from project a"}
              })
 
     assert :ok =
              RuntimeSignal.send_signal(project_b, conversation_id, %{
                "type" => "conversation.user.message",
-               "content" => "hello from project b"
+               "data" => %{"content" => "hello from project b"}
              })
 
     assert {:ok, canonical_timeline_a} =
@@ -154,7 +154,7 @@ defmodule Jido.Code.Server.ConversationJournalBridgeTest do
     assert :ok =
              RuntimeSignal.send_signal(project_id, conversation_id, %{
                "type" => "conversation.user.message",
-               "content" => "persist me"
+               "data" => %{"content" => "persist me"}
              })
 
     assert :ok = Runtime.stop_conversation(project_id, conversation_id)
