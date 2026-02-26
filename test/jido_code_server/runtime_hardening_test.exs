@@ -284,6 +284,45 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
            end)
   end
 
+  test "incident timeline maps telemetry tool.failed cancellation reasons to tool.cancelled" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+    correlation_id = "corr-phase9-incident-telemetry-cancelled"
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-incident-telemetry-cancelled",
+               conversation_orchestration: false
+             )
+
+    assert {:ok, "phase9-incident-telemetry-cancelled-c1"} =
+             Runtime.start_conversation(project_id,
+               conversation_id: "phase9-incident-telemetry-cancelled-c1"
+             )
+
+    assert :ok =
+             Telemetry.emit("tool.failed", %{
+               project_id: project_id,
+               conversation_id: "phase9-incident-telemetry-cancelled-c1",
+               correlation_id: correlation_id,
+               reason: :conversation_cancelled
+             })
+
+    assert {:ok, timeline} =
+             Runtime.incident_timeline(project_id, "phase9-incident-telemetry-cancelled-c1",
+               correlation_id: correlation_id,
+               limit: 50
+             )
+
+    assert Enum.any?(timeline.entries, fn entry ->
+             entry.source == :telemetry and entry.event == "tool.cancelled"
+           end)
+
+    refute Enum.any?(timeline.entries, fn entry ->
+             entry.source == :telemetry and entry.event == "tool.failed"
+           end)
+  end
+
   test "incident timeline remains queryable after conversation stop when canonical history exists" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
