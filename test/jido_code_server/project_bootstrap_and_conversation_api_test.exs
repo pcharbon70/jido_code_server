@@ -113,6 +113,16 @@ defmodule Jido.Code.Server.ProjectBootstrapAndConversationApiTest do
     assert {:error, {:invalid_type, "tool.completed"}} =
              Runtime.conversation_cast(project_id, "conversation-b", invalid_cast_signal)
 
+    reserved_call_signal = Jido.Signal.new!("conversation.cmd.cancel", %{"reason" => "external"})
+
+    assert {:error, {:reserved_type, "conversation.cmd.*"}} =
+             Runtime.conversation_call(project_id, "conversation-b", reserved_call_signal)
+
+    reserved_cast_signal = Jido.Signal.new!("conversation.cmd.drain", %{})
+
+    assert {:error, {:reserved_type, "conversation.cmd.*"}} =
+             Runtime.conversation_cast(project_id, "conversation-b", reserved_cast_signal)
+
     valid_signal = Jido.Signal.new!("conversation.user.message", %{"content" => "hello"})
 
     assert {:ok, _snapshot} =
