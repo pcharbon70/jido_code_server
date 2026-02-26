@@ -935,6 +935,7 @@ defmodule Jido.Code.Server.Project.Server do
         payload: event
       }
     end)
+    |> Enum.reject(fn entry -> internal_conversation_incident_event?(entry.event) end)
     |> maybe_filter_correlation(correlation_id)
   end
 
@@ -1278,6 +1279,12 @@ defmodule Jido.Code.Server.Project.Server do
   end
 
   defp normalize_telemetry_event_name(name), do: name
+
+  defp internal_conversation_incident_event?(event) when is_binary(event) do
+    String.starts_with?(event, "conv.")
+  end
+
+  defp internal_conversation_incident_event?(_event), do: false
 
   defp canonical_tool_status_event(event) do
     status =
