@@ -276,7 +276,7 @@ defmodule Jido.Code.Server.Benchmark.Phase9Harness do
     result =
       send_signal(event.project_id, event.conversation_id, %{
         "type" => "conversation.user.message",
-        "content" => event.content
+        "data" => %{"content" => event.content}
       })
 
     duration_ms = System.monotonic_time(:millisecond) - started_at

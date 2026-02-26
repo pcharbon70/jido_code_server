@@ -3,15 +3,26 @@ defmodule Jido.Code.Server.ConversationSignalTest do
 
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
 
-  test "normalizes canonical map signals with flat payload fields" do
+  test "normalizes canonical map signals with explicit data envelope" do
+    assert {:ok, signal} =
+             ConversationSignal.normalize(%{
+               "type" => "conversation.user.message",
+               "data" => %{"content" => "hello"}
+             })
+
+    assert signal.type == "conversation.user.message"
+    assert signal.data == %{"content" => "hello"}
+    assert is_binary(ConversationSignal.correlation_id(signal))
+  end
+
+  test "ignores flat payload fields outside the data envelope" do
     assert {:ok, signal} =
              ConversationSignal.normalize(%{
                "type" => "conversation.user.message",
                "content" => "hello"
              })
 
-    assert signal.type == "conversation.user.message"
-    assert signal.data == %{"content" => "hello"}
+    assert signal.data == %{}
     assert is_binary(ConversationSignal.correlation_id(signal))
   end
 

@@ -22,6 +22,11 @@ State includes:
 5. Effect intents map to directives.
 6. Instruction results are re-ingested as canonical conversation signals.
 
+Signal envelope contract:
+
+- Runtime normalization only reads payload from `signal.data` (or `"data"` in map input).
+- Flat top-level payload fields are not treated as signal data by runtime normalization.
+
 ## Domain State and Reducer
 
 `Conversation.Domain.State` tracks:

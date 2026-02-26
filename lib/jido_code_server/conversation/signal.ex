@@ -17,7 +17,6 @@ defmodule Jido.Code.Server.Conversation.Signal do
     "conversation.llm.completed",
     "conversation.llm.failed",
     "conversation.llm.requested",
-    "conversation.llm.started",
     "conversation.queue.overflow",
     "conversation.resume",
     "conversation.subagent.completed",
@@ -155,15 +154,9 @@ defmodule Jido.Code.Server.Conversation.Signal do
   end
 
   defp extract_data(raw) do
-    cond do
-      is_map(raw[:data]) ->
-        raw[:data]
-
-      is_map(raw["data"]) ->
-        raw["data"]
-
-      true ->
-        legacy_data_from_flat_map(raw)
+    case raw[:data] || raw["data"] do
+      data when is_map(data) -> data
+      _ -> %{}
     end
   end
 
@@ -178,37 +171,6 @@ defmodule Jido.Code.Server.Conversation.Signal do
 
   defp merge_if_map(acc, value) when is_map(value), do: Map.merge(acc, value)
   defp merge_if_map(acc, _value), do: acc
-
-  defp legacy_data_from_flat_map(raw) do
-    ignored = [
-      :id,
-      "id",
-      :type,
-      "type",
-      :source,
-      "source",
-      :time,
-      "time",
-      :meta,
-      "meta",
-      :extensions,
-      "extensions",
-      :data,
-      "data",
-      :specversion,
-      "specversion"
-    ]
-
-    payload =
-      raw
-      |> Map.drop(ignored)
-      |> Enum.reduce(%{}, fn {key, value}, acc ->
-        normalized_key = if(is_atom(key), do: Atom.to_string(key), else: key)
-        Map.put(acc, normalized_key, value)
-      end)
-
-    if map_size(payload) == 0, do: %{}, else: payload
-  end
 
   defp ensure_correlation(%Jido.Signal{extensions: extensions} = signal) do
     {correlation_id, meta} = Correlation.ensure(extensions)
