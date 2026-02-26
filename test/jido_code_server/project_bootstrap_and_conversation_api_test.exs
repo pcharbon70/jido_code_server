@@ -60,7 +60,7 @@ defmodule Jido.Code.Server.ProjectBootstrapAndConversationApiTest do
     assert {:error, {:conversation_already_started, "conversation-a"}} =
              Runtime.start_conversation(project_id, conversation_id: "conversation-a")
 
-    event = %{"type" => "conversation.user.message", "content" => "hello"}
+    event = %{"type" => "conversation.user.message", "data" => %{"content" => "hello"}}
 
     assert :ok =
              RuntimeSignal.send_signal(

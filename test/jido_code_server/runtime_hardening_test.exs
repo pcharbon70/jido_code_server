@@ -139,7 +139,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
                "phase9-corr-c1",
                %{
                  "type" => "conversation.user.message",
-                 "content" => "please list skills",
+                 "data" => %{"content" => "please list skills"},
                  "meta" => %{"correlation_id" => correlation_id}
                }
              )
@@ -205,7 +205,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
                "phase9-corr-c2",
                %{
                  "type" => "conversation.user.message",
-                 "content" => "hello"
+                 "data" => %{"content" => "hello"}
                }
              )
 
@@ -248,7 +248,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
                "phase9-incident-c1",
                %{
                  "type" => "conversation.user.message",
-                 "content" => "please list skills",
+                 "data" => %{"content" => "please list skills"},
                  "meta" => %{"correlation_id" => correlation_id}
                }
              )
@@ -349,7 +349,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
                "phase9-incident-stopped-c1",
                %{
                  "type" => "conversation.user.message",
-                 "content" => "persist incident history",
+                 "data" => %{"content" => "persist incident history"},
                  "meta" => %{"correlation_id" => correlation_id}
                }
              )
@@ -417,7 +417,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
                "phase9-incident-stopped-filter-c1",
                %{
                  "type" => "conversation.user.message",
-                 "content" => "preserve correlation",
+                 "data" => %{"content" => "preserve correlation"},
                  "meta" => %{"correlation_id" => correlation_id}
                }
              )
@@ -1959,7 +1959,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
                "phase9-llm-c1",
                %{
                  "type" => "conversation.user.message",
-                 "content" => "hello"
+                 "data" => %{"content" => "hello"}
                }
              )
 
@@ -1969,7 +1969,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
                "phase9-llm-c1",
                %{
                  "type" => "conversation.user.message",
-                 "content" => "still there?"
+                 "data" => %{"content" => "still there?"}
                }
              )
 
@@ -2057,7 +2057,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
           :ok =
             RuntimeSignal.send_signal(project_id, conversation_id, %{
               "type" => "conversation.user.message",
-              "content" => message
+              "data" => %{"content" => message}
             })
 
           {project_id, conversation_id, message}
