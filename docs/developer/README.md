@@ -1,35 +1,17 @@
-# Jido.Code.Server Developer Guides
+# Developer Guides
 
-This directory documents the implementation architecture of `Jido.Code.Server`.
+This directory documents the current `Jido.Code.Server` architecture and runtime behavior.
 
-## Audience
+Reading order:
 
-These guides are for engineers working on runtime internals, adapters, and production hardening.
-
-## Guide Map
-
-- `architecture-overview.md`
-  - System shape, supervision tree, and module boundaries.
-- `engine-and-project-lifecycle.md`
-  - Project startup/shutdown, runtime options, layout, asset lifecycle.
-- `conversation-runtime.md`
-  - Event model, orchestration loop, LLM and tool bridging behavior.
-- `tool-execution-and-policy.md`
-  - Tool catalog, policy gate, runner pipeline, execution backends.
-- `security-model.md`
-  - Built-in security controls, threat-to-control mapping, and secure override guidance.
-- `protocol-adapters.md`
-  - MCP and A2A adapter mappings and boundary controls.
-- `observability-and-operations.md`
-  - Telemetry, diagnostics, incident timeline, alert routing, and benchmark usage.
-- `testing-and-quality.md`
-  - Test suite map, quality gates, and change-validation patterns.
-
-## Suggested Reading Order
-
-1. `architecture-overview.md`
-2. `engine-and-project-lifecycle.md`
-3. `conversation-runtime.md`
-4. `tool-execution-and-policy.md`
-5. `security-model.md`
-6. Remaining guides by concern area.
+1. [01. Guide Map](./01-guide-map.md)
+2. [02. System Architecture](./02-system-architecture.md)
+3. [03. Runtime Topology and Lifecycle](./03-runtime-topology-and-lifecycle.md)
+4. [04. Assets and Project State](./04-assets-and-project-state.md)
+5. [05. Conversation Runtime](./05-conversation-runtime.md)
+6. [06. LLM and Tool Execution](./06-llm-and-tool-execution.md)
+7. [07. Sub Agent Runtime](./07-subagent-runtime.md)
+8. [08. Protocol Gateways](./08-protocol-gateways.md)
+9. [09. Security Model](./09-security-model.md)
+10. [10. Observability and Operations](./10-observability-and-operations.md)
+11. [11. Testing and Quality](./11-testing-and-quality.md)
