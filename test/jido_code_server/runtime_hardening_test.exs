@@ -282,6 +282,11 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert Enum.any?(timeline.entries, fn entry ->
              entry.source == :telemetry and entry.event == "tool.completed"
            end)
+
+    refute Enum.any?(timeline.entries, fn entry ->
+             entry.source == :telemetry and
+               entry.event in ["event_ingested", "conversation.event_ingested"]
+           end)
   end
 
   test "incident timeline maps telemetry tool.failed cancellation reasons to tool.cancelled" do
