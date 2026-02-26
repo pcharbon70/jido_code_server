@@ -86,10 +86,10 @@ defmodule Jido.Code.Server.ProtocolGatewayTest do
     assert :ok = A2AGateway.task_cancel(project_id, conversation_id, reason: :user_requested)
 
     assert_receive {:conversation_event, ^conversation_id, event1}, 1_000
-    assert event1.type == "user.message"
+    assert event1["type"] == "conversation.user.message"
 
     assert_receive {:conversation_event, ^conversation_id, event2}, 1_000
-    assert event2.type == "conversation.cancel"
+    assert event2["type"] == "conversation.cancel"
 
     assert :ok = A2AGateway.unsubscribe_task(project_id, conversation_id, self())
 

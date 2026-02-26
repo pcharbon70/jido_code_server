@@ -91,7 +91,7 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
              })
 
     assert_receive {:conversation_event, "sub-c", event}, 1_000
-    assert event.type == "user.message"
+    assert event["type"] == "conversation.user.message"
 
     assert :ok = Runtime.unsubscribe_conversation(project_id, "sub-c", self())
 
@@ -124,8 +124,8 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
     assert :ok = Runtime.conversation_cast(project_id, "cast-sub-c", signal)
 
     assert_receive {:conversation_event, "cast-sub-c", event}, 1_000
-    assert event.type == "user.message"
-    assert event.content == "cast one"
+    assert event["type"] == "conversation.user.message"
+    assert event["content"] == "cast one"
   end
 
   test "conversation lifecycle supports stop and restart without project disruption" do
