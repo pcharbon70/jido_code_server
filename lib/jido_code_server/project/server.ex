@@ -1276,19 +1276,6 @@ defmodule Jido.Code.Server.Project.Server do
 
   defp incident_event_type("conv.out.tool.status", event), do: canonical_tool_status_event(event)
 
-  defp incident_event_type("tool.completed", _event), do: "conversation.tool.completed"
-  defp incident_event_type("tool.started", _event), do: "conversation.tool.started"
-  defp incident_event_type("tool.timeout", _event), do: "conversation.tool.timeout"
-
-  defp incident_event_type("tool.child_processes_terminated", _event),
-    do: "conversation.tool.child_processes_terminated"
-
-  defp incident_event_type("tool.failed", event) do
-    canonical_failed_tool_status_event(event)
-  end
-
-  defp incident_event_type("tool.cancelled", _event), do: "conversation.tool.cancelled"
-
   defp incident_event_type("conversation.tool.failed", event) do
     reason =
       event
@@ -1346,7 +1333,7 @@ defmodule Jido.Code.Server.Project.Server do
   defp normalize_tool_status(_status), do: nil
 
   defp telemetry_cancelled_tool_event?(event_name, payload)
-       when event_name in ["tool.failed", "conversation.tool.failed"] and is_map(payload) do
+       when event_name in ["conversation.tool.failed"] and is_map(payload) do
     reason = Map.get(payload, :reason) || Map.get(payload, "reason")
     cancelled_tool_reason?(reason)
   end

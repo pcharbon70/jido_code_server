@@ -289,7 +289,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
            end)
   end
 
-  test "incident timeline maps telemetry tool.failed cancellation reasons to conversation.tool.cancelled" do
+  test "incident timeline maps conversation.tool.failed telemetry cancellation reasons to conversation.tool.cancelled" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
     correlation_id = "corr-phase9-incident-telemetry-cancelled"
@@ -306,7 +306,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              )
 
     assert :ok =
-             Telemetry.emit("tool.failed", %{
+             Telemetry.emit("conversation.tool.failed", %{
                project_id: project_id,
                conversation_id: "phase9-incident-telemetry-cancelled-c1",
                correlation_id: correlation_id,
