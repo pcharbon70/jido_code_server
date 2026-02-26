@@ -1357,7 +1357,7 @@ defmodule Jido.Code.Server.Project.Server do
     })
 
     if signal.type == "conversation.tool.cancelled" do
-      Telemetry.emit("tool.cancelled", %{
+      Telemetry.emit("conversation.tool.cancelled", %{
         project_id: project_id,
         conversation_id: conversation_id,
         correlation_id: ConversationSignal.correlation_id(signal)

@@ -166,7 +166,7 @@ defmodule Jido.Code.Server.Project.ToolRunner do
                 |> success_response(project_ctx.project_id, spec, duration_ms, result)
                 |> maybe_flag_sensitive_result(project_ctx)
 
-              Telemetry.emit("tool.completed", response)
+              Telemetry.emit("conversation.tool.completed", response)
               {:ok, response}
             else
               {:error, reason} ->
@@ -190,7 +190,7 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     error = error_response(project_ctx.project_id, tool_call, duration_ms, reason)
     maybe_emit_timeout_signals(project_ctx, tool_call, reason)
     maybe_emit_env_signals(project_ctx, tool_call, reason)
-    Telemetry.emit("tool.failed", error)
+    Telemetry.emit("conversation.tool.failed", error)
     {:error, error}
   end
 

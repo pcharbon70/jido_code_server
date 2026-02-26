@@ -904,7 +904,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              Runtime.conversation_projection(project_id, "phase9-cancel-c1", :pending_tool_calls)
 
     diagnostics = Runtime.diagnostics(project_id)
-    assert event_count(diagnostics, "tool.cancelled") >= 1
+    assert event_count(diagnostics, "conversation.tool.cancelled") >= 1
   end
 
   test "async tool requests complete via background bridge and clear pending projection" do
@@ -1043,7 +1043,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert_eventually(fn -> not Process.alive?(child_pid) end)
 
     diagnostics = Runtime.diagnostics(project_id)
-    assert event_count(diagnostics, "tool.cancelled") >= 1
+    assert event_count(diagnostics, "conversation.tool.cancelled") >= 1
     assert event_count(diagnostics, "tool.child_processes_terminated") >= 1
   end
 
