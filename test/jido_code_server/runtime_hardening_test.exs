@@ -280,7 +280,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert MapSet.member?(sources, :telemetry)
 
     assert Enum.any?(timeline.entries, fn entry ->
-             entry.source == :telemetry and entry.event == "tool.completed"
+             entry.source == :telemetry and entry.event == "conversation.tool.completed"
            end)
 
     refute Enum.any?(timeline.entries, fn entry ->
@@ -289,7 +289,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
            end)
   end
 
-  test "incident timeline maps telemetry tool.failed cancellation reasons to tool.cancelled" do
+  test "incident timeline maps telemetry tool.failed cancellation reasons to conversation.tool.cancelled" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
     correlation_id = "corr-phase9-incident-telemetry-cancelled"
@@ -320,11 +320,11 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              )
 
     assert Enum.any?(timeline.entries, fn entry ->
-             entry.source == :telemetry and entry.event == "tool.cancelled"
+             entry.source == :telemetry and entry.event == "conversation.tool.cancelled"
            end)
 
     refute Enum.any?(timeline.entries, fn entry ->
-             entry.source == :telemetry and entry.event == "tool.failed"
+             entry.source == :telemetry and entry.event == "conversation.tool.failed"
            end)
   end
 
@@ -466,7 +466,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
            end)
   end
 
-  test "incident timeline maps atom conversation_cancelled tool failures to tool.cancelled" do
+  test "incident timeline maps atom conversation_cancelled tool failures to conversation.tool.cancelled" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
     correlation_id = "corr-phase9-incident-atom-cancelled"
@@ -558,7 +558,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
            end)
   end
 
-  test "incident timeline maps conversation.tool.failed cancellation message values to tool.cancelled" do
+  test "incident timeline maps conversation.tool.failed cancellation message values to conversation.tool.cancelled" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
     correlation_id = "corr-phase9-incident-failed-message-cancelled"

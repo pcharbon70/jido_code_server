@@ -1276,6 +1276,14 @@ defmodule Jido.Code.Server.Project.Server do
 
   defp incident_event_type("conv.out.tool.status", event), do: canonical_tool_status_event(event)
 
+  defp incident_event_type("tool.completed", _event), do: "conversation.tool.completed"
+
+  defp incident_event_type("tool.failed", event) do
+    canonical_failed_tool_status_event(event)
+  end
+
+  defp incident_event_type("tool.cancelled", _event), do: "conversation.tool.cancelled"
+
   defp incident_event_type("conversation.tool.failed", event) do
     reason =
       event
@@ -1292,11 +1300,8 @@ defmodule Jido.Code.Server.Project.Server do
   defp incident_event_type(type, _event), do: type
 
   defp cancelled_tool_event_name(event_name) when is_binary(event_name) do
-    if String.starts_with?(event_name, "conversation.") do
-      "conversation.tool.cancelled"
-    else
-      "tool.cancelled"
-    end
+    _ = event_name
+    "conversation.tool.cancelled"
   end
 
   defp canonical_tool_failure_reason(data) when is_map(data) do
