@@ -133,6 +133,7 @@
 4. Synthetic load/soak benchmark harness:
    - `mix phase9.bench`
    - tune profile as needed: `mix phase9.bench --projects 5 --conversations 8 --events 4 --concurrency 24`
+   - enable full runtime logs when needed: `mix phase9.bench --verbose`
 
 ## Escalation Criteria
 

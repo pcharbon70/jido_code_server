@@ -270,6 +270,10 @@
   - dispatches concurrent `user.message` workloads
   - validates projection integrity and reports latency percentiles
   - emits structured pass/fail report with per-step failure details
+- Operator ergonomics:
+  - benchmark script defaults to quiet logging so reports stay readable under load
+  - `--verbose` opt-in enables full runtime logs for incident debugging
+  - mix alias runs with `--no-start` so logger level can be configured before app startup
 - This provides repeatable non-unit load/soak evidence beyond normal test execution.
 
 ### 20. Protocol boundary allowlisting for MCP/A2A adapters

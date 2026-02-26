@@ -1,16 +1,21 @@
 defmodule Jido.Code.Server.Benchmark.Phase9BenchScript do
   alias Jido.Code.Server.Benchmark.Phase9Harness
+  require Logger
 
   @switches [
     projects: :integer,
     conversations: :integer,
     events: :integer,
     concurrency: :integer,
-    timeout_ms: :integer
+    timeout_ms: :integer,
+    quiet: :boolean,
+    verbose: :boolean
   ]
 
   def run do
     {parsed, _argv, _invalid} = OptionParser.parse(System.argv(), strict: @switches)
+    configure_logging(parsed)
+    ensure_runtime_started!()
 
     harness_opts = [
       project_count: Keyword.get(parsed, :projects, 3),
@@ -37,6 +42,27 @@ defmodule Jido.Code.Server.Benchmark.Phase9BenchScript do
     end
   end
 
+  defp configure_logging(parsed) do
+    quiet? =
+      case {Keyword.get(parsed, :quiet), Keyword.get(parsed, :verbose, false)} do
+        {true, false} -> true
+        {false, _verbose?} -> false
+        {nil, false} -> true
+        {_quiet?, true} -> false
+      end
+
+    if quiet? do
+      Logger.configure(level: :warning)
+    end
+  end
+
+  defp ensure_runtime_started! do
+    case Application.ensure_all_started(:jido_code_server) do
+      {:ok, _apps} -> :ok
+      {:error, reason} -> raise "failed to start :jido_code_server: #{inspect(reason)}"
+    end
+  end
+
   defp print_report(report) do
     IO.puts("Phase 9 Benchmark Report")
     IO.puts("Elapsed (ms): #{report.elapsed_ms}")
@@ -49,7 +75,9 @@ defmodule Jido.Code.Server.Benchmark.Phase9BenchScript do
       "Conversations: requested=#{report.conversations.requested} started=#{report.conversations.started} failed=#{report.conversations.failed}"
     )
 
-    IO.puts("Events: requested=#{report.events.requested} sent=#{report.events.sent} failed=#{report.events.failed}")
+    IO.puts(
+      "Events: requested=#{report.events.requested} sent=#{report.events.sent} failed=#{report.events.failed}"
+    )
 
     latency = report.events.latency_ms
 
@@ -62,7 +90,9 @@ defmodule Jido.Code.Server.Benchmark.Phase9BenchScript do
     )
 
     Enum.each(report.project_diagnostics, fn diag ->
-      IO.puts("Project diag: project_id=#{diag.project_id} health=#{diag.health_status} errors=#{diag.error_count}")
+      IO.puts(
+        "Project diag: project_id=#{diag.project_id} health=#{diag.health_status} errors=#{diag.error_count}"
+      )
     end)
 
     if report.failures != [] do
