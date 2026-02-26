@@ -66,7 +66,7 @@ defmodule Jido.Code.Server.ProtocolGatewayTest do
 
     assert {:ok, timeline} = Runtime.conversation_projection(project_id, "mcp-c1", :timeline)
 
-    assert Enum.map(timeline, &Map.get(&1, "content")) == [
+    assert Enum.map(timeline, &get_in(&1, ["data", "content"])) == [
              "hello from mcp",
              "hello from project server"
            ]

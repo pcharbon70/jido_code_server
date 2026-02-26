@@ -31,7 +31,7 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
     assert :ok = ConversationAgent.cast(pid, signal)
     assert {:ok, timeline} = await_projection(pid, :timeline)
 
-    assert [%{"type" => "conversation.user.message", "content" => "ping"}] = timeline
+    assert [%{"type" => "conversation.user.message", "data" => %{"content" => "ping"}}] = timeline
   end
 
   test "project conversation projections are deterministic for same event sequence" do
@@ -128,7 +128,7 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
 
     assert_receive {:conversation_event, "cast-sub-c", event}, 1_000
     assert event["type"] == "conversation.user.message"
-    assert event["content"] == "cast one"
+    assert get_in(event, ["data", "content"]) == "cast one"
   end
 
   test "conversation lifecycle supports stop and restart without project disruption" do
@@ -146,7 +146,7 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
                "data" => %{"content" => "before"}
              })
 
-    assert {:ok, [%{"content" => "before"}]} =
+    assert {:ok, [%{"data" => %{"content" => "before"}}]} =
              Runtime.conversation_projection(project_id, "restart-c", :timeline)
 
     assert :ok = Runtime.stop_conversation(project_id, "restart-c")
