@@ -95,7 +95,7 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunToolInstruction do
     case ConversationSignal.normalize(event) do
       {:ok, signal} ->
         base = [ConversationSignal.to_map(signal)]
-        base ++ maybe_subagent_signal(event, conversation_id)
+        base ++ maybe_subagent_signal(signal, conversation_id)
 
       _ ->
         []
@@ -104,16 +104,16 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunToolInstruction do
 
   defp events_to_signal_maps(_event, _conversation_id), do: []
 
-  defp maybe_subagent_signal(event, conversation_id) do
-    type = map_get(event, "type")
-    data = map_get(event, "data") || %{}
+  defp maybe_subagent_signal(%Jido.Signal{} = signal, conversation_id) do
+    type = signal.type
+    data = signal.data || %{}
     tool_name = map_get(data, "name")
 
     cond do
-      type == "tool.completed" ->
+      type == "conversation.tool.completed" ->
         payload = data |> map_get("result") |> map_get("result")
         ref = payload && map_get(payload, "subagent")
-        correlation_id = event |> map_get("meta") |> map_get("correlation_id")
+        correlation_id = ConversationSignal.correlation_id(signal)
 
         if is_map(ref) do
           [signal_map("conversation.subagent.started", ref, conversation_id, correlation_id)]
@@ -121,9 +121,9 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunToolInstruction do
           []
         end
 
-      type == "tool.failed" and is_binary(tool_name) and
+      type == "conversation.tool.failed" and is_binary(tool_name) and
           String.starts_with?(tool_name, "agent.spawn.") ->
-        correlation_id = event |> map_get("meta") |> map_get("correlation_id")
+        correlation_id = ConversationSignal.correlation_id(signal)
         template_id = String.replace_prefix(tool_name, "agent.spawn.", "")
 
         [
