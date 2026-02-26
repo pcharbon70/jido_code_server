@@ -23,7 +23,10 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
              ConversationAgent.start_link(project_id: "phase5", conversation_id: "direct-cast")
 
     signal =
-      ConversationSignal.normalize!(%{"type" => "conversation.user.message", "content" => "ping"})
+      ConversationSignal.normalize!(%{
+        "type" => "conversation.user.message",
+        "data" => %{"content" => "ping"}
+      })
 
     assert :ok = ConversationAgent.cast(pid, signal)
     assert {:ok, timeline} = await_projection(pid, :timeline)
@@ -42,12 +45,12 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
     assert {:ok, "c-b"} = Runtime.start_conversation(project_id, conversation_id: "c-b")
 
     events = [
-      %{"type" => "conversation.user.message", "content" => "hello"},
+      %{"type" => "conversation.user.message", "data" => %{"content" => "hello"}},
       %{
         "type" => "conversation.tool.requested",
-        "tool_call" => %{"name" => "asset.list", "args" => %{"type" => "skill"}}
+        "data" => %{"tool_call" => %{"name" => "asset.list", "args" => %{"type" => "skill"}}}
       },
-      %{"type" => "conversation.tool.completed", "name" => "asset.list"}
+      %{"type" => "conversation.tool.completed", "data" => %{"name" => "asset.list"}}
     ]
 
     Enum.each(events, fn event ->
@@ -87,7 +90,7 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
     assert :ok =
              RuntimeSignal.send_signal(project_id, "sub-c", %{
                "type" => "conversation.user.message",
-               "content" => "one"
+               "data" => %{"content" => "one"}
              })
 
     assert_receive {:conversation_event, "sub-c", event}, 1_000
@@ -98,7 +101,7 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
     assert :ok =
              RuntimeSignal.send_signal(project_id, "sub-c", %{
                "type" => "conversation.user.message",
-               "content" => "two"
+               "data" => %{"content" => "two"}
              })
 
     refute_receive {:conversation_event, "sub-c", _event}, 200
@@ -140,7 +143,7 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
     assert :ok =
              RuntimeSignal.send_signal(project_id, "restart-c", %{
                "type" => "conversation.user.message",
-               "content" => "before"
+               "data" => %{"content" => "before"}
              })
 
     assert {:ok, [%{"content" => "before"}]} =
