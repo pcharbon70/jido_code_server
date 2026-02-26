@@ -39,7 +39,7 @@ sequenceDiagram
     P-->>TR: allow or deny
     TR->>SAM: spawn_from_template
     SAM-->>TR: subagent ref
-    TR-->>RT: tool.completed
+    TR-->>RT: conversation.tool.completed
     RT-->>RT: emit conversation.subagent.started
 ```
 
