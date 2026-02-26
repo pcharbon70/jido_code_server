@@ -1291,6 +1291,7 @@ defmodule Jido.Code.Server.Project.Server do
       event
       |> incident_map_get(:data)
       |> incident_map_get(:status)
+      |> normalize_tool_status()
 
     case status do
       "requested" -> "tool.requested"
@@ -1334,6 +1335,21 @@ defmodule Jido.Code.Server.Project.Server do
   end
 
   defp cancelled_tool_reason?(_reason), do: false
+
+  defp normalize_tool_status(status) when is_atom(status) do
+    status
+    |> Atom.to_string()
+    |> normalize_tool_status()
+  end
+
+  defp normalize_tool_status(status) when is_binary(status) do
+    status
+    |> String.trim()
+    |> String.trim_leading(":")
+    |> String.downcase()
+  end
+
+  defp normalize_tool_status(_status), do: nil
 
   defp drop_conversation_id_fields(value) when is_map(value) do
     value
