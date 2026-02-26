@@ -344,6 +344,10 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert Enum.any?(timeline.entries, fn entry ->
              entry.source == :conversation and entry.event == "user.message"
            end)
+
+    refute Enum.any?(timeline.entries, fn entry ->
+             entry.source == :conversation and String.starts_with?(entry.event, "conv.")
+           end)
   end
 
   test "incident timeline correlation filters still work after conversation stop with canonical history" do
@@ -411,6 +415,10 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
 
     assert Enum.any?(timeline.entries, fn entry ->
              entry.source == :conversation and entry.event == "user.message"
+           end)
+
+    refute Enum.any?(timeline.entries, fn entry ->
+             entry.source == :conversation and String.starts_with?(entry.event, "conv.")
            end)
   end
 
