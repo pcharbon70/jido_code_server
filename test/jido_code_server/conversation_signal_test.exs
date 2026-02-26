@@ -20,6 +20,14 @@ defmodule Jido.Code.Server.ConversationSignalTest do
              ConversationSignal.normalize(%{"type" => "user.message", "content" => "hello"})
   end
 
+  test "rejects unknown conversation namespace types" do
+    assert {:error, {:invalid_type, "conversation.unknown.event"}} =
+             ConversationSignal.normalize(%{
+               "type" => "conversation.unknown.event",
+               "content" => "hello"
+             })
+  end
+
   test "rejects non-canonical Jido.Signal types" do
     signal = Jido.Signal.new!("tool.completed", %{"name" => "asset.list"})
 

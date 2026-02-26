@@ -113,6 +113,16 @@ defmodule Jido.Code.Server.ProjectBootstrapAndConversationApiTest do
     assert {:error, {:invalid_type, "tool.completed"}} =
              Runtime.conversation_cast(project_id, "conversation-b", invalid_cast_signal)
 
+    unknown_call_signal = Jido.Signal.new!("conversation.unknown.event", %{"content" => "hello"})
+
+    assert {:error, {:invalid_type, "conversation.unknown.event"}} =
+             Runtime.conversation_call(project_id, "conversation-b", unknown_call_signal)
+
+    unknown_cast_signal = Jido.Signal.new!("conversation.unknown.event", %{"content" => "hello"})
+
+    assert {:error, {:invalid_type, "conversation.unknown.event"}} =
+             Runtime.conversation_cast(project_id, "conversation-b", unknown_cast_signal)
+
     reserved_call_signal = Jido.Signal.new!("conversation.cmd.cancel", %{"reason" => "external"})
 
     assert {:error, {:reserved_type, "conversation.cmd.*"}} =
