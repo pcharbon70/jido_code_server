@@ -956,7 +956,7 @@ defmodule Jido.Code.Server.Project.Server do
       %{
         source: :telemetry,
         at: Map.get(event, :at) || Map.get(event, "at"),
-        event: normalize_telemetry_event_name(event_name),
+        event: normalize_telemetry_event_name(event_name, event),
         conversation_id: conversation_id,
         correlation_id: event_correlation,
         payload: event
@@ -1277,11 +1277,15 @@ defmodule Jido.Code.Server.Project.Server do
 
   defp legacy_event_type(type, _event), do: type
 
-  defp normalize_telemetry_event_name(name) when is_binary(name) do
-    legacy_event_type(name, %{})
+  defp normalize_telemetry_event_name(name, payload) when is_binary(name) and is_map(payload) do
+    if telemetry_cancelled_tool_event?(name, payload) do
+      "tool.cancelled"
+    else
+      legacy_event_type(name, %{})
+    end
   end
 
-  defp normalize_telemetry_event_name(name), do: name
+  defp normalize_telemetry_event_name(name, _payload), do: name
 
   defp internal_conversation_incident_event?(event) when is_binary(event) do
     String.starts_with?(event, "conv.")
@@ -1353,6 +1357,14 @@ defmodule Jido.Code.Server.Project.Server do
   end
 
   defp normalize_tool_status(_status), do: nil
+
+  defp telemetry_cancelled_tool_event?(event_name, payload)
+       when event_name in ["tool.failed", "conversation.tool.failed"] and is_map(payload) do
+    reason = Map.get(payload, :reason) || Map.get(payload, "reason")
+    cancelled_tool_reason?(reason)
+  end
+
+  defp telemetry_cancelled_tool_event?(_event_name, _payload), do: false
 
   defp drop_conversation_id_fields(value) when is_map(value) do
     value
