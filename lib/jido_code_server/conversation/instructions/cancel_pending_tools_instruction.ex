@@ -28,7 +28,7 @@ defmodule Jido.Code.Server.Conversation.Instructions.CancelPendingToolsInstructi
       |> Enum.map(&cancelled_tool_signal(&1, conversation_id, correlation_id))
 
     Enum.each(signals, fn signal ->
-      Telemetry.emit("tool.cancelled", %{
+      Telemetry.emit("conversation.tool.cancelled", %{
         project_id: map_get(project_ctx, "project_id"),
         conversation_id: conversation_id,
         correlation_id: correlation_id_from_signal(signal)

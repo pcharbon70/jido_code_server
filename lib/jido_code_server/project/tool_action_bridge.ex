@@ -88,7 +88,7 @@ defmodule Jido.Code.Server.Project.ToolActionBridge do
         Runtime.run_tool(project_id, call)
 
       :error ->
-        Telemetry.emit("tool.failed", %{
+        Telemetry.emit("conversation.tool.failed", %{
           status: :error,
           tool: tool_name,
           reason: :missing_project_context

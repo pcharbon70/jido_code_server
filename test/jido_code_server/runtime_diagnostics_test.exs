@@ -115,13 +115,13 @@ defmodule Jido.Code.Server.RuntimeDiagnosticsTest do
              })
 
     assert_eventually(fn ->
-      event_count(Runtime.diagnostics(project_id), "tool.failed") >= 1
+      event_count(Runtime.diagnostics(project_id), "conversation.tool.failed") >= 1
     end)
 
     diagnostics = Runtime.diagnostics(project_id)
 
     assert diagnostics.health.status == :degraded
-    assert event_count(diagnostics, "tool.failed") >= 1
+    assert event_count(diagnostics, "conversation.tool.failed") >= 1
     assert diagnostics.telemetry.recent_errors != []
   end
 
