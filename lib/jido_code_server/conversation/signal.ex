@@ -114,7 +114,8 @@ defmodule Jido.Code.Server.Conversation.Signal do
   def correlation_id(_signal), do: nil
 
   defp build_signal(raw, type) do
-    with {:ok, data} <- extract_data(raw) do
+    with {:ok, data} <- extract_data(raw),
+         {:ok, extensions} <- extract_extensions(raw) do
       source = extract_source(raw)
 
       attrs =
@@ -122,7 +123,7 @@ defmodule Jido.Code.Server.Conversation.Signal do
           source: source,
           id: raw[:id] || raw["id"],
           time: raw[:time] || raw["time"],
-          extensions: extract_extensions(raw)
+          extensions: extensions
         ]
         |> Enum.reject(fn {_key, value} -> is_nil(value) end)
 
@@ -195,16 +196,51 @@ defmodule Jido.Code.Server.Conversation.Signal do
   defp envelope_key?(_key), do: false
 
   defp extract_extensions(raw) do
-    ext = raw[:extensions] || raw["extensions"] || %{}
-    meta = raw[:meta] || raw["meta"] || %{}
+    with :ok <- validate_extensions_envelope(raw),
+         :ok <- validate_meta_envelope(raw) do
+      ext = raw[:extensions] || raw["extensions"]
+      meta = raw[:meta] || raw["meta"]
 
-    %{}
-    |> merge_if_map(ext)
-    |> merge_if_map(meta)
+      {:ok,
+       %{}
+       |> merge_if_map(ext)
+       |> merge_if_map(meta)}
+    end
   end
 
   defp merge_if_map(acc, value) when is_map(value), do: Map.merge(acc, value)
   defp merge_if_map(acc, _value), do: acc
+
+  defp validate_extensions_envelope(raw) do
+    case envelope_value(raw, :extensions) do
+      {:present, value} when not is_nil(value) and not is_map(value) ->
+        {:error, :invalid_extensions}
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp validate_meta_envelope(raw) do
+    case envelope_value(raw, :meta) do
+      {:present, value} when not is_nil(value) and not is_map(value) ->
+        {:error, :invalid_meta}
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp envelope_value(raw, key) when is_map(raw) do
+    atom_key = key
+    string_key = Atom.to_string(key)
+
+    cond do
+      Map.has_key?(raw, atom_key) -> {:present, Map.get(raw, atom_key)}
+      Map.has_key?(raw, string_key) -> {:present, Map.get(raw, string_key)}
+      true -> :missing
+    end
+  end
 
   defp ensure_correlation(%Jido.Signal{extensions: extensions} = signal) do
     {correlation_id, meta} = Correlation.ensure(extensions)
