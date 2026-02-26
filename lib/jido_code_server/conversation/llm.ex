@@ -3,6 +3,7 @@ defmodule Jido.Code.Server.Conversation.LLM do
   Conversation-scoped LLM adapter with deterministic and Jido.AI-backed modes.
   """
 
+  alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
   alias Jido.Code.Server.Correlation
   alias Jido.Code.Server.Types.ToolCall
 
@@ -349,11 +350,11 @@ defmodule Jido.Code.Server.Conversation.LLM do
     data = map_lookup(source_event, :data) || %{}
 
     cond do
-      type in ["conversation.tool.completed", "tool.completed"] ->
+      type == "conversation.tool.completed" ->
         name = map_lookup(data, :name) || "unknown"
         "Tool #{name} completed."
 
-      type in ["conversation.tool.failed", "tool.failed"] ->
+      type == "conversation.tool.failed" ->
         name = map_lookup(data, :name) || "unknown"
         reason = map_lookup(data, :reason)
 
@@ -388,7 +389,7 @@ defmodule Jido.Code.Server.Conversation.LLM do
   end
 
   defp infer_tool_calls_for_source(%{source_event: source_event} = request) do
-    if source_event_type(source_event) in ["conversation.user.message", "user.message"] do
+    if source_event_type(source_event) == "conversation.user.message" do
       infer_tool_calls(request)
     else
       []
@@ -515,7 +516,10 @@ defmodule Jido.Code.Server.Conversation.LLM do
   defp nested_map_lookup(_map, _path), do: nil
 
   defp source_event_type(source_event) when is_map(source_event) do
-    map_lookup(source_event, :type)
+    case ConversationSignal.normalize(source_event) do
+      {:ok, signal} -> signal.type
+      _ -> map_lookup(source_event, :type)
+    end
   end
 
   defp source_event_type(_source_event), do: nil
