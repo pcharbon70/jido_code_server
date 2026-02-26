@@ -100,9 +100,7 @@ defmodule Jido.Code.Server.Conversation.Signal do
       "extensions" => signal.extensions
     }
 
-    base
-    |> maybe_put_content(data)
-    |> maybe_put_meta(correlation_id)
+    maybe_put_meta(base, correlation_id)
   end
 
   @spec correlation_id(Jido.Signal.t()) :: String.t() | nil
@@ -217,12 +215,6 @@ defmodule Jido.Code.Server.Conversation.Signal do
   defp normalize_signal_data_input(%{} = data), do: {:ok, data}
   defp normalize_signal_data_input(nil), do: {:ok, %{}}
   defp normalize_signal_data_input(_other), do: {:error, :invalid_data}
-
-  defp maybe_put_content(map, %{"content" => content}) when is_binary(content) do
-    Map.put(map, "content", content)
-  end
-
-  defp maybe_put_content(map, _data), do: map
 
   defp maybe_put_meta(map, nil), do: map
 

@@ -73,7 +73,7 @@ defmodule Jido.Code.Server.ProjectBootstrapAndConversationApiTest do
              Runtime.conversation_projection(project_id, "conversation-a", :timeline)
 
     assert timeline_event["type"] == "conversation.user.message"
-    assert timeline_event["content"] == "hello"
+    assert get_in(timeline_event, ["data", "content"]) == "hello"
     assert is_binary(get_in(timeline_event, ["meta", "correlation_id"]))
     correlation_id = get_in(timeline_event, ["meta", "correlation_id"])
 
@@ -84,7 +84,7 @@ defmodule Jido.Code.Server.ProjectBootstrapAndConversationApiTest do
     assert llm_context.conversation_id == "conversation-a"
     assert [context_event] = llm_context.events
     assert context_event["type"] == "conversation.user.message"
-    assert context_event["content"] == "hello"
+    assert get_in(context_event, ["data", "content"]) == "hello"
     assert get_in(context_event, ["meta", "correlation_id"]) == correlation_id
 
     assert :ok = Runtime.stop_conversation(project_id, "conversation-a")

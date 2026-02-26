@@ -2076,7 +2076,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
       user_messages =
         timeline
         |> Enum.filter(&(map_lookup(&1, :type) == "conversation.user.message"))
-        |> Enum.map(&map_lookup(&1, :content))
+        |> Enum.map(&map_lookup(map_lookup(&1, :data), :content))
 
       assert user_messages == [message]
       assert Enum.any?(timeline, &(map_lookup(&1, :type) == "conversation.assistant.message"))

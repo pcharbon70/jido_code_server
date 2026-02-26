@@ -349,7 +349,7 @@ defmodule Jido.Code.Server.Benchmark.Phase9Harness do
   defp actual_benchmark_messages(timeline) do
     timeline
     |> Enum.filter(&(map_lookup(&1, :type) == "conversation.user.message"))
-    |> Enum.map(&map_lookup(&1, :content))
+    |> Enum.map(&map_lookup(map_lookup(&1, :data), :content))
     |> Enum.filter(&(is_binary(&1) and String.starts_with?(&1, @event_prefix)))
   end
 
