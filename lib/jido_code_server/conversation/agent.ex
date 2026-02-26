@@ -86,7 +86,9 @@ defmodule Jido.Code.Server.Conversation.Agent do
 
   @spec call(pid(), Jido.Signal.t(), timeout()) :: {:ok, snapshot()} | {:error, term()}
   def call(server, %Jido.Signal{} = signal, timeout \\ 30_000) do
-    with {:ok, _agent} <- Jido.AgentServer.call(server, ingest_command_signal(signal), timeout),
+    with {:ok, normalized_signal} <- ConversationSignal.normalize(signal),
+         {:ok, _agent} <-
+           Jido.AgentServer.call(server, ingest_command_signal(normalized_signal), timeout),
          {:ok, state} <- state(server) do
       {:ok, snapshot(state)}
     end
@@ -94,7 +96,9 @@ defmodule Jido.Code.Server.Conversation.Agent do
 
   @spec cast(pid(), Jido.Signal.t()) :: :ok | {:error, term()}
   def cast(server, %Jido.Signal{} = signal) do
-    Jido.AgentServer.cast(server, ingest_command_signal(signal))
+    with {:ok, normalized_signal} <- ConversationSignal.normalize(signal) do
+      Jido.AgentServer.cast(server, ingest_command_signal(normalized_signal))
+    end
   end
 
   @spec cancel(pid(), String.t()) :: {:ok, snapshot()} | {:error, term()}
