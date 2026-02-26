@@ -92,4 +92,35 @@ defmodule Jido.Code.Server.ProjectBootstrapAndConversationApiTest do
     assert {:error, {:conversation_not_found, "conversation-a"}} =
              Runtime.conversation_projection(project_id, "conversation-a", :timeline)
   end
+
+  test "conversation call and cast reject non-canonical signal types" do
+    root = TempProject.create!()
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root, project_id: "phase2-conversation-signal-guard")
+
+    assert {:ok, "conversation-b"} =
+             Runtime.start_conversation(project_id, conversation_id: "conversation-b")
+
+    invalid_call_signal = Jido.Signal.new!("user.message", %{"content" => "hello"})
+
+    assert {:error, {:invalid_type, "user.message"}} =
+             Runtime.conversation_call(project_id, "conversation-b", invalid_call_signal)
+
+    invalid_cast_signal = Jido.Signal.new!("tool.completed", %{"name" => "asset.list"})
+
+    assert {:error, {:invalid_type, "tool.completed"}} =
+             Runtime.conversation_cast(project_id, "conversation-b", invalid_cast_signal)
+
+    valid_signal = Jido.Signal.new!("conversation.user.message", %{"content" => "hello"})
+
+    assert {:ok, _snapshot} =
+             Runtime.conversation_call(project_id, "conversation-b", valid_signal)
+
+    assert {:ok, [event]} =
+             Runtime.conversation_projection(project_id, "conversation-b", :timeline)
+
+    assert event["type"] == "conversation.user.message"
+  end
 end
