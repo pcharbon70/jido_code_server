@@ -6,6 +6,16 @@ defmodule Jido.Code.Server.Conversation.Signal do
   alias Jido.Code.Server.Correlation
 
   @default_source "/jido/code/server/conversation"
+  @signal_envelope_keys MapSet.new([
+                          "id",
+                          "type",
+                          "source",
+                          "time",
+                          "meta",
+                          "extensions",
+                          "data",
+                          "specversion"
+                        ])
   @canonical_types [
     "conversation.assistant.delta",
     "conversation.assistant.message",
@@ -35,7 +45,9 @@ defmodule Jido.Code.Server.Conversation.Signal do
   @spec normalize(Jido.Signal.t() | map()) :: {:ok, Jido.Signal.t()} | {:error, term()}
   def normalize(%Jido.Signal{type: type} = signal) when is_binary(type) do
     if canonical_type?(type) do
-      {:ok, ensure_correlation(signal)}
+      with {:ok, data} <- normalize_signal_data_input(signal.data) do
+        {:ok, ensure_correlation(%{signal | data: data})}
+      end
     else
       {:error, {:invalid_type, String.trim(type)}}
     end
@@ -104,19 +116,20 @@ defmodule Jido.Code.Server.Conversation.Signal do
   def correlation_id(_signal), do: nil
 
   defp build_signal(raw, type) do
-    source = extract_source(raw)
-    data = extract_data(raw)
+    with {:ok, data} <- extract_data(raw) do
+      source = extract_source(raw)
 
-    attrs =
-      [
-        source: source,
-        id: raw[:id] || raw["id"],
-        time: raw[:time] || raw["time"],
-        extensions: extract_extensions(raw)
-      ]
-      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+      attrs =
+        [
+          source: source,
+          id: raw[:id] || raw["id"],
+          time: raw[:time] || raw["time"],
+          extensions: extract_extensions(raw)
+        ]
+        |> Enum.reject(fn {_key, value} -> is_nil(value) end)
 
-    Jido.Signal.new(type, data, attrs)
+      Jido.Signal.new(type, data, attrs)
+    end
   end
 
   defp extract_type(raw) do
@@ -155,10 +168,25 @@ defmodule Jido.Code.Server.Conversation.Signal do
 
   defp extract_data(raw) do
     case raw[:data] || raw["data"] do
-      data when is_map(data) -> data
-      _ -> %{}
+      data when is_map(data) ->
+        {:ok, data}
+
+      _ ->
+        if has_flat_payload_fields?(raw) do
+          {:error, :missing_data_envelope}
+        else
+          {:ok, %{}}
+        end
     end
   end
+
+  defp has_flat_payload_fields?(raw) when is_map(raw) do
+    Enum.any?(raw, fn {key, _value} -> not envelope_key?(key) end)
+  end
+
+  defp envelope_key?(key) when is_atom(key), do: envelope_key?(Atom.to_string(key))
+  defp envelope_key?(key) when is_binary(key), do: MapSet.member?(@signal_envelope_keys, key)
+  defp envelope_key?(_key), do: false
 
   defp extract_extensions(raw) do
     ext = raw[:extensions] || raw["extensions"] || %{}
@@ -185,6 +213,10 @@ defmodule Jido.Code.Server.Conversation.Signal do
   defp normalize_signal_data(%{} = data), do: data
   defp normalize_signal_data(nil), do: %{}
   defp normalize_signal_data(other), do: %{"value" => other}
+
+  defp normalize_signal_data_input(%{} = data), do: {:ok, data}
+  defp normalize_signal_data_input(nil), do: {:ok, %{}}
+  defp normalize_signal_data_input(_other), do: {:error, :invalid_data}
 
   defp maybe_put_content(map, %{"content" => content}) when is_binary(content) do
     Map.put(map, "content", content)
