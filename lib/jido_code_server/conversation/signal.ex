@@ -168,14 +168,14 @@ defmodule Jido.Code.Server.Conversation.Signal do
     data = raw[:data] || raw["data"]
 
     cond do
-      is_map(data) ->
-        {:ok, data}
-
-      data_key_present?(raw) and not is_nil(data) ->
+      data_key_present?(raw) and not is_nil(data) and not is_map(data) ->
         {:error, :invalid_data}
 
       has_flat_payload_fields?(raw) ->
         {:error, :missing_data_envelope}
+
+      is_map(data) ->
+        {:ok, data}
 
       true ->
         {:ok, %{}}

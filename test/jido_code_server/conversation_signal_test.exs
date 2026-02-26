@@ -23,6 +23,22 @@ defmodule Jido.Code.Server.ConversationSignalTest do
              })
   end
 
+  test "rejects mixed payloads with data envelope and flat fields" do
+    assert {:error, :missing_data_envelope} =
+             ConversationSignal.normalize(%{
+               "type" => "conversation.user.message",
+               "data" => %{"content" => "hello"},
+               "content" => "shadowed"
+             })
+
+    assert {:error, :missing_data_envelope} =
+             ConversationSignal.normalize(%{
+               type: "conversation.user.message",
+               data: %{"content" => "hello"},
+               content: "shadowed"
+             })
+  end
+
   test "rejects raw map signals with non-map data values" do
     assert {:error, :invalid_data} =
              ConversationSignal.normalize(%{
