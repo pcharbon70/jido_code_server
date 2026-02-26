@@ -1116,9 +1116,8 @@ defmodule Jido.Code.Server.Project.Server do
     pending_events = timeline |> Enum.drop(last_index) |> List.wrap()
 
     Enum.each(pending_events, fn event ->
-      legacy_event = legacy_timeline_event(event)
-      send_conversation_event(subscribers, conversation_id, legacy_event)
-      maybe_send_conversation_delta(subscribers, conversation_id, legacy_event)
+      send_conversation_event(subscribers, conversation_id, event)
+      maybe_send_conversation_delta(subscribers, conversation_id, event)
     end)
 
     updated_index = last_index + length(pending_events)
@@ -1144,7 +1143,7 @@ defmodule Jido.Code.Server.Project.Server do
   defp maybe_send_conversation_delta(subscribers, conversation_id, event) do
     type = incident_map_get(event, :type)
 
-    if type in ["conversation.assistant.delta", "assistant.delta"] do
+    if type == "conversation.assistant.delta" do
       Enum.each(subscribers, fn pid ->
         send(pid, {:conversation_delta, conversation_id, event})
       end)
@@ -1214,69 +1213,6 @@ defmodule Jido.Code.Server.Project.Server do
       end
     end)
   end
-
-  defp legacy_timeline_event(event) when is_map(event) do
-    type = incident_map_get(event, :type) |> legacy_event_type(event)
-    data = event |> incident_map_get(:data) |> add_existing_atom_keys()
-    meta = event |> incident_map_get(:meta) |> add_existing_atom_keys()
-
-    event
-    |> maybe_put_atom_key(:type, type)
-    |> maybe_put_string_key("type", type)
-    |> maybe_put_atom_key(:data, data)
-    |> maybe_put_atom_key(:meta, meta)
-    |> maybe_put_atom_key(:content, incident_map_get(event, :content))
-    |> maybe_put_atom_key(:id, incident_map_get(event, :id))
-    |> maybe_put_atom_key(:source, incident_map_get(event, :source))
-    |> maybe_put_atom_key(:time, incident_map_get(event, :time))
-    |> maybe_put_atom_key(:extensions, incident_map_get(event, :extensions))
-    |> drop_nondeterministic_fields()
-    |> drop_conversation_id_fields()
-  end
-
-  defp legacy_timeline_event(event), do: event
-
-  defp legacy_event_type(type, event)
-
-  defp legacy_event_type("conversation.llm.requested", _event), do: "llm.started"
-  defp legacy_event_type("conversation.llm.completed", _event), do: "llm.completed"
-  defp legacy_event_type("conversation.llm.failed", _event), do: "llm.failed"
-  defp legacy_event_type("conversation.assistant.delta", _event), do: "assistant.delta"
-  defp legacy_event_type("conversation.assistant.message", _event), do: "assistant.message"
-  defp legacy_event_type("conversation.user.message", _event), do: "user.message"
-  defp legacy_event_type("conv.out.assistant.delta", _event), do: "assistant.delta"
-  defp legacy_event_type("conv.out.assistant.completed", _event), do: "assistant.message"
-  defp legacy_event_type("conv.in.message.received", _event), do: "user.message"
-  defp legacy_event_type("conversation.cancel", _event), do: "conversation.cancel"
-  defp legacy_event_type("conversation.resume", _event), do: "conversation.resume"
-  defp legacy_event_type("conversation.tool.requested", _event), do: "tool.requested"
-  defp legacy_event_type("conversation.tool.completed", _event), do: "tool.completed"
-  defp legacy_event_type("conv.out.tool.status", event), do: canonical_tool_status_event(event)
-
-  defp legacy_event_type("conversation.tool.failed", event) do
-    reason =
-      event
-      |> incident_map_get(:data)
-      |> canonical_tool_failure_reason()
-
-    if cancelled_tool_reason?(reason) do
-      "tool.cancelled"
-    else
-      "tool.failed"
-    end
-  end
-
-  defp legacy_event_type("conversation.tool.cancelled", _event), do: "tool.cancelled"
-
-  defp legacy_event_type(type, _event) when is_binary(type) do
-    if String.starts_with?(type, "conversation.") do
-      String.replace_prefix(type, "conversation.", "")
-    else
-      type
-    end
-  end
-
-  defp legacy_event_type(type, _event), do: type
 
   defp normalize_telemetry_event_name(name, payload) when is_binary(name) and is_map(payload) do
     if telemetry_cancelled_tool_event?(name, payload) do
@@ -1406,61 +1342,6 @@ defmodule Jido.Code.Server.Project.Server do
   end
 
   defp telemetry_cancelled_tool_event?(_event_name, _payload), do: false
-
-  defp drop_conversation_id_fields(value) when is_map(value) do
-    value
-    |> Map.drop([:conversation_id, "conversation_id"])
-    |> Enum.reduce(%{}, fn {key, nested}, acc ->
-      Map.put(acc, key, drop_conversation_id_fields(nested))
-    end)
-  end
-
-  defp drop_conversation_id_fields(value) when is_list(value) do
-    Enum.map(value, &drop_conversation_id_fields/1)
-  end
-
-  defp drop_conversation_id_fields(value), do: value
-
-  defp drop_nondeterministic_fields(value) when is_map(value) do
-    Map.drop(value, [:id, "id", :time, "time", :source, "source", :extensions, "extensions"])
-  end
-
-  defp maybe_put_atom_key(map, key, value) when is_map(map) and is_atom(key) do
-    Map.put(map, key, value)
-  end
-
-  defp maybe_put_string_key(map, key, value) when is_map(map) and is_binary(key) do
-    Map.put(map, key, value)
-  end
-
-  defp add_existing_atom_keys(value) when is_map(value) do
-    Enum.reduce(value, %{}, fn {key, nested}, acc ->
-      nested_value = add_existing_atom_keys(nested)
-      acc = Map.put(acc, key, nested_value)
-      maybe_put_existing_atom_key(acc, key, nested_value)
-    end)
-  end
-
-  defp add_existing_atom_keys(value) when is_list(value) do
-    Enum.map(value, &add_existing_atom_keys/1)
-  end
-
-  defp add_existing_atom_keys(value), do: value
-
-  defp maybe_put_existing_atom_key(acc, key, nested_value) when is_binary(key) do
-    case to_existing_atom(key) do
-      nil -> acc
-      atom_key -> Map.put(acc, atom_key, nested_value)
-    end
-  end
-
-  defp maybe_put_existing_atom_key(acc, _key, _nested_value), do: acc
-
-  defp to_existing_atom(key) when is_binary(key) do
-    String.to_existing_atom(key)
-  rescue
-    ArgumentError -> nil
-  end
 
   defp emit_conversation_ingested(project_id, conversation_id, %Jido.Signal{} = signal) do
     Telemetry.emit("conversation.event_ingested", %{
