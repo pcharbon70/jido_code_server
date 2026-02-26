@@ -129,7 +129,8 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
     event_meta = event_meta(call.meta)
 
     %{
-      type: "tool.completed",
+      type: "conversation.tool.completed",
+      source: event_source(call.meta),
       meta: event_meta,
       data: %{
         "name" => call.name,
@@ -144,7 +145,8 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
     event_meta = event_meta(call.meta)
 
     %{
-      type: "tool.failed",
+      type: "conversation.tool.failed",
+      source: event_source(call.meta),
       meta: event_meta,
       data: %{
         "name" => call.name,
@@ -156,10 +158,12 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
   end
 
   defp invalid_tool_call_event(reason, raw_tool_call) do
-    meta = event_meta(raw_tool_call["meta"] || raw_tool_call[:meta] || %{})
+    raw_meta = raw_tool_call["meta"] || raw_tool_call[:meta] || %{}
+    meta = event_meta(raw_meta)
 
     %{
-      type: "tool.failed",
+      type: "conversation.tool.failed",
+      source: event_source(raw_meta),
       meta: meta,
       data: %{
         "name" => "unknown",
@@ -187,6 +191,18 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
   end
 
   defp event_meta(_meta), do: %{}
+
+  defp event_source(meta) when is_map(meta) do
+    case Map.get(meta, "conversation_id") || Map.get(meta, :conversation_id) do
+      conversation_id when is_binary(conversation_id) and conversation_id != "" ->
+        "/conversation/#{conversation_id}"
+
+      _ ->
+        "/jido/code/server/conversation"
+    end
+  end
+
+  defp event_source(_meta), do: "/jido/code/server/conversation"
 
   defp project_id_from_ctx(project_ctx) when is_map(project_ctx) do
     Map.get(project_ctx, :project_id) || "global"
