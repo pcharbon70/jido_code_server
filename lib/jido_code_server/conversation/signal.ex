@@ -6,7 +6,32 @@ defmodule Jido.Code.Server.Conversation.Signal do
   alias Jido.Code.Server.Correlation
 
   @default_source "/jido/code/server/conversation"
-  @canonical_type_prefix "conversation."
+  @canonical_types [
+    "conversation.assistant.delta",
+    "conversation.assistant.message",
+    "conversation.cancel",
+    "conversation.cmd.cancel",
+    "conversation.cmd.drain",
+    "conversation.cmd.ingest",
+    "conversation.cmd.instruction.result",
+    "conversation.llm.completed",
+    "conversation.llm.failed",
+    "conversation.llm.requested",
+    "conversation.llm.started",
+    "conversation.queue.overflow",
+    "conversation.resume",
+    "conversation.subagent.completed",
+    "conversation.subagent.failed",
+    "conversation.subagent.requested",
+    "conversation.subagent.started",
+    "conversation.subagent.stopped",
+    "conversation.tool.cancelled",
+    "conversation.tool.completed",
+    "conversation.tool.failed",
+    "conversation.tool.requested",
+    "conversation.user.message"
+  ]
+  @canonical_type_set MapSet.new(@canonical_types)
 
   @spec normalize(Jido.Signal.t() | map()) :: {:ok, Jido.Signal.t()} | {:error, term()}
   def normalize(%Jido.Signal{type: type} = signal) when is_binary(type) do
@@ -117,7 +142,7 @@ defmodule Jido.Code.Server.Conversation.Signal do
   end
 
   defp canonical_type?(type) when is_binary(type) do
-    String.starts_with?(type, @canonical_type_prefix)
+    MapSet.member?(@canonical_type_set, type)
   end
 
   defp extract_source(raw) do
