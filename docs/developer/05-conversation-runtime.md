@@ -25,7 +25,7 @@ State includes:
 Signal envelope contract:
 
 - Runtime normalization only reads payload from `signal.data` (or `"data"` in map input).
-- Flat top-level payload fields are not treated as signal data by runtime normalization.
+- Flat top-level payload fields are rejected with `:missing_data_envelope`.
 
 ## Domain State and Reducer
 

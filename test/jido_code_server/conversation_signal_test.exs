@@ -15,15 +15,12 @@ defmodule Jido.Code.Server.ConversationSignalTest do
     assert is_binary(ConversationSignal.correlation_id(signal))
   end
 
-  test "ignores flat payload fields outside the data envelope" do
-    assert {:ok, signal} =
+  test "rejects flat payload fields outside the data envelope" do
+    assert {:error, :missing_data_envelope} =
              ConversationSignal.normalize(%{
                "type" => "conversation.user.message",
                "content" => "hello"
              })
-
-    assert signal.data == %{}
-    assert is_binary(ConversationSignal.correlation_id(signal))
   end
 
   test "rejects non-canonical map signal types" do
@@ -43,6 +40,13 @@ defmodule Jido.Code.Server.ConversationSignalTest do
     signal = Jido.Signal.new!("tool.completed", %{"name" => "asset.list"})
 
     assert {:error, {:invalid_type, "tool.completed"}} =
+             ConversationSignal.normalize(signal)
+  end
+
+  test "rejects non-map Jido.Signal payload data" do
+    signal = Jido.Signal.new!("conversation.user.message", "hello")
+
+    assert {:error, :invalid_data} =
              ConversationSignal.normalize(signal)
   end
 end
