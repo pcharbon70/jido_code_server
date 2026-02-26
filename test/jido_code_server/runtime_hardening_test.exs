@@ -342,7 +342,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
            end)
 
     assert Enum.any?(timeline.entries, fn entry ->
-             entry.source == :conversation and entry.event == "conv.in.message.received"
+             entry.source == :conversation and entry.event == "user.message"
            end)
   end
 
@@ -410,7 +410,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
            end)
 
     assert Enum.any?(timeline.entries, fn entry ->
-             entry.source == :conversation and entry.event == "conv.in.message.received"
+             entry.source == :conversation and entry.event == "user.message"
            end)
   end
 
