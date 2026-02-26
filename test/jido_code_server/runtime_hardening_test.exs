@@ -386,7 +386,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
            end)
 
     assert Enum.any?(timeline.entries, fn entry ->
-             entry.source == :conversation and entry.event == "user.message"
+             entry.source == :conversation and entry.event == "conversation.user.message"
            end)
 
     refute Enum.any?(timeline.entries, fn entry ->
@@ -458,7 +458,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
            end)
 
     assert Enum.any?(timeline.entries, fn entry ->
-             entry.source == :conversation and entry.event == "user.message"
+             entry.source == :conversation and entry.event == "conversation.user.message"
            end)
 
     refute Enum.any?(timeline.entries, fn entry ->
@@ -505,11 +505,11 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              )
 
     assert Enum.any?(timeline.entries, fn entry ->
-             entry.source == :conversation and entry.event == "tool.cancelled"
+             entry.source == :conversation and entry.event == "conversation.tool.cancelled"
            end)
 
     refute Enum.any?(timeline.entries, fn entry ->
-             entry.source == :conversation and entry.event == "tool.failed"
+             entry.source == :conversation and entry.event == "conversation.tool.failed"
            end)
   end
 
@@ -550,11 +550,11 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              )
 
     assert Enum.any?(timeline.entries, fn entry ->
-             entry.source == :conversation and entry.event == "tool.cancelled"
+             entry.source == :conversation and entry.event == "conversation.tool.cancelled"
            end)
 
     refute Enum.any?(timeline.entries, fn entry ->
-             entry.source == :conversation and entry.event == "tool.status"
+             entry.source == :conversation and entry.event == "conversation.tool.status"
            end)
   end
 
@@ -595,11 +595,11 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
              )
 
     assert Enum.any?(timeline.entries, fn entry ->
-             entry.source == :conversation and entry.event == "tool.cancelled"
+             entry.source == :conversation and entry.event == "conversation.tool.cancelled"
            end)
 
     refute Enum.any?(timeline.entries, fn entry ->
-             entry.source == :conversation and entry.event == "tool.failed"
+             entry.source == :conversation and entry.event == "conversation.tool.failed"
            end)
   end
 
