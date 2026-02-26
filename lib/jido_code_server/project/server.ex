@@ -1253,7 +1253,10 @@ defmodule Jido.Code.Server.Project.Server do
   defp legacy_event_type("conv.out.tool.status", event), do: canonical_tool_status_event(event)
 
   defp legacy_event_type("conversation.tool.failed", event) do
-    reason = event |> incident_map_get(:data) |> incident_map_get(:reason)
+    reason =
+      event
+      |> incident_map_get(:data)
+      |> canonical_tool_failure_reason()
 
     if cancelled_tool_reason?(reason) do
       "tool.cancelled"
