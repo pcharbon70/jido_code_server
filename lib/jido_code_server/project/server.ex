@@ -1242,10 +1242,14 @@ defmodule Jido.Code.Server.Project.Server do
   defp legacy_event_type("conversation.assistant.delta", _event), do: "assistant.delta"
   defp legacy_event_type("conversation.assistant.message", _event), do: "assistant.message"
   defp legacy_event_type("conversation.user.message", _event), do: "user.message"
+  defp legacy_event_type("conv.out.assistant.delta", _event), do: "assistant.delta"
+  defp legacy_event_type("conv.out.assistant.completed", _event), do: "assistant.message"
+  defp legacy_event_type("conv.in.message.received", _event), do: "user.message"
   defp legacy_event_type("conversation.cancel", _event), do: "conversation.cancel"
   defp legacy_event_type("conversation.resume", _event), do: "conversation.resume"
   defp legacy_event_type("conversation.tool.requested", _event), do: "tool.requested"
   defp legacy_event_type("conversation.tool.completed", _event), do: "tool.completed"
+  defp legacy_event_type("conv.out.tool.status", event), do: canonical_tool_status_event(event)
 
   defp legacy_event_type("conversation.tool.failed", event) do
     reason = event |> incident_map_get(:data) |> incident_map_get(:reason)
@@ -1274,6 +1278,34 @@ defmodule Jido.Code.Server.Project.Server do
   end
 
   defp normalize_telemetry_event_name(name), do: name
+
+  defp canonical_tool_status_event(event) do
+    status =
+      event
+      |> incident_map_get(:data)
+      |> incident_map_get(:status)
+
+    case status do
+      "requested" -> "tool.requested"
+      "completed" -> "tool.completed"
+      "cancelled" -> "tool.cancelled"
+      "failed" -> canonical_failed_tool_status_event(event)
+      _ -> "tool.status"
+    end
+  end
+
+  defp canonical_failed_tool_status_event(event) do
+    reason =
+      event
+      |> incident_map_get(:data)
+      |> incident_map_get(:message)
+
+    if reason in ["conversation_cancelled", :conversation_cancelled] do
+      "tool.cancelled"
+    else
+      "tool.failed"
+    end
+  end
 
   defp drop_conversation_id_fields(value) when is_map(value) do
     value
