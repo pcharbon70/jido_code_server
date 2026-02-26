@@ -93,7 +93,7 @@ defmodule Jido.Code.Server.ProjectBootstrapAndConversationApiTest do
              Runtime.conversation_projection(project_id, "conversation-a", :timeline)
   end
 
-  test "conversation call and cast reject non-canonical signal types" do
+  test "conversation call and cast enforce external signal ingress policy" do
     root = TempProject.create!()
     on_exit(fn -> TempProject.cleanup(root) end)
 
@@ -123,6 +123,21 @@ defmodule Jido.Code.Server.ProjectBootstrapAndConversationApiTest do
     assert {:error, {:invalid_type, "conversation.unknown.event"}} =
              Runtime.conversation_cast(project_id, "conversation-b", unknown_cast_signal)
 
+    internal_call_signal =
+      Jido.Signal.new!("conversation.tool.requested", %{
+        "name" => "asset.list",
+        "args" => %{"type" => "skill"}
+      })
+
+    assert {:error, {:external_type_not_allowed, "conversation.tool.requested"}} =
+             Runtime.conversation_call(project_id, "conversation-b", internal_call_signal)
+
+    internal_cast_signal =
+      Jido.Signal.new!("conversation.tool.completed", %{"name" => "asset.list"})
+
+    assert {:error, {:external_type_not_allowed, "conversation.tool.completed"}} =
+             Runtime.conversation_cast(project_id, "conversation-b", internal_cast_signal)
+
     reserved_call_signal = Jido.Signal.new!("conversation.cmd.cancel", %{"reason" => "external"})
 
     assert {:error, {:reserved_type, "conversation.cmd.*"}} =
@@ -138,9 +153,24 @@ defmodule Jido.Code.Server.ProjectBootstrapAndConversationApiTest do
     assert {:ok, _snapshot} =
              Runtime.conversation_call(project_id, "conversation-b", valid_signal)
 
-    assert {:ok, [event]} =
+    valid_cancel_signal =
+      Jido.Signal.new!("conversation.cancel", %{"reason" => "client_cancelled"})
+
+    assert {:ok, _snapshot} =
+             Runtime.conversation_call(project_id, "conversation-b", valid_cancel_signal)
+
+    valid_resume_signal = Jido.Signal.new!("conversation.resume", %{})
+
+    assert {:ok, _snapshot} =
+             Runtime.conversation_call(project_id, "conversation-b", valid_resume_signal)
+
+    assert {:ok, events} =
              Runtime.conversation_projection(project_id, "conversation-b", :timeline)
 
-    assert event["type"] == "conversation.user.message"
+    assert Enum.map(events, & &1["type"]) == [
+             "conversation.user.message",
+             "conversation.cancel",
+             "conversation.resume"
+           ]
   end
 end
