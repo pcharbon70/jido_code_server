@@ -87,6 +87,7 @@ defmodule Jido.Code.Server.Conversation.Agent do
   @spec call(pid(), Jido.Signal.t(), timeout()) :: {:ok, snapshot()} | {:error, term()}
   def call(server, %Jido.Signal{} = signal, timeout \\ 30_000) do
     with {:ok, normalized_signal} <- ConversationSignal.normalize(signal),
+         :ok <- validate_external_signal_type(normalized_signal.type),
          {:ok, _agent} <-
            Jido.AgentServer.call(server, ingest_command_signal(normalized_signal), timeout),
          {:ok, state} <- state(server) do
@@ -96,7 +97,8 @@ defmodule Jido.Code.Server.Conversation.Agent do
 
   @spec cast(pid(), Jido.Signal.t()) :: :ok | {:error, term()}
   def cast(server, %Jido.Signal{} = signal) do
-    with {:ok, normalized_signal} <- ConversationSignal.normalize(signal) do
+    with {:ok, normalized_signal} <- ConversationSignal.normalize(signal),
+         :ok <- validate_external_signal_type(normalized_signal.type) do
       Jido.AgentServer.cast(server, ingest_command_signal(normalized_signal))
     end
   end
@@ -189,4 +191,9 @@ defmodule Jido.Code.Server.Conversation.Agent do
       :error -> {:error, :projection_not_found}
     end
   end
+
+  defp validate_external_signal_type("conversation.cmd." <> _suffix),
+    do: {:error, {:reserved_type, "conversation.cmd.*"}}
+
+  defp validate_external_signal_type(_type), do: :ok
 end
