@@ -58,25 +58,6 @@ defmodule Jido.Code.Server.Conversation.Signal do
     |> maybe_put_meta(correlation_id)
   end
 
-  @spec to_legacy_event(Jido.Signal.t()) :: map()
-  def to_legacy_event(%Jido.Signal{} = signal) do
-    legacy_type =
-      if String.starts_with?(signal.type, "conversation.") do
-        String.replace_prefix(signal.type, "conversation.", "")
-      else
-        signal.type
-      end
-
-    data = normalize_signal_data(signal.data)
-
-    %{
-      type: legacy_type,
-      data: data,
-      meta: legacy_meta(signal)
-    }
-    |> maybe_put_legacy_content(data)
-  end
-
   @spec correlation_id(Jido.Signal.t()) :: String.t() | nil
   def correlation_id(%Jido.Signal{extensions: extensions}) when is_map(extensions) do
     case Correlation.fetch(extensions) do
@@ -211,13 +192,6 @@ defmodule Jido.Code.Server.Conversation.Signal do
   defp normalize_signal_data(nil), do: %{}
   defp normalize_signal_data(other), do: %{"value" => other}
 
-  defp legacy_meta(%Jido.Signal{} = signal) do
-    case correlation_id(signal) do
-      nil -> %{}
-      id -> %{"correlation_id" => id}
-    end
-  end
-
   defp maybe_put_content(map, %{"content" => content}) when is_binary(content) do
     Map.put(map, "content", content)
   end
@@ -229,10 +203,4 @@ defmodule Jido.Code.Server.Conversation.Signal do
   defp maybe_put_meta(map, correlation_id) do
     Map.put(map, "meta", %{"correlation_id" => correlation_id})
   end
-
-  defp maybe_put_legacy_content(event, %{"content" => content}) when is_binary(content) do
-    Map.put(event, :content, content)
-  end
-
-  defp maybe_put_legacy_content(event, _data), do: event
 end

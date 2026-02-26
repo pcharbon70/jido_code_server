@@ -33,7 +33,7 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunLLMInstruction do
 
       opts =
         [
-          source_event: ConversationSignal.to_legacy_event(source_signal)
+          source_event: ConversationSignal.to_map(source_signal)
         ]
         |> maybe_put_opt(:tool_specs, available_tool_specs(project_ctx))
 
@@ -42,7 +42,7 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunLLMInstruction do
           completion_signals =
             events
             |> List.wrap()
-            |> Enum.flat_map(&legacy_event_to_signals(&1, conversation_id, correlation_id))
+            |> Enum.flat_map(&event_to_signals(&1, conversation_id, correlation_id))
 
           {:ok,
            %{
@@ -105,45 +105,31 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunLLMInstruction do
       []
   end
 
-  defp legacy_event_to_signals(raw_event, conversation_id, default_correlation_id)
+  defp event_to_signals(raw_event, conversation_id, fallback_correlation_id)
        when is_map(raw_event) do
-    case canonical_event_type(map_get(raw_event, "type")) do
-      nil ->
+    case ConversationSignal.normalize(raw_event) do
+      {:ok, %Jido.Signal{type: "conversation.llm.started"}} ->
         []
 
-      canonical_type ->
-        data = map_get(raw_event, "data") || %{}
-        correlation_id = legacy_event_correlation_id(raw_event, default_correlation_id)
-        [new_signal(canonical_type, normalize_data(data), conversation_id, correlation_id)]
+      {:ok, normalized_event} ->
+        correlation_id =
+          ConversationSignal.correlation_id(normalized_event) || fallback_correlation_id
+
+        [
+          new_signal(
+            normalized_event.type,
+            normalized_event.data,
+            conversation_id,
+            correlation_id
+          )
+        ]
+
+      {:error, _reason} ->
+        []
     end
   end
 
-  defp legacy_event_to_signals(_raw_event, _conversation_id, _default_correlation_id), do: []
-
-  defp canonical_event_type("assistant.delta"), do: "conversation.assistant.delta"
-  defp canonical_event_type("assistant.message"), do: "conversation.assistant.message"
-  defp canonical_event_type("tool.requested"), do: "conversation.tool.requested"
-  defp canonical_event_type("tool.completed"), do: "conversation.tool.completed"
-  defp canonical_event_type("tool.failed"), do: "conversation.tool.failed"
-  defp canonical_event_type("llm.completed"), do: "conversation.llm.completed"
-  defp canonical_event_type("llm.failed"), do: "conversation.llm.failed"
-  defp canonical_event_type("llm.started"), do: nil
-
-  defp canonical_event_type(type) when is_binary(type) do
-    if String.starts_with?(type, "conversation."), do: type, else: "conversation." <> type
-  end
-
-  defp canonical_event_type(_type), do: nil
-
-  defp legacy_event_correlation_id(raw_event, fallback) do
-    raw_event
-    |> map_get("meta")
-    |> map_get("correlation_id")
-    |> case do
-      nil -> fallback
-      correlation_id -> correlation_id
-    end
-  end
+  defp event_to_signals(_raw_event, _conversation_id, _fallback_correlation_id), do: []
 
   defp filter_available_tools(project_ctx, tools) when is_list(tools) do
     case Map.get(project_ctx, :policy) do

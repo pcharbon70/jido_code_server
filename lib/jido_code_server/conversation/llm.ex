@@ -146,24 +146,15 @@ defmodule Jido.Code.Server.Conversation.LLM do
     text = Map.get(response, :text, "") || ""
     delta_chunks = normalize_delta_chunks(Map.get(response, :delta_chunks, []))
 
-    started = %{
-      type: "llm.started",
-      meta: event_meta,
-      data: %{
-        "provider" => normalize_provider(Map.get(response, :provider)),
-        "model" => request.model || "default"
-      }
-    }
-
     delta_events =
       Enum.map(delta_chunks, fn chunk ->
-        %{type: "assistant.delta", meta: event_meta, data: %{"content" => chunk}}
+        %{type: "conversation.assistant.delta", meta: event_meta, data: %{"content" => chunk}}
       end)
 
     tool_events =
       Enum.map(tool_calls, fn tool_call ->
         %{
-          type: "tool.requested",
+          type: "conversation.tool.requested",
           meta: event_meta,
           data: %{"tool_call" => tool_call_with_correlation(tool_call, correlation_id)}
         }
@@ -171,21 +162,23 @@ defmodule Jido.Code.Server.Conversation.LLM do
 
     assistant_events =
       if tool_events == [] and String.trim(text) != "" do
-        [%{type: "assistant.message", meta: event_meta, data: %{"content" => text}}]
+        [%{type: "conversation.assistant.message", meta: event_meta, data: %{"content" => text}}]
       else
         []
       end
 
     completed = %{
-      type: "llm.completed",
+      type: "conversation.llm.completed",
       meta: event_meta,
       data: %{
         "finish_reason" => normalize_finish_reason(Map.get(response, :finish_reason)),
+        "provider" => normalize_provider(Map.get(response, :provider)),
+        "model" => request.model || "default",
         "tool_call_count" => length(tool_events)
       }
     }
 
-    [started] ++ delta_events ++ tool_events ++ assistant_events ++ [completed]
+    delta_events ++ tool_events ++ assistant_events ++ [completed]
   end
 
   defp normalize_llm_context(llm_context) when is_map(llm_context) do
@@ -278,11 +271,19 @@ defmodule Jido.Code.Server.Conversation.LLM do
 
   defp decode_args(_), do: %{}
 
-  defp extract_directive(%{data: data, meta: meta}) do
-    map_lookup(data, :llm) || map_lookup(meta, :llm) || %{}
+  defp extract_directive(source_event) when is_map(source_event) do
+    data = map_lookup(source_event, :data) || %{}
+    meta = map_lookup(source_event, :meta) || %{}
+    extensions = map_lookup(source_event, :extensions) || %{}
+
+    map_lookup(data, :llm) ||
+      map_lookup(meta, :llm) ||
+      map_lookup(extensions, :llm) ||
+      map_lookup(source_event, :llm) ||
+      %{}
   end
 
-  defp extract_directive(_), do: %{}
+  defp extract_directive(_source_event), do: %{}
 
   defp directive_text(%{} = directive) do
     value = map_lookup(directive, :assistant_text) || map_lookup(directive, :text)
@@ -343,23 +344,31 @@ defmodule Jido.Code.Server.Conversation.LLM do
     end)
   end
 
-  defp summary_from_source_event(%{type: "tool.completed", data: data}) do
-    name = map_lookup(data, :name) || "unknown"
-    "Tool #{name} completed."
-  end
+  defp summary_from_source_event(source_event) when is_map(source_event) do
+    type = source_event_type(source_event)
+    data = map_lookup(source_event, :data) || %{}
 
-  defp summary_from_source_event(%{type: "tool.failed", data: data}) do
-    name = map_lookup(data, :name) || "unknown"
-    reason = map_lookup(data, :reason)
+    cond do
+      type in ["conversation.tool.completed", "tool.completed"] ->
+        name = map_lookup(data, :name) || "unknown"
+        "Tool #{name} completed."
 
-    if is_nil(reason) do
-      "Tool #{name} failed."
-    else
-      "Tool #{name} failed: #{inspect(reason)}"
+      type in ["conversation.tool.failed", "tool.failed"] ->
+        name = map_lookup(data, :name) || "unknown"
+        reason = map_lookup(data, :reason)
+
+        if is_nil(reason) do
+          "Tool #{name} failed."
+        else
+          "Tool #{name} failed: #{inspect(reason)}"
+        end
+
+      true ->
+        nil
     end
   end
 
-  defp summary_from_source_event(_), do: nil
+  defp summary_from_source_event(_source_event), do: nil
 
   defp default_assistant_text(request) do
     case String.trim(latest_user_content(request.llm_context)) do
@@ -378,11 +387,13 @@ defmodule Jido.Code.Server.Conversation.LLM do
     |> Enum.take(1)
   end
 
-  defp infer_tool_calls_for_source(%{source_event: %{type: "user.message"}} = request) do
-    infer_tool_calls(request)
+  defp infer_tool_calls_for_source(%{source_event: source_event} = request) do
+    if source_event_type(source_event) in ["conversation.user.message", "user.message"] do
+      infer_tool_calls(request)
+    else
+      []
+    end
   end
-
-  defp infer_tool_calls_for_source(_request), do: []
 
   defp deterministic_text(directive, request) do
     directive_text(directive) ||
@@ -463,10 +474,15 @@ defmodule Jido.Code.Server.Conversation.LLM do
     end
   end
 
-  defp correlation_id_from_source_event(%{meta: meta}) when is_map(meta) do
-    case Correlation.fetch(meta) do
+  defp correlation_id_from_source_event(source_event) when is_map(source_event) do
+    extensions = map_lookup(source_event, :extensions)
+    meta = map_lookup(source_event, :meta)
+
+    with :error <- fetch_correlation_id(extensions),
+         :error <- fetch_correlation_id(meta) do
+      nil
+    else
       {:ok, correlation_id} -> correlation_id
-      :error -> nil
     end
   end
 
@@ -497,4 +513,13 @@ defmodule Jido.Code.Server.Conversation.LLM do
   end
 
   defp nested_map_lookup(_map, _path), do: nil
+
+  defp source_event_type(source_event) when is_map(source_event) do
+    map_lookup(source_event, :type)
+  end
+
+  defp source_event_type(_source_event), do: nil
+
+  defp fetch_correlation_id(value) when is_map(value), do: Correlation.fetch(value)
+  defp fetch_correlation_id(_value), do: :error
 end
