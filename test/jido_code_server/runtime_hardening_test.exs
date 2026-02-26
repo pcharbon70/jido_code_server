@@ -469,6 +469,51 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
            end)
   end
 
+  test "incident timeline maps canonical tool status atom values to normalized tool events" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+    correlation_id = "corr-phase9-incident-status-atom"
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase9-incident-status-atom",
+               conversation_orchestration: false
+             )
+
+    assert {:ok, "phase9-incident-status-atom-c1"} =
+             Runtime.start_conversation(project_id,
+               conversation_id: "phase9-incident-status-atom-c1"
+             )
+
+    assert :ok =
+             RuntimeSignal.send_signal(
+               project_id,
+               "phase9-incident-status-atom-c1",
+               %{
+                 "type" => "conv.out.tool.status",
+                 "meta" => %{"correlation_id" => correlation_id},
+                 "data" => %{
+                   "status" => :cancelled,
+                   "message" => :conversation_cancelled
+                 }
+               }
+             )
+
+    assert {:ok, timeline} =
+             Runtime.incident_timeline(project_id, "phase9-incident-status-atom-c1",
+               correlation_id: correlation_id,
+               limit: 50
+             )
+
+    assert Enum.any?(timeline.entries, fn entry ->
+             entry.source == :conversation and entry.event == "tool.cancelled"
+           end)
+
+    refute Enum.any?(timeline.entries, fn entry ->
+             entry.source == :conversation and entry.event == "tool.status"
+           end)
+  end
+
   test "incident timeline API returns conversation-not-found error for unknown conversation" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
