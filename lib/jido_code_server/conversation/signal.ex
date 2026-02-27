@@ -45,8 +45,9 @@ defmodule Jido.Code.Server.Conversation.Signal do
   @spec normalize(Jido.Signal.t() | map()) :: {:ok, Jido.Signal.t()} | {:error, term()}
   def normalize(%Jido.Signal{type: type} = signal) when is_binary(type) do
     if canonical_type?(type) do
-      with {:ok, data} <- normalize_signal_data_input(signal.data) do
-        {:ok, ensure_correlation(%{signal | data: data})}
+      with {:ok, data} <- normalize_signal_data_input(signal.data),
+           {:ok, extensions} <- normalize_signal_extensions_input(signal.extensions) do
+        {:ok, ensure_correlation(%{signal | data: data, extensions: extensions})}
       end
     else
       {:error, {:invalid_type, String.trim(type)}}
@@ -259,6 +260,10 @@ defmodule Jido.Code.Server.Conversation.Signal do
   defp normalize_signal_data_input(%{} = data), do: {:ok, data}
   defp normalize_signal_data_input(nil), do: {:ok, %{}}
   defp normalize_signal_data_input(_other), do: {:error, :invalid_data}
+
+  defp normalize_signal_extensions_input(%{} = extensions), do: {:ok, extensions}
+  defp normalize_signal_extensions_input(nil), do: {:ok, %{}}
+  defp normalize_signal_extensions_input(_other), do: {:error, :invalid_extensions}
 
   defp maybe_put_meta(map, nil), do: map
 
