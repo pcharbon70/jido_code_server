@@ -56,7 +56,8 @@ defmodule Jido.Code.Server.Project.Supervisor do
          default_max_children: Config.default_subagent_max_children(),
          default_ttl_ms: Config.default_subagent_ttl_ms()
        ]},
-      {Jido.Code.Server.Project.ProtocolSupervisor, name: protocol_supervisor},
+      {Jido.Code.Server.Project.ProtocolSupervisor,
+       [name: protocol_supervisor, project_id: project_id, runtime_opts: runtime_opts]},
       {Jido.Code.Server.Project.Server,
        [
          name: project_server,
