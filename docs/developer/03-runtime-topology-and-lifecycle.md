@@ -25,7 +25,7 @@ Each project started through `Engine.start_project/2` gets:
   - `Policy`
   - `TaskSupervisor`
   - `SubAgentManager`
-  - `Project.ProtocolSupervisor` (currently placeholder)
+  - `Project.ProtocolSupervisor` (project-scoped MCP/A2A protocol servers when allowlisted)
   - `Project.Server`
   - optional `Watcher`
 
