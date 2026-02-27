@@ -53,6 +53,35 @@ defmodule Jido.Code.Server.ConversationSignalTest do
              })
   end
 
+  test "rejects raw map signals with non-map meta or extensions values" do
+    assert {:error, :invalid_meta} =
+             ConversationSignal.normalize(%{
+               "type" => "conversation.user.message",
+               "data" => %{"content" => "hello"},
+               "meta" => "corr-123"
+             })
+
+    assert {:error, :invalid_extensions} =
+             ConversationSignal.normalize(%{
+               type: "conversation.user.message",
+               data: %{"content" => "hello"},
+               extensions: [:invalid]
+             })
+  end
+
+  test "accepts nil meta and extensions envelope values" do
+    assert {:ok, signal} =
+             ConversationSignal.normalize(%{
+               "type" => "conversation.user.message",
+               "data" => %{"content" => "hello"},
+               "meta" => nil,
+               "extensions" => nil
+             })
+
+    assert signal.data == %{"content" => "hello"}
+    assert is_binary(ConversationSignal.correlation_id(signal))
+  end
+
   test "to_map keeps payload fields inside data envelope" do
     signal = Jido.Signal.new!("conversation.user.message", %{"content" => "hello"})
     mapped = ConversationSignal.to_map(signal)
