@@ -116,4 +116,22 @@ defmodule Jido.Code.Server.ConversationSignalTest do
     assert {:error, :invalid_data} =
              ConversationSignal.normalize(signal)
   end
+
+  test "rejects non-map Jido.Signal extensions" do
+    signal = Jido.Signal.new!("conversation.user.message", %{"content" => "hello"})
+    invalid_signal = %{signal | extensions: ["bad"]}
+
+    assert {:error, :invalid_extensions} =
+             ConversationSignal.normalize(invalid_signal)
+  end
+
+  test "normalizes nil Jido.Signal extensions" do
+    signal = Jido.Signal.new!("conversation.user.message", %{"content" => "hello"})
+    nil_extensions_signal = %{signal | extensions: nil}
+
+    assert {:ok, normalized} =
+             ConversationSignal.normalize(nil_extensions_signal)
+
+    assert is_binary(ConversationSignal.correlation_id(normalized))
+  end
 end
