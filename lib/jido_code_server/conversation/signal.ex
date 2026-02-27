@@ -90,7 +90,8 @@ defmodule Jido.Code.Server.Conversation.Signal do
   @spec to_map(Jido.Signal.t()) :: map()
   def to_map(%Jido.Signal{} = signal) do
     data = normalize_signal_data(signal.data)
-    correlation_id = correlation_id(signal)
+    extensions = normalize_signal_extensions_output(signal.extensions)
+    {correlation_id, extensions} = Correlation.ensure(extensions)
 
     base = %{
       "id" => signal.id,
@@ -98,7 +99,7 @@ defmodule Jido.Code.Server.Conversation.Signal do
       "source" => signal.source,
       "time" => signal.time,
       "data" => data,
-      "extensions" => signal.extensions
+      "extensions" => extensions
     }
 
     maybe_put_meta(base, correlation_id)
@@ -257,6 +258,9 @@ defmodule Jido.Code.Server.Conversation.Signal do
   defp normalize_signal_data(nil), do: %{}
   defp normalize_signal_data(other), do: %{"value" => other}
 
+  defp normalize_signal_extensions_output(%{} = extensions), do: extensions
+  defp normalize_signal_extensions_output(_other), do: %{}
+
   defp normalize_signal_data_input(%{} = data), do: {:ok, data}
   defp normalize_signal_data_input(nil), do: {:ok, %{}}
   defp normalize_signal_data_input(_other), do: {:error, :invalid_data}
@@ -264,8 +268,6 @@ defmodule Jido.Code.Server.Conversation.Signal do
   defp normalize_signal_extensions_input(%{} = extensions), do: {:ok, extensions}
   defp normalize_signal_extensions_input(nil), do: {:ok, %{}}
   defp normalize_signal_extensions_input(_other), do: {:error, :invalid_extensions}
-
-  defp maybe_put_meta(map, nil), do: map
 
   defp maybe_put_meta(map, correlation_id) do
     Map.put(map, "meta", %{"correlation_id" => correlation_id})
