@@ -90,6 +90,31 @@ defmodule Jido.Code.Server.ConversationSignalTest do
     refute Map.has_key?(mapped, "content")
   end
 
+  test "to_map normalizes extensions and injects correlation id" do
+    signal = Jido.Signal.new!("conversation.user.message", %{"content" => "hello"})
+    invalid_extensions_signal = %{signal | extensions: ["bad"]}
+
+    mapped = ConversationSignal.to_map(invalid_extensions_signal)
+
+    assert is_map(mapped["extensions"])
+    assert is_binary(get_in(mapped, ["extensions", "correlation_id"]))
+
+    assert get_in(mapped, ["meta", "correlation_id"]) ==
+             get_in(mapped, ["extensions", "correlation_id"])
+  end
+
+  test "to_map preserves existing correlation id" do
+    signal =
+      Jido.Signal.new!("conversation.user.message", %{"content" => "hello"},
+        extensions: %{"correlation_id" => "corr-existing"}
+      )
+
+    mapped = ConversationSignal.to_map(signal)
+
+    assert get_in(mapped, ["extensions", "correlation_id"]) == "corr-existing"
+    assert get_in(mapped, ["meta", "correlation_id"]) == "corr-existing"
+  end
+
   test "rejects non-canonical map signal types" do
     assert {:error, {:invalid_type, "user.message"}} =
              ConversationSignal.normalize(%{"type" => "user.message", "content" => "hello"})
