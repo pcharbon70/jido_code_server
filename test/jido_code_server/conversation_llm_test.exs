@@ -56,4 +56,33 @@ defmodule Jido.Code.Server.ConversationLLMTest do
     assert get_in(tool_requested, [:data, "tool_call", :name]) == "asset.list"
     assert get_in(tool_requested, [:data, "tool_call", :args]) == %{"type" => "skill"}
   end
+
+  test "deterministic completion does not treat tool-role context as user input" do
+    source_event = %{
+      "type" => "conversation.user.message",
+      "content" => "hello"
+    }
+
+    llm_context =
+      %{messages: [%{role: :user, content: "hello"}, %{role: :tool, content: "list skills"}]}
+
+    assert {:ok, %{events: events}} =
+             LLM.start_completion(
+               %{llm_adapter: :deterministic},
+               "conversation-4",
+               llm_context,
+               source_event: source_event,
+               tool_specs: @tool_specs
+             )
+
+    refute Enum.any?(events, fn event ->
+             Map.get(event, :type) == "conversation.tool.requested"
+           end)
+
+    assistant_message =
+      Enum.find(events, fn event -> Map.get(event, :type) == "conversation.assistant.message" end)
+
+    assert assistant_message
+    assert get_in(assistant_message, [:data, "content"]) == "Acknowledged: hello"
+  end
 end
