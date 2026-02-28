@@ -1005,6 +1005,16 @@ defmodule Jido.Code.Server.Project.Server do
         event
         |> incident_map_get(:extensions)
         |> incident_map_get(:correlation_id)
+        |> case do
+          nil ->
+            event
+            |> incident_map_get(:data)
+            |> incident_map_get(:metadata)
+            |> incident_map_get(:correlation_id)
+
+          value ->
+            value
+        end
 
       value ->
         value
