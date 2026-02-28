@@ -10,14 +10,21 @@ Next: [07. Sub Agent Runtime](./07-subagent-runtime.md)
 1. Emits `conversation.llm.requested`
 2. Builds available tool specs from `ToolCatalog`
 3. Filters tools through `Policy.filter_tools/2`
-4. Calls `Conversation.LLM.start_completion/4`
-5. Re-ingests completion output as canonical conversation signals
+4. Resolves context from canonical journal (`JournalBridge.llm_context/3`) when available, otherwise uses in-memory projection fallback
+5. Calls `Conversation.LLM.start_completion/4`
+6. Re-ingests completion output as canonical conversation signals
 
 `Conversation.LLM` supports adapters:
 
 - `:deterministic` (test/dev deterministic behavior)
 - `:jido_ai` (real model call via `Jido.AI.generate_text/2`)
 - custom module/function adapters
+
+Message normalization accepts these roles:
+
+- `:user`
+- `:assistant`
+- `:system`
 
 Current behavior limits tool calls from a single completion to the first call (`Enum.take(1)`).
 
@@ -59,8 +66,8 @@ Each tool includes:
 
 Before execution:
 
-- call normalization (`ToolCall.from_map` style)
-- JSON-schema-like input validation
+- call normalization (`ToolCall.from_map`)
+- schema validation
 - env passthrough checks (`tool_env_allowlist`)
 - policy authorization (paths, network, allow/deny tools)
 - project and per-conversation concurrency quotas
@@ -69,7 +76,7 @@ During execution:
 
 - task-supervised run with timeout
 - child-process tracking and cleanup
-- optional async notify back to conversation server
+- optional async notify back to conversation server (`meta.run_mode = "async"` or `meta.async = true`)
 
 After execution:
 

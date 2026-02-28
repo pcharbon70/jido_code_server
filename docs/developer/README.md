@@ -2,6 +2,10 @@
 
 This directory documents the current `Jido.Code.Server` architecture and runtime behavior.
 
+User-facing quickstart and API summary:
+
+- `/Users/Pascal/code/agentjido/jido_code_server/README.md`
+
 Reading order:
 
 1. [01. Guide Map](./01-guide-map.md)

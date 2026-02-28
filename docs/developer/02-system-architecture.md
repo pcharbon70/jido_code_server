@@ -15,12 +15,40 @@ Next: [03. Runtime Topology and Lifecycle](./03-runtime-topology-and-lifecycle.m
 
 ## Public Surface
 
-The main API in `lib/jido_code_server.ex` delegates to `Engine`:
+The main API in `/Users/Pascal/code/agentjido/jido_code_server/lib/jido_code_server.ex` delegates to `Engine`.
 
-- Project lifecycle: `start_project/2`, `stop_project/1`, `list_projects/0`
-- Conversation lifecycle and interaction: `start_conversation/2`, `conversation_call/4`, `conversation_cast/3`, `conversation_state/3`, `conversation_projection/4`
-- Tool and asset APIs: `list_tools/1`, `run_tool/2`, `list_assets/2`, `get_asset/3`, `search_assets/3`
-- Diagnostics: `conversation_diagnostics/2`, `incident_timeline/3`, `diagnostics/1`
+Project lifecycle:
+
+- `start_project/2`
+- `stop_project/1`
+- `list_projects/0`
+
+Conversation lifecycle and interaction:
+
+- `start_conversation/2`
+- `stop_conversation/2`
+- `conversation_call/4`
+- `conversation_cast/3`
+- `conversation_state/3`
+- `conversation_projection/4`
+- `subscribe_conversation/3`
+- `unsubscribe_conversation/3`
+
+Tool and asset APIs:
+
+- `list_tools/1`
+- `run_tool/2`
+- `reload_assets/1`
+- `list_assets/2`
+- `get_asset/3`
+- `search_assets/3`
+
+Diagnostics:
+
+- `assets_diagnostics/1`
+- `conversation_diagnostics/2`
+- `incident_timeline/3`
+- `diagnostics/1`
 
 ## Top-Level Component Graph
 
@@ -40,6 +68,7 @@ flowchart LR
     PSup --> Policy[Policy]
     PSup --> TSup[Task Supervisor]
     PSup --> SAM[Sub Agent Manager]
+    PSup --> PPS[Project Protocol Supervisor]
 ```
 
 ## Core Runtime Boundaries
@@ -51,7 +80,8 @@ flowchart LR
 - `ToolRunner`: execution and guardrails.
 - `SubAgentManager`: child-agent lifecycle.
 - `Telemetry`: event stream, counters, redaction, and incident support.
+- `Conversation.JournalBridge`: canonical journaling bridge into `jido_conversation`.
 
 ## Security Aside
 
-The architecture enforces policy close to execution, not just at API ingress. `ToolRunner` always calls `Policy.authorize_tool/6` before executing a tool, even for internal orchestration paths.
+The architecture enforces policy close to execution, not just at API ingress. `ToolRunner` always calls `Policy.authorize_tool/6` before executing a tool, including tool calls initiated from conversation orchestration and Jido.AI tool-calling bridges.
