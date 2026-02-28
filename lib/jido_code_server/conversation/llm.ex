@@ -218,6 +218,8 @@ defmodule Jido.Code.Server.Conversation.LLM do
   defp normalize_role("assistant"), do: :assistant
   defp normalize_role(:system), do: :system
   defp normalize_role("system"), do: :system
+  defp normalize_role(:tool), do: :tool
+  defp normalize_role("tool"), do: :tool
   defp normalize_role(_), do: :user
 
   defp normalize_tool_specs(tool_specs) when is_list(tool_specs) do
