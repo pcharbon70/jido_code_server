@@ -5,6 +5,8 @@ defmodule Jido.Code.Server.Conversation.JournalBridge do
 
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
   alias JidoConversation.ConversationRef
+  alias JidoConversation.Ingest.Adapters.Messaging, as: MessagingAdapter
+  alias JidoConversation.Ingest.Adapters.Outbound, as: OutboundAdapter
 
   @default_channel "jido_code_server"
   @default_ingress "jido_code_server"
@@ -15,9 +17,12 @@ defmodule Jido.Code.Server.Conversation.JournalBridge do
   @spec ingest(project_id(), conversation_id(), Jido.Signal.t()) :: :ok | {:error, term()}
   def ingest(project_id, conversation_id, %Jido.Signal{} = signal)
       when is_binary(project_id) and is_binary(conversation_id) do
-    attrs = conversation_signal(project_id, conversation_id, signal)
+    subject = ConversationRef.subject(project_id, conversation_id)
+    correlation_id = ConversationSignal.correlation_id(signal)
+    data = normalize_map(signal.data)
+    metadata = envelope_metadata(data, signal.extensions, project_id, correlation_id)
 
-    case JidoConversation.ingest(attrs) do
+    case ingest_signal(subject, signal, data, metadata, project_id, correlation_id) do
       {:ok, _result} -> :ok
       {:error, reason} -> {:error, reason}
     end
@@ -41,68 +46,92 @@ defmodule Jido.Code.Server.Conversation.JournalBridge do
     JidoConversation.llm_context(project_id, conversation_id, opts)
   end
 
-  defp conversation_signal(project_id, conversation_id, %Jido.Signal{} = signal) do
-    subject = ConversationRef.subject(project_id, conversation_id)
-    correlation_id = ConversationSignal.correlation_id(signal)
-    data = normalize_map(signal.data)
+  defp ingest_signal(
+         subject,
+         %Jido.Signal{type: "conversation.user.message"} = signal,
+         data,
+         metadata,
+         _project_id,
+         _correlation_id
+       ) do
+    message_id = map_get(data, "message_id") || signal.id
+    ingress = map_get(data, "ingress") || @default_ingress
 
-    {type, payload} = map_signal(signal.type, signal.id, data, correlation_id)
-
-    %{
-      id: signal.id,
-      type: type,
-      source: signal.source,
-      subject: subject,
-      time: signal.time,
-      data: payload,
-      extensions: signal_extensions(signal.extensions, project_id, correlation_id)
-    }
-  end
-
-  defp map_signal("conversation.user.message", signal_id, data, _correlation_id) do
     payload =
-      %{
-        "message_id" => map_get(data, "message_id") || signal_id,
-        "ingress" => map_get(data, "ingress") || @default_ingress
-      }
+      %{}
       |> maybe_put("content", map_get(data, "content"))
       |> maybe_put("text", map_get(data, "text"))
-      |> maybe_put("metadata", normalize_map(map_get(data, "metadata")))
+      |> maybe_put("metadata", metadata)
 
-    {"conv.in.message.received", payload}
+    MessagingAdapter.ingest_received(subject, message_id, ingress, payload, ingest_opts(signal))
   end
 
-  defp map_signal("conversation.assistant.delta", signal_id, data, correlation_id) do
+  defp ingest_signal(
+         subject,
+         %Jido.Signal{type: "conversation.assistant.delta"} = signal,
+         data,
+         metadata,
+         _project_id,
+         correlation_id
+       ) do
+    output_id = output_id(data, signal.id, correlation_id)
+    channel = map_get(data, "channel") || @default_channel
+    delta = map_get(data, "delta") || map_get(data, "content") || ""
+
     payload =
-      %{
-        "output_id" => output_id(data, signal_id, correlation_id),
-        "channel" => map_get(data, "channel") || @default_channel,
-        "delta" => map_get(data, "delta") || map_get(data, "content") || ""
-      }
+      %{}
       |> maybe_put("effect_id", map_get(data, "effect_id"))
       |> maybe_put("lifecycle", map_get(data, "lifecycle"))
       |> maybe_put("status", map_get(data, "status"))
-      |> maybe_put("metadata", normalize_map(map_get(data, "metadata")))
+      |> maybe_put("metadata", metadata)
 
-    {"conv.out.assistant.delta", payload}
+    OutboundAdapter.emit_assistant_delta(
+      subject,
+      output_id,
+      channel,
+      delta,
+      payload,
+      outbound_opts(signal)
+    )
   end
 
-  defp map_signal("conversation.assistant.message", signal_id, data, correlation_id) do
+  defp ingest_signal(
+         subject,
+         %Jido.Signal{type: "conversation.assistant.message"} = signal,
+         data,
+         metadata,
+         _project_id,
+         correlation_id
+       ) do
+    output_id = output_id(data, signal.id, correlation_id)
+    channel = map_get(data, "channel") || @default_channel
+    content = map_get(data, "content") || ""
+
     payload =
-      %{
-        "output_id" => output_id(data, signal_id, correlation_id),
-        "channel" => map_get(data, "channel") || @default_channel,
-        "content" => map_get(data, "content") || ""
-      }
+      %{}
       |> maybe_put("effect_id", map_get(data, "effect_id"))
       |> maybe_put("lifecycle", map_get(data, "lifecycle"))
       |> maybe_put("status", map_get(data, "status"))
-      |> maybe_put("metadata", normalize_map(map_get(data, "metadata")))
+      |> maybe_put("metadata", metadata)
 
-    {"conv.out.assistant.completed", payload}
+    OutboundAdapter.emit_assistant_completed(
+      subject,
+      output_id,
+      channel,
+      content,
+      payload,
+      outbound_opts(signal)
+    )
   end
 
-  defp map_signal(type, signal_id, data, correlation_id)
+  defp ingest_signal(
+         subject,
+         %Jido.Signal{type: type} = signal,
+         data,
+         metadata,
+         _project_id,
+         correlation_id
+       )
        when type in [
               "conversation.tool.requested",
               "conversation.tool.completed",
@@ -117,33 +146,76 @@ defmodule Jido.Code.Server.Conversation.JournalBridge do
         "conversation.tool.cancelled" -> "cancelled"
       end
 
+    output_id = output_id(data, signal.id, correlation_id)
+    channel = map_get(data, "channel") || @default_channel
+
     payload =
-      %{
-        "output_id" => output_id(data, signal_id, correlation_id),
-        "channel" => map_get(data, "channel") || @default_channel,
-        "status" => status
-      }
+      %{}
       |> maybe_put(
         "message",
         normalize_tool_status_message(map_get(data, "message") || map_get(data, "reason"))
       )
       |> maybe_put("tool_name", map_get(data, "name"))
       |> maybe_put("tool_call_id", map_get(data, "tool_call_id"))
-      |> maybe_put("metadata", normalize_map(map_get(data, "metadata")))
+      |> maybe_put("metadata", metadata)
 
-    {"conv.out.tool.status", payload}
+    OutboundAdapter.emit_tool_status(
+      subject,
+      output_id,
+      channel,
+      status,
+      payload,
+      outbound_opts(signal)
+    )
   end
 
-  defp map_signal(type, signal_id, data, _correlation_id) do
-    payload =
-      %{
-        "audit_id" => signal_id,
+  defp ingest_signal(
+         subject,
+         %Jido.Signal{} = signal,
+         data,
+         _metadata,
+         project_id,
+         correlation_id
+       ) do
+    attrs = %{
+      id: signal.id,
+      type: "conv.audit.policy.decision_recorded",
+      source: signal.source,
+      subject: subject,
+      time: signal.time,
+      data: %{
+        "audit_id" => signal.id,
         "category" => "conversation.signal",
-        "event_type" => type
-      }
-      |> maybe_put("metadata", data)
+        "event_type" => signal.type,
+        "metadata" => data
+      },
+      extensions: signal_extensions(signal.extensions, project_id, correlation_id)
+    }
 
-    {"conv.audit.policy.decision_recorded", payload}
+    JidoConversation.ingest(attrs, ingest_opts(signal))
+  end
+
+  defp envelope_metadata(data, extensions, project_id, correlation_id) do
+    metadata =
+      data
+      |> map_get("metadata")
+      |> normalize_map()
+      |> Map.put_new("project_id", project_id)
+      |> maybe_put("correlation_id", correlation_id)
+
+    maybe_put(metadata, "cause_id", map_get(normalize_map(extensions), "cause_id"))
+  end
+
+  defp outbound_opts(%Jido.Signal{} = signal) do
+    source = signal.source
+    [source: source] ++ ingest_opts(signal)
+  end
+
+  defp ingest_opts(%Jido.Signal{} = signal) do
+    case map_get(normalize_map(signal.extensions), "cause_id") do
+      cause_id when is_binary(cause_id) and cause_id != "" -> [cause_id: cause_id]
+      _ -> []
+    end
   end
 
   defp signal_extensions(extensions, project_id, correlation_id) do
