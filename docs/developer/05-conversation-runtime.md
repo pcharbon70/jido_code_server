@@ -13,6 +13,16 @@ State includes:
 - `project_ctx` (tool, policy, LLM, sub-agent references)
 - stable identifiers (`project_id`, `conversation_id`)
 
+## External Conversation API Contract
+
+External calls/casts only accept these signal types:
+
+- `conversation.user.message`
+- `conversation.cancel`
+- `conversation.resume`
+
+All other canonical `conversation.*` signals are internal runtime flow (instruction results, tool lifecycle, LLM lifecycle, queue/system events).
+
 ## Canonical Signal Path
 
 1. API receives `%Jido.Signal{}`.
@@ -76,6 +86,23 @@ Built by `Conversation.Domain.Projections`:
 - `subagent_status`
 - `pending_tool_calls`
 
+`Project.Server` also exposes canonical journal-backed projections:
+
+- `canonical_timeline`
+- `canonical_llm_context`
+
+These are sourced from `Conversation.JournalBridge` and `jido_conversation`.
+
+## Canonical Journaling
+
+`Conversation.JournalBridge` ingests runtime signals into `jido_conversation` using ingest adapters:
+
+- user messages -> `Ingest.Adapters.Messaging`
+- assistant/tool outbound lifecycle -> `Ingest.Adapters.Outbound`
+- non-mapped runtime signals -> audit fallback (`conv.audit.policy.decision_recorded`)
+
+Metadata enrichment keeps `project_id`, `correlation_id`, and `cause_id` available for diagnostics and incident analysis.
+
 ## Cancel and Resume
 
 - `conversation.cancel` marks status cancelled and emits cancellation intents.
@@ -88,4 +115,4 @@ Built by `Conversation.Domain.Projections`:
 
 ## Security Aside
 
-Correlation IDs are ensured at signal normalization boundaries and propagated through the entire conversation lifecycle, supporting incident forensics.
+Correlation IDs are ensured at signal normalization boundaries and propagated through conversation, tool, sub-agent, telemetry, and canonical journal paths.

@@ -9,6 +9,7 @@ These guides document the architecture implemented in `lib/jido_code_server`:
 
 - Engine and project lifecycle
 - Conversation runtime on `Jido.AgentServer`
+- Canonical journaling via `Conversation.JournalBridge` + `jido_conversation`
 - Tool catalog, policy enforcement, and execution
 - Sub-agent spawning and lifecycle management
 - Protocol adapters (MCP and A2A)
@@ -45,5 +46,6 @@ flowchart TD
 - `lib/jido_code_server/engine.ex`
 - `lib/jido_code_server/project/server.ex`
 - `lib/jido_code_server/conversation/agent.ex`
+- `lib/jido_code_server/conversation/journal_bridge.ex`
 - `lib/jido_code_server/project/tool_runner.ex`
 - `lib/jido_code_server/project/policy.ex`

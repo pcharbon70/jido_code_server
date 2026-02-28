@@ -28,6 +28,7 @@ Next: [11. Testing and Quality](./11-testing-and-quality.md)
 ### Conversation-Level
 
 - `conversation_diagnostics/2` returns projection-backed runtime stats.
+- `conversation_projection/4` returns domain projections (`timeline`, `llm_context`, `diagnostics`, `pending_tool_calls`, `subagent_status`) and canonical journal projections (`canonical_timeline`, `canonical_llm_context`).
 - `incident_timeline/3` merges conversation timeline and telemetry events with optional correlation filtering and bounded limits.
 
 ## Incident Timeline Model
@@ -37,11 +38,13 @@ Next: [11. Testing and Quality](./11-testing-and-quality.md)
 - conversation timeline entries
 - telemetry recent events
 
+When a conversation process is no longer active, incident lookup falls back to canonical journal events via `Conversation.JournalBridge.events/2`.
+
 It sorts by timestamp/source rank and returns recent bounded entries.
 
 ```mermaid
 flowchart LR
-    Timeline[Conversation timeline] --> Merge[Incident builder]
+    Timeline[Conversation timeline or canonical journal] --> Merge[Incident builder]
     Recent[Telemetry recent events] --> Merge
     Merge --> Filter[Correlation and limit filters]
     Filter --> Output[Incident timeline response]
