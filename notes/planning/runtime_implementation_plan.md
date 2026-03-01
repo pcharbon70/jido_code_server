@@ -16,7 +16,7 @@ Primary source inputs remain:
 1. `Project` is the isolation and policy boundary (supervision, assets, sandbox, tool execution, protocol allowlisting).
 2. Conversation runtime is **agent-first** on `Jido.AgentServer` (`Jido.Code.Server.Conversation.Agent`) with a pure signal reducer domain.
 3. `Jido.Signal` is the canonical runtime envelope for conversation ingest/processing.
-4. Tool execution remains a single path: `Policy -> ExecutionRunner`.
+4. Tool execution remains a single path: `Policy -> ExecutionRunner` (gateway) -> delegated runners (`ToolRunner`/`CommandRunner`/`WorkflowRunner`).
 5. `jido_conversation` is integrated via `Conversation.JournalBridge` for canonical timeline/context journaling.
 6. Protocol adapters (MCP/A2A) remain translators over core project/conversation APIs.
 
@@ -28,7 +28,7 @@ Primary source inputs remain:
 | 1 - Engine Core and Public Facade | Complete | `Jido.Code.Server` and `Engine` lifecycle + facade APIs implemented. |
 | 2 - Project Container and Conversation Lifecycle | Complete | Project supervision, layout, registries, conversation supervision implemented. |
 | 3 - Shared Asset System | Complete | Asset loaders/store, reload, diagnostics, strict loading controls implemented. |
-| 4 - Policy, Catalog, Execution Runner | Complete | Policy enforcement, schema validation, sandbox/network/env guardrails, unified runner implemented. |
+| 4 - Policy, Catalog, Execution Runner | Complete | Policy enforcement, schema validation, sandbox/network/env guardrails, gateway+delegated runners implemented. |
 | 5 - Conversation Runtime Core | Complete (superseded design) | Implemented as `Conversation.Agent` + domain/actions/instructions (not legacy `Conversation.Server/Loop`). |
 | 6 - LLM + Tool Orchestration | Complete | LLM/tool closed loop, async tool paths, cancellation and result reinjection implemented. |
 | 7 - Telemetry, Diagnostics, Watcher | Complete | Telemetry events, diagnostics surfaces, alert routing, watcher debounce behavior implemented. |
@@ -89,6 +89,9 @@ Delivered:
 - `lib/jido_code_server/project/policy.ex`
 - `lib/jido_code_server/project/tool_catalog.ex`
 - `lib/jido_code_server/project/execution_runner.ex`
+- `lib/jido_code_server/project/tool_runner.ex`
+- `lib/jido_code_server/project/command_runner.ex`
+- `lib/jido_code_server/project/workflow_runner.ex`
 - `lib/jido_code_server/project/task_supervisor.ex`
 - `lib/jido_code_server/project/tool_action_bridge.ex`
 
@@ -149,7 +152,7 @@ Remaining for full closeout:
 | `Jido.Code.Server` facade + `Engine*` | 1 |
 | `Project.Supervisor` / `Project.Server` / layout/registry/supervisor | 2 |
 | `AssetStore` + `Project.Loaders.*` | 3 |
-| `Policy` / `ToolCatalog` / `ExecutionRunner` / `TaskSupervisor` | 4 |
+| `Policy` / `ToolCatalog` / `ExecutionRunner` / `ToolRunner` / `CommandRunner` / `WorkflowRunner` / `TaskSupervisor` | 4 |
 | `Conversation.Agent` + `Conversation.Domain.*` + `Conversation.Actions.*` | 5 |
 | `Conversation.LLM` / `Conversation.ToolBridge` / `Conversation.Instructions.*` | 6 |
 | `Telemetry` / `AlertRouter` / `Project.Watcher` / diagnostics | 7 |
