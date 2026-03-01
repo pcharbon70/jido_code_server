@@ -3,6 +3,7 @@ defmodule Jido.Code.Server.Conversation.Domain.StepPlanner do
   Pure planning rules for mode-run step execution intents.
   """
 
+  alias Jido.Code.Server.Conversation.Domain.ModePipeline
   alias Jido.Code.Server.Conversation.Domain.State
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
 
@@ -52,6 +53,8 @@ defmodule Jido.Code.Server.Conversation.Domain.StepPlanner do
   end
 
   defp plan_continue(%State{} = state, %Jido.Signal{} = signal, reason) when is_binary(reason) do
+    mode_pipeline = ModePipeline.resolve(state.mode, state.mode_state)
+
     cond do
       not state.orchestration_enabled ->
         []
@@ -65,6 +68,9 @@ defmodule Jido.Code.Server.Conversation.Domain.StepPlanner do
       state.pending_tool_calls != [] ->
         []
 
+      not ModePipeline.continue_signal?(mode_pipeline, signal.type) ->
+        []
+
       not correlation_matches_active_run?(state, signal) ->
         []
 
@@ -72,7 +78,7 @@ defmodule Jido.Code.Server.Conversation.Domain.StepPlanner do
         [guardrail_signal_intent(state, signal)]
 
       true ->
-        [strategy_intent(state, signal, reason)]
+        [strategy_intent(state, signal, reason, mode_pipeline)]
     end
   end
 
@@ -105,6 +111,10 @@ defmodule Jido.Code.Server.Conversation.Domain.StepPlanner do
   end
 
   defp strategy_intent(%State{} = state, %Jido.Signal{} = signal, reason) do
+    strategy_intent(state, signal, reason, ModePipeline.resolve(state.mode, state.mode_state))
+  end
+
+  defp strategy_intent(%State{} = state, %Jido.Signal{} = signal, reason, mode_pipeline) do
     active_run = state.active_run || %{}
     run_id = map_get(active_run, "run_id")
     next_step_index = current_step_count(active_run) + 1
@@ -114,15 +124,16 @@ defmodule Jido.Code.Server.Conversation.Domain.StepPlanner do
       execution_kind: :strategy_run,
       source_signal: signal,
       meta: %{
-        "pipeline" => %{
-          "reason" => reason,
-          "run_id" => run_id,
-          "step_index" => next_step_index,
-          "predecessor_step_id" =>
-            map_get(active_run, "current_step_id") ||
-              map_get(active_run, "last_completed_step_id"),
-          "retry_count" => current_retry_count(active_run)
-        }
+        "pipeline" =>
+          ModePipeline.pipeline_meta(mode_pipeline,
+            reason: reason,
+            run_id: run_id,
+            step_index: next_step_index,
+            predecessor_step_id:
+              map_get(active_run, "current_step_id") ||
+                map_get(active_run, "last_completed_step_id"),
+            retry_count: current_retry_count(active_run)
+          )
       }
     }
   end

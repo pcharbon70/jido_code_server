@@ -3,6 +3,7 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
   Pure conversation domain reducer with deterministic queue semantics.
   """
 
+  alias Jido.Code.Server.Conversation.Domain.ModePipeline
   alias Jido.Code.Server.Conversation.Domain.ModeRun
   alias Jido.Code.Server.Conversation.Domain.Projections
   alias Jido.Code.Server.Conversation.Domain.State
@@ -465,10 +466,14 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
          %State{} = state,
          %Jido.Signal{type: "conversation.llm.failed"} = signal
        ) do
-    if retryable_failure?(signal) and can_retry_active_run?(state, signal) do
-      mark_active_run_pending_retry(state, signal)
+    if terminal_status_for_signal(state, signal.type) == :failed do
+      if retryable_failure?(signal) and can_retry_active_run?(state, signal) do
+        mark_active_run_pending_retry(state, signal)
+      else
+        close_active_run(state, :failed, signal, nil)
+      end
     else
-      close_active_run(state, :failed, signal, nil)
+      state
     end
   end
 
@@ -478,7 +483,8 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
            type: "conversation.llm.completed"
          } = signal
        ) do
-    if state.pending_tool_calls == [] and state.pending_steps == [] do
+    if terminal_status_for_signal(state, signal.type) == :completed and
+         state.pending_tool_calls == [] and state.pending_steps == [] do
       close_active_run(state, :completed, signal, nil)
     else
       state
@@ -547,11 +553,14 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
 
   defp new_mode_run(%State{} = state, %Jido.Signal{} = signal) do
     run_id = ConversationSignal.correlation_id(signal) || signal.id
+    mode_pipeline = ModePipeline.resolve(state.mode, state.mode_state)
 
     run =
       %{
         run_id: run_id,
         mode: state.mode,
+        pipeline_template_id: mode_pipeline.template_id,
+        pipeline_template_version: mode_pipeline.template_version,
         status: :running,
         started_at: signal.time,
         updated_at: signal.time,
@@ -891,6 +900,8 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
           %{
             "run_id" => map_get(active_run, "run_id"),
             "mode" => mode_label(map_get(active_run, "mode")),
+            "pipeline_template_id" => map_get(active_run, "pipeline_template_id"),
+            "pipeline_template_version" => map_get(active_run, "pipeline_template_version"),
             "source_signal_id" => map_get(active_run, "source_signal_id")
           }
         )
@@ -937,6 +948,8 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
             %{
               "run_id" => map_get(run, "run_id"),
               "mode" => mode_label(map_get(run, "mode")),
+              "pipeline_template_id" => map_get(run, "pipeline_template_id"),
+              "pipeline_template_version" => map_get(run, "pipeline_template_version"),
               "status" => status_label(status),
               "reason" => map_get(run, "reason"),
               "interruption_kind" => map_get(run, "interruption_kind"),
@@ -956,6 +969,8 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
               %{
                 "run_id" => map_get(run, "run_id"),
                 "mode" => mode_label(map_get(run, "mode")),
+                "pipeline_template_id" => map_get(run, "pipeline_template_id"),
+                "pipeline_template_version" => map_get(run, "pipeline_template_version"),
                 "reason" => map_get(run, "reason"),
                 "interruption_kind" => map_get(run, "interruption_kind"),
                 "cause_signal_id" => map_get(run, "cause_signal_id"),
@@ -1269,10 +1284,18 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
 
   defp normalize_non_neg_integer(_value, default), do: default
 
+  defp terminal_status_for_signal(%State{} = state, signal_type) when is_binary(signal_type) do
+    state.mode
+    |> ModePipeline.resolve(state.mode_state)
+    |> ModePipeline.terminal_status_for_signal(signal_type)
+  end
+
   defp normalize_run_snapshot(run) when is_map(run) do
     %{
       run_id: map_get(run, "run_id"),
       mode: map_get(run, "mode"),
+      pipeline_template_id: map_get(run, "pipeline_template_id"),
+      pipeline_template_version: map_get(run, "pipeline_template_version"),
       status: map_get(run, "status"),
       started_at: map_get(run, "started_at"),
       updated_at: map_get(run, "updated_at"),
