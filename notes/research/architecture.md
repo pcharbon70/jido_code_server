@@ -4,7 +4,7 @@ This document rewrites the proposed architecture so it aligns tightly with the e
 
 - **Project = supervisor tree + shared asset store + sandbox/tool policy**
 - **Conversation = a `JidoConversation` runtime instance** (event ingestion + projections)
-- Everything else (UI, MCP, A2A, slash commands, workflows) is an **adapter that emits events into a conversation** and uses the same **project‑scoped tool runner**.
+- Everything else (UI, MCP, A2A, slash commands, workflows) is an **adapter that emits events into a conversation** and uses the same **project‑scoped execution runner**.
 
 ---
 
@@ -24,7 +24,7 @@ This document rewrites the proposed architecture so it aligns tightly with the e
 
 3. **All integrations are protocol/UI adapters**
    - MCP, A2A, LiveView, CLI: all convert inbound messages into `JidoConversation` events
-   - tool calls always go through the same project tool runner
+   - tool calls always go through the same project execution runner
 
 ---
 
@@ -46,7 +46,7 @@ Jido.Code.Server.Project.Supervisor (one per project instance)
 ├─ Jido.Code.Server.Project.Server            (GenServer: config, lifecycle, routing)
 ├─ Jido.Code.Server.Project.AssetStore        (ETS + GenServer: skills/commands/workflows/graph)
 ├─ Jido.Code.Server.Project.Policy            (GenServer: sandbox + tool allowlists)
-├─ Jido.Code.Server.Project.ToolRunner        (module + Task.Supervisor child)
+├─ Jido.Code.Server.Project.ExecutionRunner        (module + Task.Supervisor child)
 ├─ Jido.Code.Server.Project.TaskSupervisor    (Task.Supervisor: tool exec + timeouts)
 ├─ Jido.Code.Server.Project.ConversationReg   (Registry: conversation_id -> pid)
 └─ Jido.Code.Server.Project.ConversationSup   (DynamicSupervisor: conversations)
@@ -130,7 +130,7 @@ This is the “spine”:
 
 3) If a tool is requested:
 - Conversation emits `tool.requested`
-- Project’s `ToolRunner` executes it (sandboxed)
+- Project’s `ExecutionRunner` executes it (sandboxed)
 - Tool result is returned as `tool.completed` or `tool.failed`
 - Conversation ingests result and continues
 
@@ -151,7 +151,7 @@ This is the “spine”:
 **All tool calls go through:**
 `Jido.Code.Server.Project.Policy.validate(tool_call, project_root)`  
 then execute via:
-`Jido.Code.Server.Project.ToolRunner.run(action, args, ctx)`
+`Jido.Code.Server.Project.ExecutionRunner.run(action, args, ctx)`
 
 Default policy rules:
 - any filesystem path arg is resolved under `project_root`
@@ -174,7 +174,7 @@ Conversations can:
   - graph queries via `JidoSkillGraph` APIs
 
 But the execution path still goes through:
-- conversation event → project tool runner → tool result event
+- conversation event → project execution runner → tool result event
 
 So commands/workflows are *not* a separate execution universe; they’re just structured event producers.
 
@@ -198,7 +198,7 @@ This lets UIs and protocol servers subscribe without coupling to internal proces
 
 An MCP server:
 - lists tools by asking the **project** what is allowed/exposed (policy + actions)
-- invokes tools by calling the **project** tool runner
+- invokes tools by calling the **project** execution runner
 - optionally interacts with conversations by emitting `user.message` events (or “tool‑only” mode)
 
 ### A2A adapter

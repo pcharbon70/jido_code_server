@@ -26,7 +26,7 @@ flowchart TD
     Engine --> ProjectProc[Engine Project Process]
     ProjectProc --> ProjectServer[Project Server]
     ProjectServer --> ConvAgent[Conversation Agent]
-    ProjectServer --> Tooling[Tool Catalog and Tool Runner]
+    ProjectServer --> Tooling[Tool Catalog and Execution Runner]
     ProjectServer --> Assets[Asset Store]
     ProjectServer --> Policy[Policy]
     ProjectServer --> Subagents[Sub Agent Manager]
@@ -47,5 +47,5 @@ flowchart TD
 - `lib/jido_code_server/project/server.ex`
 - `lib/jido_code_server/conversation/agent.ex`
 - `lib/jido_code_server/conversation/journal_bridge.ex`
-- `lib/jido_code_server/project/tool_runner.ex`
+- `lib/jido_code_server/project/execution_runner.ex`
 - `lib/jido_code_server/project/policy.ex`

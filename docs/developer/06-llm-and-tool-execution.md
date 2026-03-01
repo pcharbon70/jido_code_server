@@ -30,13 +30,13 @@ Current behavior limits tool calls from a single completion to the first call (`
 
 ## Tool Execution Path
 
-All direct tool calls route through `Project.ToolRunner`.
+All direct tool calls route through `Project.ExecutionRunner`.
 
 ```mermaid
 sequenceDiagram
     participant Conv as Conversation instruction
     participant TB as ToolBridge
-    participant TR as ToolRunner
+    participant TR as ExecutionRunner
     participant P as Policy
 
     Conv->>TB: handle_tool_requested
@@ -62,7 +62,7 @@ Each tool includes:
 - safety metadata (`sandboxed`, `network_capable`)
 - execution kind
 
-## Guardrails in ToolRunner
+## Guardrails in ExecutionRunner
 
 Before execution:
 
@@ -86,14 +86,14 @@ After execution:
 
 ## Jido Tool Calling Integration
 
-`Project.ToolActionBridge` can expose runtime tools as generated `Jido.Action` modules for Jido.AI tool-calling contexts while still delegating execution to `ToolRunner`.
+`Project.ToolActionBridge` can expose runtime tools as generated `Jido.Action` modules for Jido.AI tool-calling contexts while still delegating execution to `ExecutionRunner`.
 
 This means there are two invocation styles, one execution core:
 
 - Conversation-native tool path (`RunToolInstruction` + `ToolBridge`)
 - Jido.AI action path (`ToolActionBridge` generated actions)
 
-Both converge on `ToolRunner` policy and guardrails.
+Both converge on `ExecutionRunner` policy and guardrails.
 
 ## Security Aside
 

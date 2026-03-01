@@ -17,9 +17,9 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
   alias Jido.Code.Server, as: Runtime
 
   alias Jido.Code.Server.Project.AssetStore
+  alias Jido.Code.Server.Project.ExecutionRunner
   alias Jido.Code.Server.Project.Layout
   alias Jido.Code.Server.Project.Policy
-  alias Jido.Code.Server.Project.ToolRunner
   alias Jido.Code.Server.TestSupport.TempProject
 
   setup do
@@ -55,7 +55,7 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
     assert "workflow.run.example_workflow" in tool_names
   end
 
-  test "run_tool uses unified policy and tool runner execution path" do
+  test "run_tool uses unified policy and execution runner execution path" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
 
@@ -430,7 +430,7 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
     assert {:error, :outside_root} = Policy.normalize_path(root, "escape/secret.txt")
   end
 
-  test "tool runner enforces max concurrency limit before task execution" do
+  test "execution runner enforces max concurrency limit before task execution" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
 
@@ -456,7 +456,7 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
     }
 
     assert {:error, %{status: :error, reason: :max_concurrency_reached}} =
-             ToolRunner.run(project_ctx, %{name: "asset.list", args: %{"type" => "skill"}})
+             ExecutionRunner.run(project_ctx, %{name: "asset.list", args: %{"type" => "skill"}})
   end
 
   test "command tool returns deterministic error when project root is missing from context" do
@@ -502,7 +502,7 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
               tool: "command.run.example_command",
               reason: {:tool_failed, {:invalid_project_context, :missing_root_path}}
             }} =
-             ToolRunner.run(project_ctx, %{
+             ExecutionRunner.run(project_ctx, %{
                name: "command.run.example_command",
                args: %{"path" => ".jido/commands/example_command.md"}
              })

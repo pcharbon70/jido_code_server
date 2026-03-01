@@ -31,7 +31,7 @@
 ### 1. Tool schema validation gate
 
 - All tool calls are now schema-validated before policy and execution in:
-  - `lib/jido_code_server/project/tool_runner.ex`
+  - `lib/jido_code_server/project/execution_runner.ex`
 - Enforced checks:
   - required keys
   - additional-property rejection when `additionalProperties` is `false`
@@ -135,7 +135,7 @@
 
 - Conversation ingest now guarantees a correlation ID on every incoming event and propagates it to emitted events.
 - LLM lifecycle events (`llm.started`, `assistant.delta`, `tool.requested`, `assistant.message`, `llm.completed`) carry the same correlation ID.
-- Tool bridge and tool runner propagate correlation ID through:
+- Tool bridge and execution runner propagate correlation ID through:
   - tool call metadata
   - tool response payloads (`conversation.tool.completed`, `conversation.tool.failed`, timeout/escalation telemetry)
   - policy decision records (`recent_decisions`, `policy.allowed`, `policy.denied`)
@@ -197,7 +197,7 @@
 
 - Tool bridge now supports async request mode (`meta.run_mode = "async"`) for `tool.requested` events.
 - Async execution model:
-  - `ToolBridge` starts background tool tasks through `ToolRunner.run_async/3`
+  - `ToolBridge` starts background tool tasks through `ExecutionRunner.run_async/3`
   - `Conversation.Server` ingests async result messages and emits `conversation.tool.completed` / `conversation.tool.failed` events
 - Cancellable behavior:
   - pending async task PIDs are tracked per `{project_id, conversation_id}`
@@ -382,13 +382,13 @@
   - `tool_max_artifact_bytes` applies across all discovered artifact entries, not just top-level tool result keys
   - failure reason remains deterministic: `{:artifact_too_large, index, size, max}`
 - Runtime override coverage:
-  - project-wide concurrency guardrail (`tool_max_concurrency`) is validated under concurrent `ToolRunner` load
+  - project-wide concurrency guardrail (`tool_max_concurrency`) is validated under concurrent `ExecutionRunner` load
   - operations runbook now documents runtime guardrail override knobs and verification steps.
 
 ### 29. Workspace executor child-process tracking for cancellation/timeout cleanup
 
 - Workspace-backed command execution now registers active shell session processes under the owning tool task lifecycle.
-- Tool execution context now propagates a `task_owner_pid` for command runtimes so workspace session PIDs can be tracked via `ToolRunner` child-process registry.
+- Tool execution context now propagates a `task_owner_pid` for command runtimes so workspace session PIDs can be tracked via `ExecutionRunner` child-process registry.
 - Resulting behavior:
   - async conversation cancellation can terminate workspace session processes without manual PID registration
   - timeout and cancellation cleanup telemetry (`conversation.tool.child_processes_terminated`) reflects real workspace session cleanup activity

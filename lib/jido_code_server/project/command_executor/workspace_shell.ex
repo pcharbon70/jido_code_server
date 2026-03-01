@@ -7,7 +7,7 @@ defmodule Jido.Code.Server.Project.CommandExecutor.WorkspaceShell do
   workspace-backed shell sandbox instead of directly executing on host paths.
   """
 
-  alias Jido.Code.Server.Project.ToolRunner
+  alias Jido.Code.Server.Project.ExecutionRunner
   alias Jido.Shell.ShellSession
 
   @default_timeout_ms 30_000
@@ -85,7 +85,7 @@ defmodule Jido.Code.Server.Project.CommandExecutor.WorkspaceShell do
   defp maybe_register_workspace_session(workspace, context) do
     with {:ok, owner_pid} <- owner_task_pid(context),
          {:ok, session_pid} <- workspace_session_pid(workspace) do
-      ToolRunner.register_child_process(owner_pid, session_pid)
+      ExecutionRunner.register_child_process(owner_pid, session_pid)
       :ok
     else
       _ -> :ok
@@ -95,7 +95,7 @@ defmodule Jido.Code.Server.Project.CommandExecutor.WorkspaceShell do
   defp maybe_unregister_workspace_session(workspace, context) do
     with {:ok, owner_pid} <- owner_task_pid(context),
          {:ok, session_pid} <- workspace_session_pid(workspace) do
-      ToolRunner.unregister_child_process(owner_pid, session_pid)
+      ExecutionRunner.unregister_child_process(owner_pid, session_pid)
       :ok
     else
       _ -> :ok

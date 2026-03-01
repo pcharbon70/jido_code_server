@@ -29,7 +29,7 @@ Spawn capability is exposed as tool names: `agent.spawn.<template_id>`.
 sequenceDiagram
     participant LLM as LLM tool request
     participant RT as RunToolInstruction
-    participant TR as ToolRunner
+    participant TR as ExecutionRunner
     participant P as Policy
     participant SAM as SubAgentManager
 
