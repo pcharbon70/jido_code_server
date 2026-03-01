@@ -4,11 +4,11 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
   """
 
   alias Jido.Code.Server.Config
-  alias Jido.Code.Server.Conversation.LLM
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
   alias Jido.Code.Server.Correlation
   alias Jido.Code.Server.Project.CommandRunner
   alias Jido.Code.Server.Project.Policy
+  alias Jido.Code.Server.Project.StrategyRunner
   alias Jido.Code.Server.Project.ToolCatalog
   alias Jido.Code.Server.Project.ToolRunner
   alias Jido.Code.Server.Project.WorkflowRunner
@@ -80,6 +80,7 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
     started_at = System.monotonic_time(:millisecond)
 
     with {:ok, envelope} <- normalize_execution_envelope(project_ctx, execution_envelope),
+         {:ok, envelope} <- StrategyRunner.prepare(project_ctx, envelope),
          :ok <- emit_execution_started(project_ctx, envelope),
          {:ok, result} <- execute_envelope(project_ctx, envelope) do
       duration_ms = System.monotonic_time(:millisecond) - started_at
@@ -292,7 +293,6 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
     execution_kind = normalize_execution_kind(map_get_any(envelope, "execution_kind"))
     mode = normalize_execution_mode(map_get_any(envelope, "mode"))
     mode_state = normalize_map(map_get_any(envelope, "mode_state"))
-    strategy_type = normalize_strategy_type(map_get_any(envelope, "strategy_type"), mode)
 
     with :strategy_run <- execution_kind,
          {:ok, source_signal} <- normalize_source_signal(map_get_any(envelope, "source_signal")),
@@ -305,7 +305,7 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
          conversation_id: conversation_id,
          mode: mode,
          mode_state: mode_state,
-         strategy_type: strategy_type,
+         strategy_type: map_get_any(envelope, "strategy_type"),
          strategy_opts: normalize_map(map_get_any(envelope, "strategy_opts")),
          source_signal: source_signal,
          llm_context: normalize_map(map_get_any(envelope, "llm_context")),
@@ -328,6 +328,7 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
       conversation_id: envelope.conversation_id,
       execution_kind: envelope.execution_kind,
       strategy_type: envelope.strategy_type,
+      strategy_runner: inspect(Map.get(envelope, :strategy_runner)),
       correlation_id: envelope.correlation_id,
       cause_id: envelope.cause_id
     })
@@ -336,17 +337,20 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
   end
 
   defp normalize_execution_success(project_ctx, envelope, result) do
+    result_meta =
+      normalize_map(map_get_any(result, "result_meta"))
+      |> Map.put_new("strategy_type", envelope.strategy_type)
+      |> Map.put_new("mode", Atom.to_string(envelope.mode))
+      |> Map.put_new("strategy_runner", inspect(Map.get(envelope, :strategy_runner)))
+
     %{
       "status" => "ok",
       "project_id" => project_ctx.project_id,
       "conversation_id" => envelope.conversation_id,
       "execution_kind" => Atom.to_string(envelope.execution_kind),
       "signals" => normalize_execution_signals(map_get_any(result, "signals")),
-      "result_meta" =>
-        normalize_map(map_get_any(result, "result_meta"))
-        |> Map.put_new("strategy_type", envelope.strategy_type)
-        |> Map.put_new("mode", Atom.to_string(envelope.mode)),
-      "execution_ref" => strategy_execution_ref(envelope)
+      "result_meta" => result_meta,
+      "execution_ref" => map_get_any(result, "execution_ref") || strategy_execution_ref(envelope)
     }
   end
 
@@ -366,129 +370,7 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
   end
 
   defp execute_strategy(project_ctx, envelope) do
-    requested_signal =
-      new_strategy_signal(
-        "conversation.llm.requested",
-        %{"source_signal_id" => envelope.source_signal.id},
-        envelope.conversation_id,
-        envelope.correlation_id
-      )
-
-    opts =
-      [source_event: ConversationSignal.to_map(envelope.source_signal)]
-      |> maybe_put_opt(
-        :tool_specs,
-        available_tool_specs(project_ctx, envelope.mode, envelope.mode_state)
-      )
-      |> maybe_put_opt(:model, map_get_any(envelope.strategy_opts, "model"))
-      |> maybe_put_opt(:system_prompt, map_get_any(envelope.strategy_opts, "system_prompt"))
-      |> maybe_put_opt(:temperature, map_get_any(envelope.strategy_opts, "temperature"))
-      |> maybe_put_opt(:max_tokens, map_get_any(envelope.strategy_opts, "max_tokens"))
-      |> maybe_put_opt(:timeout_ms, map_get_any(envelope.strategy_opts, "timeout_ms"))
-      |> maybe_put_opt(:adapter, map_get_any(envelope.strategy_opts, "adapter"))
-
-    case LLM.start_completion(project_ctx, envelope.conversation_id, envelope.llm_context, opts) do
-      {:ok, %{events: events}} ->
-        completion_signals =
-          events
-          |> List.wrap()
-          |> Enum.flat_map(
-            &event_to_strategy_signals(&1, envelope.conversation_id, envelope.correlation_id)
-          )
-
-        {:ok,
-         %{
-           "signals" =>
-             Enum.map([requested_signal | completion_signals], &ConversationSignal.to_map/1),
-           "result_meta" => %{
-             "execution_kind" => "strategy_run",
-             "strategy_type" => envelope.strategy_type,
-             "mode" => Atom.to_string(envelope.mode),
-             "signal_count" => length(completion_signals) + 1
-           },
-           "execution_ref" => strategy_execution_ref(envelope)
-         }}
-
-      {:error, reason} ->
-        failed_signal =
-          new_strategy_signal(
-            "conversation.llm.failed",
-            %{"reason" => normalize_reason(reason)},
-            envelope.conversation_id,
-            envelope.correlation_id
-          )
-
-        {:error,
-         %{
-           "signals" => Enum.map([requested_signal, failed_signal], &ConversationSignal.to_map/1),
-           "result_meta" => %{
-             "execution_kind" => "strategy_run",
-             "strategy_type" => envelope.strategy_type,
-             "mode" => Atom.to_string(envelope.mode),
-             "retryable" => retryable_execution_error?(reason)
-           },
-           "execution_ref" => strategy_execution_ref(envelope),
-           "reason" => normalize_reason(reason),
-           "retryable" => retryable_execution_error?(reason)
-         }}
-    end
-  end
-
-  defp available_tool_specs(project_ctx, mode, mode_state) do
-    tools = ToolCatalog.llm_tools(project_ctx, mode: mode, mode_state: mode_state)
-
-    project_ctx
-    |> filter_available_tools(tools)
-    |> Enum.map(&tool_spec/1)
-  rescue
-    _error ->
-      []
-  catch
-    :exit, _reason ->
-      []
-  end
-
-  defp filter_available_tools(project_ctx, tools) when is_list(tools) do
-    case Map.get(project_ctx, :policy) do
-      nil -> tools
-      policy -> Policy.filter_tools(policy, tools)
-    end
-  end
-
-  defp event_to_strategy_signals(raw_event, conversation_id, fallback_correlation_id)
-       when is_map(raw_event) do
-    case ConversationSignal.normalize(raw_event) do
-      {:ok, %Jido.Signal{type: "conversation.llm.started"}} ->
-        []
-
-      {:ok, normalized_event} ->
-        correlation_id =
-          ConversationSignal.correlation_id(normalized_event) || fallback_correlation_id
-
-        [
-          new_strategy_signal(
-            normalized_event.type,
-            normalized_event.data,
-            conversation_id,
-            correlation_id
-          )
-        ]
-
-      {:error, _reason} ->
-        []
-    end
-  end
-
-  defp event_to_strategy_signals(_raw_event, _conversation_id, _fallback_correlation_id), do: []
-
-  defp new_strategy_signal(type, data, conversation_id, correlation_id) do
-    attrs =
-      [
-        source: "/conversation/#{conversation_id}",
-        extensions: if(correlation_id, do: %{"correlation_id" => correlation_id}, else: %{})
-      ]
-
-    Jido.Signal.new!(type, normalize_execution_map(data), attrs)
+    StrategyRunner.run(project_ctx, envelope)
   end
 
   defp normalize_execution_signals(signals) when is_list(signals) do
@@ -529,17 +411,6 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
 
   defp normalize_execution_mode(_mode), do: :coding
 
-  defp normalize_strategy_type(strategy_type, _mode)
-       when is_binary(strategy_type) and strategy_type != "",
-       do: strategy_type
-
-  defp normalize_strategy_type(strategy_type, _mode) when is_atom(strategy_type),
-    do: Atom.to_string(strategy_type)
-
-  defp normalize_strategy_type(_strategy_type, :planning), do: "planning"
-  defp normalize_strategy_type(_strategy_type, :engineering), do: "engineering_design"
-  defp normalize_strategy_type(_strategy_type, _mode), do: "code_generation"
-
   defp normalize_source_signal(%Jido.Signal{} = signal), do: {:ok, signal}
 
   defp normalize_source_signal(signal) when is_map(signal),
@@ -547,23 +418,8 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
 
   defp normalize_source_signal(_signal), do: {:error, :invalid_source_signal}
 
-  defp normalize_execution_map(map) when is_map(map), do: map
-  defp normalize_execution_map(_map), do: %{}
-
   defp normalize_map(map) when is_map(map), do: map
   defp normalize_map(_map), do: %{}
-
-  defp tool_spec(tool) do
-    %{
-      name: tool.name,
-      description: tool.description,
-      input_schema: tool.input_schema
-    }
-  end
-
-  defp maybe_put_opt(opts, _key, nil), do: opts
-  defp maybe_put_opt(opts, _key, []), do: opts
-  defp maybe_put_opt(opts, key, value), do: Keyword.put(opts, key, value)
 
   defp normalize_reason(reason) when is_binary(reason), do: reason
   defp normalize_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
