@@ -6,6 +6,7 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
   alias Jido.Code.Server.Conversation.Domain.ModeRun
   alias Jido.Code.Server.Conversation.Domain.Projections
   alias Jido.Code.Server.Conversation.Domain.State
+  alias Jido.Code.Server.Conversation.Domain.StepPlanner
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
 
   @type effect_intent :: map()
@@ -105,12 +106,12 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
   end
 
   defp effect_intents_for_signal(
-         _previous_state,
+         previous_state,
          %State{} = state,
          %Jido.Signal{type: "conversation.user.message"} = signal,
          lifecycle_intents
        ) do
-    lifecycle_intents ++ maybe_run_llm_intent(state, signal)
+    lifecycle_intents ++ StepPlanner.plan(previous_state, state, signal)
   end
 
   defp effect_intents_for_signal(
@@ -123,27 +124,32 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
   end
 
   defp effect_intents_for_signal(
-         _previous_state,
+         previous_state,
          %State{} = state,
          %Jido.Signal{type: type} = signal,
          lifecycle_intents
        )
        when type in ["conversation.tool.completed", "conversation.tool.failed"] do
-    maybe_run_llm_after_tool_intent(state, signal) ++ lifecycle_intents
+    StepPlanner.plan(previous_state, state, signal) ++ lifecycle_intents
   end
 
   defp effect_intents_for_signal(
          _previous_state,
-         _state,
-         %Jido.Signal{type: type},
+         %State{} = _state,
+         %Jido.Signal{type: type} = _signal,
          lifecycle_intents
        )
-       when type in [
-              "conversation.llm.completed",
-              "conversation.llm.failed",
-              "conversation.resume"
-            ] do
+       when type in ["conversation.llm.completed", "conversation.resume"] do
     lifecycle_intents
+  end
+
+  defp effect_intents_for_signal(
+         previous_state,
+         %State{} = state,
+         %Jido.Signal{type: "conversation.llm.failed"} = signal,
+         lifecycle_intents
+       ) do
+    StepPlanner.plan(previous_state, state, signal) ++ lifecycle_intents
   end
 
   defp effect_intents_for_signal(_previous_state, _state, _signal, lifecycle_intents) do
@@ -284,11 +290,12 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
   end
 
   defp maybe_start_mode_run(
-         %State{active_run: nil} = state,
+         %State{active_run: nil, status: status} = state,
          %Jido.Signal{
            type: "conversation.user.message"
          } = signal
-       ) do
+       )
+       when status != :cancelled do
     %{state | active_run: new_mode_run(state, signal), pending_steps: []}
   end
 
@@ -302,8 +309,39 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
       |> Map.put(:last_signal_id, signal.id)
       |> Map.put(:last_signal_type, signal.type)
       |> Map.put(:updated_at, signal.time)
+      |> normalize_run_snapshot()
 
     %{state | active_run: active_run}
+  end
+
+  defp update_pending_steps(
+         %State{} = state,
+         %Jido.Signal{type: "conversation.llm.requested"} = signal
+       ) do
+    case state.active_run do
+      %{} = active_run ->
+        retry_started? = map_get(active_run, "pending_retry") == true
+        step_index = next_step_index(active_run, state.pending_steps)
+
+        run_id =
+          map_get(active_run, "run_id") || ConversationSignal.correlation_id(signal) || signal.id
+
+        strategy_step_id = "#{run_id}:strategy:#{step_index}"
+
+        updated_run =
+          active_run
+          |> Map.put(:step_count, step_index)
+          |> Map.put(:current_step_id, strategy_step_id)
+          |> maybe_increment_retry_count(retry_started?)
+          |> Map.put(:pending_retry, false)
+          |> Map.put(:updated_at, signal.time)
+          |> normalize_run_snapshot()
+
+        %{state | active_run: updated_run}
+
+      _other ->
+        state
+    end
   end
 
   defp update_pending_steps(
@@ -312,7 +350,7 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
        ) do
     case {state.active_run, extract_tool_call(signal)} do
       {%{} = active_run, {:ok, tool_call}} ->
-        step = pending_step(active_run, tool_call, signal)
+        step = pending_step(active_run, state.pending_steps, tool_call, signal)
 
         pending_steps =
           if Enum.any?(state.pending_steps, &(&1.step_id == step.step_id)) do
@@ -321,7 +359,17 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
             state.pending_steps ++ [step]
           end
 
-        %{state | pending_steps: pending_steps}
+        updated_run =
+          active_run
+          |> Map.put(
+            :step_count,
+            max(step.step_index, normalize_non_neg_integer(active_run.step_count, 0))
+          )
+          |> Map.put(:current_step_id, step.step_id)
+          |> Map.put(:updated_at, signal.time)
+          |> normalize_run_snapshot()
+
+        %{state | pending_steps: pending_steps, active_run: updated_run}
 
       _other ->
         state
@@ -341,6 +389,13 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
     correlation_id = ConversationSignal.correlation_id(signal)
 
     if is_binary(step_name) do
+      matching_step =
+        Enum.find(state.pending_steps, fn step ->
+          same_name? = step.name == step_name
+          same_correlation? = is_nil(correlation_id) or step.correlation_id == correlation_id
+          same_name? and same_correlation?
+        end)
+
       pending_steps =
         Enum.reject(state.pending_steps, fn step ->
           same_name? = step.name == step_name
@@ -348,14 +403,45 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
           same_name? and same_correlation?
         end)
 
-      %{state | pending_steps: pending_steps}
+      updated_run =
+        case {state.active_run, matching_step} do
+          {%{} = active_run, %{} = step} ->
+            active_run
+            |> Map.put(:last_completed_step_id, step.step_id)
+            |> maybe_clear_current_step(step.step_id)
+            |> Map.put(:updated_at, signal.time)
+            |> normalize_run_snapshot()
+
+          {%{} = active_run, _other} ->
+            active_run
+
+          _other ->
+            nil
+        end
+
+      state
+      |> Map.put(:pending_steps, pending_steps)
+      |> maybe_put_active_run(updated_run)
     else
       state
     end
   end
 
   defp update_pending_steps(%State{} = state, %Jido.Signal{type: "conversation.cancel"}) do
-    %{state | pending_steps: []}
+    updated_run =
+      case state.active_run do
+        %{} = active_run ->
+          active_run
+          |> Map.put(:current_step_id, nil)
+          |> normalize_run_snapshot()
+
+        _other ->
+          nil
+      end
+
+    state
+    |> Map.put(:pending_steps, [])
+    |> maybe_put_active_run(updated_run)
   end
 
   defp update_pending_steps(state, _signal), do: state
@@ -371,7 +457,11 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
          %State{} = state,
          %Jido.Signal{type: "conversation.llm.failed"} = signal
        ) do
-    close_active_run(state, :failed, signal, nil)
+    if retryable_failure?(signal) and can_retry_active_run?(state, signal) do
+      mark_active_run_pending_retry(state, signal)
+    else
+      close_active_run(state, :failed, signal, nil)
+    end
   end
 
   defp maybe_finalize_mode_run(
@@ -392,7 +482,15 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
   defp sync_active_run_step_count(%State{active_run: nil} = state), do: state
 
   defp sync_active_run_step_count(%State{} = state) do
-    %{state | active_run: Map.put(state.active_run, :step_count, length(state.pending_steps))}
+    active_run_step_count = normalize_non_neg_integer(state.active_run.step_count, 0)
+    pending_count = length(state.pending_steps)
+
+    active_run =
+      state.active_run
+      |> Map.put(:step_count, max(active_run_step_count, pending_count))
+      |> normalize_run_snapshot()
+
+    %{state | active_run: active_run}
   end
 
   defp close_active_run(%State{active_run: nil} = state, _status, _signal, _reason), do: state
@@ -401,13 +499,19 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
     active_run = state.active_run
 
     if ModeRun.valid_transition?(active_run.status, status) do
+      existing_step_count = normalize_non_neg_integer(active_run.step_count, 0)
+      pending_step_count = length(state.pending_steps)
+
       completed_run =
         active_run
         |> Map.put(:status, status)
         |> Map.put(:updated_at, signal.time)
         |> Map.put(:ended_at, signal.time)
         |> maybe_put(:reason, reason)
-        |> Map.put(:step_count, length(state.pending_steps))
+        |> Map.put(:step_count, max(existing_step_count, pending_step_count))
+        |> Map.put(:current_step_id, nil)
+        |> Map.put(:pending_retry, false)
+        |> normalize_run_snapshot()
 
       %{
         state
@@ -428,38 +532,59 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
   defp new_mode_run(%State{} = state, %Jido.Signal{} = signal) do
     run_id = ConversationSignal.correlation_id(signal) || signal.id
 
-    %{
-      run_id: run_id,
-      mode: state.mode,
-      status: :running,
-      started_at: signal.time,
-      updated_at: signal.time,
-      source_signal_id: signal.id,
-      source_signal_type: signal.type,
-      last_signal_id: signal.id,
-      last_signal_type: signal.type,
-      step_count: 0
-    }
+    run =
+      %{
+        run_id: run_id,
+        mode: state.mode,
+        status: :running,
+        started_at: signal.time,
+        updated_at: signal.time,
+        source_signal_id: signal.id,
+        source_signal_type: signal.type,
+        last_signal_id: signal.id,
+        last_signal_type: signal.type,
+        step_count: 0,
+        retry_count: 0,
+        pending_retry: false,
+        max_retries: max_retries(state.mode_state),
+        max_turn_steps: max_turn_steps(state.mode_state),
+        current_step_id: nil,
+        last_completed_step_id: nil
+      }
+
+    normalize_run_snapshot(run)
   end
 
-  defp pending_step(active_run, tool_call, signal) do
+  defp pending_step(active_run, pending_steps, tool_call, signal) do
     run_id = active_run.run_id
     name = map_get(tool_call, "name")
+    step_index = next_step_index(active_run, pending_steps)
 
     correlation_id =
       map_get(tool_call, "correlation_id") || ConversationSignal.correlation_id(signal)
 
-    %{
-      step_id: "#{run_id}:#{name}:#{correlation_id || signal.id}",
-      run_id: run_id,
-      kind: :tool,
-      status: :requested,
-      name: name,
-      correlation_id: correlation_id,
-      created_at: signal.time,
-      updated_at: signal.time,
-      source_signal_id: signal.id
-    }
+    step =
+      %{
+        step_id: "#{run_id}:#{name}:#{correlation_id || signal.id}",
+        run_id: run_id,
+        step_index: step_index,
+        predecessor_step_id:
+          map_get(active_run, "current_step_id") || map_get(active_run, "last_completed_step_id"),
+        kind: :tool,
+        status: :requested,
+        name: name,
+        correlation_id: correlation_id,
+        tool_call_id: map_get(tool_call, "id"),
+        retry_count: 0,
+        max_retries: max_retries(active_run),
+        created_at: signal.time,
+        updated_at: signal.time,
+        source_signal_id: signal.id,
+        requested_by_signal_id: signal.id,
+        completed_by_signal_id: nil
+      }
+
+    normalize_step_snapshot(step)
   end
 
   defp do_drain(%State{} = state, intents, steps) when steps >= state.max_drain_steps do
@@ -797,12 +922,6 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
     )
   end
 
-  defp maybe_run_llm_intent(%State{orchestration_enabled: true}, signal) do
-    [%{kind: :run_execution, execution_kind: :strategy_run, source_signal: signal}]
-  end
-
-  defp maybe_run_llm_intent(_state, _signal), do: []
-
   defp tool_requested_intents(signal) do
     case extract_tool_call(signal) do
       {:ok, tool_call} ->
@@ -812,15 +931,6 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
         []
     end
   end
-
-  defp maybe_run_llm_after_tool_intent(
-         %State{orchestration_enabled: true, pending_tool_calls: []},
-         signal
-       ) do
-    [%{kind: :run_execution, execution_kind: :strategy_run, source_signal: signal}]
-  end
-
-  defp maybe_run_llm_after_tool_intent(_state, _signal), do: []
 
   defp decorate_tool_call(tool_call, signal) do
     correlation_id = ConversationSignal.correlation_id(signal)
@@ -939,4 +1049,144 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp maybe_put_active_run(%State{} = state, %{} = active_run),
+    do: %{state | active_run: active_run}
+
+  defp maybe_put_active_run(%State{} = state, _active_run), do: state
+
+  defp maybe_clear_current_step(run, step_id) when is_map(run) and is_binary(step_id) do
+    if map_get(run, "current_step_id") == step_id do
+      Map.put(run, :current_step_id, nil)
+    else
+      run
+    end
+  end
+
+  defp maybe_clear_current_step(run, _step_id), do: run
+
+  defp retryable_failure?(%Jido.Signal{data: data}) when is_map(data) do
+    map_get(data, "retryable") == true
+  end
+
+  defp retryable_failure?(_signal), do: false
+
+  defp can_retry_active_run?(%State{active_run: %{} = active_run} = state, _signal) do
+    state.orchestration_enabled and state.pending_tool_calls == [] and
+      normalize_non_neg_integer(active_run.retry_count, 0) < max_retries(active_run)
+  end
+
+  defp can_retry_active_run?(_state, _signal), do: false
+
+  defp mark_active_run_pending_retry(%State{} = state, %Jido.Signal{} = signal) do
+    active_run =
+      state.active_run
+      |> Map.put(:status, :running)
+      |> Map.put(:updated_at, signal.time)
+      |> Map.put(:last_signal_id, signal.id)
+      |> Map.put(:last_signal_type, signal.type)
+      |> Map.put(:pending_retry, true)
+      |> maybe_put(:last_failure_reason, map_get(signal.data, "reason"))
+      |> normalize_run_snapshot()
+
+    %{state | active_run: active_run}
+  end
+
+  defp maybe_increment_retry_count(run, true) when is_map(run) do
+    Map.update(run, :retry_count, 1, &(&1 + 1))
+  end
+
+  defp maybe_increment_retry_count(run, _retry_started?), do: run
+
+  defp next_step_index(active_run, pending_steps)
+       when is_map(active_run) and is_list(pending_steps) do
+    from_run = normalize_non_neg_integer(map_get(active_run, "step_count"), 0)
+
+    from_pending =
+      pending_steps
+      |> Enum.map(&normalize_non_neg_integer(map_get(&1, "step_index"), 0))
+      |> Enum.max(fn -> 0 end)
+
+    max(from_run, from_pending) + 1
+  end
+
+  defp next_step_index(_active_run, _pending_steps), do: 1
+
+  defp max_turn_steps(mode_state) when is_map(mode_state) do
+    mode_state
+    |> map_get("max_turn_steps")
+    |> normalize_non_neg_integer(32)
+    |> max(1)
+  end
+
+  defp max_turn_steps(_mode_state), do: 32
+
+  defp max_retries(run_or_mode_state) when is_map(run_or_mode_state) do
+    run_or_mode_state
+    |> map_get("max_retries")
+    |> normalize_non_neg_integer(1)
+    |> max(1)
+  end
+
+  defp max_retries(_run_or_mode_state), do: 1
+
+  defp normalize_non_neg_integer(value, _default) when is_integer(value) and value >= 0, do: value
+
+  defp normalize_non_neg_integer(value, default) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {parsed, ""} when parsed >= 0 -> parsed
+      _ -> default
+    end
+  end
+
+  defp normalize_non_neg_integer(_value, default), do: default
+
+  defp normalize_run_snapshot(run) when is_map(run) do
+    %{
+      run_id: map_get(run, "run_id"),
+      mode: map_get(run, "mode"),
+      status: map_get(run, "status"),
+      started_at: map_get(run, "started_at"),
+      updated_at: map_get(run, "updated_at"),
+      ended_at: map_get(run, "ended_at"),
+      source_signal_id: map_get(run, "source_signal_id"),
+      source_signal_type: map_get(run, "source_signal_type"),
+      last_signal_id: map_get(run, "last_signal_id"),
+      last_signal_type: map_get(run, "last_signal_type"),
+      step_count: normalize_non_neg_integer(map_get(run, "step_count"), 0),
+      retry_count: normalize_non_neg_integer(map_get(run, "retry_count"), 0),
+      pending_retry: map_get(run, "pending_retry") == true,
+      max_retries: max_retries(run),
+      max_turn_steps:
+        run
+        |> map_get("max_turn_steps")
+        |> normalize_non_neg_integer(32)
+        |> max(1),
+      current_step_id: map_get(run, "current_step_id"),
+      last_completed_step_id: map_get(run, "last_completed_step_id"),
+      reason: map_get(run, "reason"),
+      last_failure_reason: map_get(run, "last_failure_reason")
+    }
+  end
+
+  defp normalize_step_snapshot(step) when is_map(step) do
+    %{
+      step_id: map_get(step, "step_id"),
+      run_id: map_get(step, "run_id"),
+      step_index: normalize_non_neg_integer(map_get(step, "step_index"), 0),
+      predecessor_step_id: map_get(step, "predecessor_step_id"),
+      kind: map_get(step, "kind"),
+      status: map_get(step, "status"),
+      name: map_get(step, "name"),
+      correlation_id: map_get(step, "correlation_id"),
+      tool_call_id: map_get(step, "tool_call_id"),
+      retry_count: normalize_non_neg_integer(map_get(step, "retry_count"), 0),
+      max_retries: max_retries(step),
+      created_at: map_get(step, "created_at"),
+      updated_at: map_get(step, "updated_at"),
+      source_signal_id: map_get(step, "source_signal_id"),
+      requested_by_signal_id: map_get(step, "requested_by_signal_id"),
+      completed_by_signal_id: map_get(step, "completed_by_signal_id")
+    }
+  end
 end

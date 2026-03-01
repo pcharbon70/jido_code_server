@@ -26,10 +26,10 @@ defmodule Jido.Code.Server.Conversation.ExecutionEnvelope do
           kind: :run_execution,
           execution_kind: :strategy_run,
           source_signal: %Jido.Signal{} = source_signal
-        },
+        } = intent,
         opts
       ) do
-    strategy_envelope(source_signal, opts)
+    strategy_envelope(source_signal, Keyword.put(opts, :intent_meta, map_get(intent, :meta) || %{}))
   end
 
   def from_intent(
@@ -113,7 +113,9 @@ defmodule Jido.Code.Server.Conversation.ExecutionEnvelope do
          "strategy_type" => strategy_type,
          "strategy_opts" => strategy_opts
        },
-       meta: build_meta(opts, source_signal),
+      meta:
+        build_meta(opts, source_signal)
+        |> deep_merge(normalize_map(Keyword.get(opts, :intent_meta, %{}))),
        correlation_id: ConversationSignal.correlation_id(source_signal),
        cause_id: source_signal.id,
        source_signal: source_signal
