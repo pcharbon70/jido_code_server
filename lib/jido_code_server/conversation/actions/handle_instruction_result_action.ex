@@ -31,10 +31,10 @@ defmodule Jido.Code.Server.Conversation.Actions.HandleInstructionResultAction do
         extract_result_signals(result)
 
       :error ->
-        [instruction_failed_signal(params, state_map)]
+        error_signals(params, state_map)
 
       "error" ->
-        [instruction_failed_signal(params, state_map)]
+        error_signals(params, state_map)
 
       _other ->
         []
@@ -54,6 +54,39 @@ defmodule Jido.Code.Server.Conversation.Actions.HandleInstructionResultAction do
   end
 
   defp extract_result_signals(_result), do: []
+
+  defp error_signals(params, state_map) do
+    signals =
+      params
+      |> map_get("reason")
+      |> extract_result_signals()
+
+    cond do
+      signals == [] ->
+        [instruction_failed_signal(params, state_map)]
+
+      terminal_failure_signal?(signals) ->
+        signals
+
+      true ->
+        signals ++ [instruction_failed_signal(params, state_map)]
+    end
+  end
+
+  defp terminal_failure_signal?(signals) when is_list(signals) do
+    Enum.any?(signals, fn
+      %Jido.Signal{type: type} ->
+        type in [
+          "conversation.llm.failed",
+          "conversation.tool.failed",
+          "conversation.tool.cancelled",
+          "conversation.subagent.failed"
+        ]
+
+      _other ->
+        false
+    end)
+  end
 
   defp instruction_failed_signal(params, state_map) do
     meta = map_get(params, "meta")

@@ -357,6 +357,30 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
   defp normalize_execution_error(project_ctx, execution_envelope, reason) do
     envelope = normalize_string_key_map(execution_envelope)
     execution_kind = normalize_execution_kind(map_get_any(envelope, "execution_kind")) || :unknown
+    reason_payload = normalize_string_key_map(reason)
+
+    signals =
+      if is_map(reason_payload) do
+        reason_payload
+        |> map_get_any("signals")
+        |> normalize_execution_signals()
+      else
+        []
+      end
+
+    result_meta =
+      if is_map(reason_payload) do
+        normalize_map(map_get_any(reason_payload, "result_meta"))
+      else
+        %{}
+      end
+
+    execution_ref =
+      if is_map(reason_payload) do
+        map_get_any(reason_payload, "execution_ref")
+      else
+        nil
+      end
 
     %{
       "status" => "error",
@@ -367,6 +391,9 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
       "reason" => normalize_reason(reason),
       "retryable" => retryable_execution_error?(reason)
     }
+    |> maybe_put("signals", signals, signals != [])
+    |> maybe_put("result_meta", result_meta, result_meta != %{})
+    |> maybe_put("execution_ref", execution_ref, is_binary(execution_ref) and execution_ref != "")
   end
 
   defp execute_strategy(project_ctx, envelope) do
@@ -387,6 +414,7 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
 
   defp retryable_execution_error?(reason) do
     match?(%{"retryable" => true}, reason) or
+      match?(%{retryable: true}, reason) or
       match?({:task_exit, _}, reason) or
       reason in [:timeout, :temporary_failure]
   end
@@ -423,7 +451,15 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
 
   defp normalize_reason(reason) when is_binary(reason), do: reason
   defp normalize_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
+
+  defp normalize_reason(reason) when is_map(reason) do
+    map_get_any(reason, "reason") || inspect(reason)
+  end
+
   defp normalize_reason(reason), do: inspect(reason)
+
+  defp maybe_put(map, _key, _value, false), do: map
+  defp maybe_put(map, key, value, true), do: Map.put(map, key, value)
 
   defp map_get_any(map, key) when is_map(map) and is_binary(key),
     do: Map.get(map, key) || Map.get(map, safe_to_existing_atom(key))

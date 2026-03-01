@@ -9,6 +9,8 @@ defmodule Jido.Code.Server.Project.StrategyRunner do
 
   alias Jido.Code.Server.Conversation.ModeRegistry
   alias Jido.Code.Server.Project.StrategyRunner.Default
+  alias Jido.Code.Server.Project.StrategyRunner.Normalizer
+  alias Jido.Code.Server.Telemetry
 
   @type capabilities :: %{
           optional(:streaming?) => boolean(),
@@ -46,16 +48,27 @@ defmodule Jido.Code.Server.Project.StrategyRunner do
   def run(project_ctx, envelope) when is_map(project_ctx) and is_map(envelope) do
     runner = map_get(envelope, :strategy_runner) || @default_runner
 
-    with :ok <- validate_runner(runner),
-         {:ok, result} <- runner.start(project_ctx, envelope, []),
-         true <- is_map(result) do
-      {:ok, result}
-    else
-      false ->
-        {:error, {:invalid_strategy_runner_result, runner}}
+    with :ok <- validate_runner(runner) do
+      emit_strategy_started(project_ctx, envelope, runner)
 
-      {:error, _reason} = error ->
-        error
+      case runner.start(project_ctx, envelope, []) do
+        {:ok, result} -> handle_runner_success(project_ctx, envelope, result)
+        {:error, reason} -> handle_runner_error(project_ctx, envelope, reason)
+      end
+    end
+  end
+
+  defp handle_runner_success(project_ctx, envelope, result) when is_map(result) do
+    with {:ok, normalized} <- Normalizer.normalize_success(envelope, result) do
+      emit_strategy_terminal(project_ctx, envelope, normalized)
+      {:ok, normalized}
+    end
+  end
+
+  defp handle_runner_error(project_ctx, envelope, reason) do
+    with {:ok, normalized_error} <- Normalizer.normalize_error(envelope, reason) do
+      emit_strategy_terminal(project_ctx, envelope, normalized_error)
+      {:error, normalized_error}
     end
   end
 
@@ -257,6 +270,61 @@ defmodule Jido.Code.Server.Project.StrategyRunner do
 
   defp normalize_runner_module(module) when is_atom(module), do: module
   defp normalize_runner_module(_module), do: nil
+
+  defp emit_strategy_started(project_ctx, envelope, runner) do
+    Telemetry.emit("conversation.strategy.started", %{
+      project_id: map_get(project_ctx, :project_id),
+      conversation_id: map_get(envelope, :conversation_id),
+      correlation_id: map_get(envelope, :correlation_id),
+      cause_id: map_get(envelope, :cause_id),
+      strategy_type: map_get(envelope, :strategy_type),
+      strategy_runner: runner_name(runner)
+    })
+  end
+
+  defp emit_strategy_terminal(project_ctx, envelope, result) when is_map(result) do
+    result_meta = normalize_map(map_get(result, "result_meta"))
+    terminal_status = map_get(result_meta, "terminal_status") || "completed"
+    retryable = map_get(result, "retryable") == true or map_get(result_meta, "retryable") == true
+
+    event_name =
+      case terminal_status do
+        "failed" -> "conversation.strategy.failed"
+        "cancelled" -> "conversation.strategy.cancelled"
+        _ -> "conversation.strategy.completed"
+      end
+
+    payload = %{
+      project_id: map_get(project_ctx, :project_id),
+      conversation_id: map_get(envelope, :conversation_id),
+      correlation_id: map_get(envelope, :correlation_id),
+      cause_id: map_get(envelope, :cause_id),
+      strategy_type: map_get(envelope, :strategy_type),
+      strategy_runner:
+        map_get(result_meta, "strategy_runner") ||
+          runner_name(map_get(envelope, :strategy_runner)),
+      execution_ref: map_get(result, "execution_ref"),
+      retryable: retryable
+    }
+
+    Telemetry.emit(event_name, payload)
+
+    if retryable and terminal_status in ["failed", "cancelled"] do
+      Telemetry.emit("conversation.strategy.retryable", payload)
+    end
+  end
+
+  defp runner_name(runner) when is_atom(runner) do
+    runner
+    |> Atom.to_string()
+    |> String.replace_prefix("Elixir.", "")
+  end
+
+  defp runner_name(runner) when is_binary(runner), do: runner
+  defp runner_name(_runner), do: "unknown"
+
+  defp normalize_map(map) when is_map(map), do: map
+  defp normalize_map(_map), do: %{}
 
   defp map_get(map, key) when is_map(map) and is_atom(key),
     do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
