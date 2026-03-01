@@ -30,7 +30,7 @@ Current behavior limits tool calls from a single completion to the first call (`
 
 ## Tool Execution Path
 
-All direct tool calls route through `Project.ExecutionRunner`.
+All direct tool calls route through `Project.ExecutionRunner`, which enforces policy and guardrails then dispatches execution to `ToolRunner`, `CommandRunner`, or `WorkflowRunner`.
 
 ```mermaid
 sequenceDiagram
@@ -62,7 +62,7 @@ Each tool includes:
 - safety metadata (`sandboxed`, `network_capable`)
 - execution kind
 
-## Guardrails in ExecutionRunner
+## Guardrails in ExecutionRunner Gateway
 
 Before execution:
 
@@ -93,7 +93,7 @@ This means there are two invocation styles, one execution core:
 - Conversation-native tool path (`RunToolInstruction` + `ToolBridge`)
 - Jido.AI action path (`ToolActionBridge` generated actions)
 
-Both converge on `ExecutionRunner` policy and guardrails.
+Both converge on `ExecutionRunner` policy enforcement, guardrails, and delegated runner dispatch.
 
 ## Security Aside
 
