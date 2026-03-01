@@ -147,6 +147,13 @@ defmodule Jido.Code.Server.Project.Policy do
     GenServer.call(server, :diagnostics)
   end
 
+  @spec record_execution_decision(GenServer.server(), map()) :: :ok | {:error, :invalid_decision}
+  def record_execution_decision(server, decision_attrs) when is_map(decision_attrs) do
+    GenServer.call(server, {:record_execution_decision, decision_attrs})
+  end
+
+  def record_execution_decision(_server, _decision_attrs), do: {:error, :invalid_decision}
+
   @impl true
   def handle_call({:authorize_tool, tool_name, args, meta, tool_safety, ctx}, _from, state) do
     {reply, reason, authorization_meta} =
@@ -225,6 +232,13 @@ defmodule Jido.Code.Server.Project.Policy do
     }
 
     {:reply, diagnostics, state}
+  end
+
+  def handle_call({:record_execution_decision, decision_attrs}, _from, state)
+      when is_map(decision_attrs) do
+    decision = build_execution_decision(state, decision_attrs)
+    emit_policy_decision(decision)
+    {:reply, :ok, store_decision(state, decision)}
   end
 
   defp validate_arg_paths(%{root_path: nil}, _args), do: {:ok, default_authorization_meta()}
@@ -1065,6 +1079,64 @@ defmodule Jido.Code.Server.Project.Policy do
     %{outside_root_exception_reason_codes: []}
   end
 
+  defp build_execution_decision(state, attrs) do
+    decision = normalize_decision(attrs)
+    decision_value = fn key -> Map.get(decision, key) end
+
+    %{
+      project_id: state.project_id || decision_value.(:project_id),
+      conversation_id: decision_value.(:conversation_id),
+      correlation_id: decision_value.(:correlation_id),
+      tool_name: decision_value.(:tool_name) || execution_tool_name(decision),
+      reason: normalize_execution_reason(decision_value.(:reason), decision_value.(:decision)),
+      decision: decision_value.(:decision),
+      execution_kind: decision_value.(:execution_kind),
+      strategy_type: decision_value.(:strategy_type),
+      run_id: decision_value.(:run_id),
+      step_id: decision_value.(:step_id),
+      outside_root_exception_reason_codes: [],
+      at: DateTime.utc_now()
+    }
+  end
+
+  defp normalize_decision(attrs) when is_map(attrs) do
+    %{
+      project_id: map_get(attrs, :project_id),
+      conversation_id: map_get(attrs, :conversation_id),
+      correlation_id: map_get(attrs, :correlation_id),
+      tool_name: map_get(attrs, :tool_name),
+      reason: map_get(attrs, :reason),
+      decision: normalize_decision_value(map_get(attrs, :decision)),
+      execution_kind: normalize_execution_kind_value(map_get(attrs, :execution_kind)),
+      strategy_type: map_get(attrs, :strategy_type),
+      run_id: map_get(attrs, :run_id),
+      step_id: map_get(attrs, :step_id)
+    }
+  end
+
+  defp normalize_decision_value(:deny), do: :deny
+  defp normalize_decision_value("deny"), do: :deny
+  defp normalize_decision_value(_value), do: :allow
+
+  defp normalize_execution_kind_value(value) when is_atom(value), do: Atom.to_string(value)
+  defp normalize_execution_kind_value(value) when is_binary(value), do: value
+  defp normalize_execution_kind_value(_value), do: nil
+
+  defp execution_tool_name(decision) do
+    execution_kind = Map.get(decision, :execution_kind) || "unknown"
+    strategy_type = Map.get(decision, :strategy_type)
+
+    if is_binary(strategy_type) and strategy_type != "" do
+      "execution.#{execution_kind}.#{strategy_type}"
+    else
+      "execution.#{execution_kind}"
+    end
+  end
+
+  defp normalize_execution_reason(nil, :deny), do: :denied
+  defp normalize_execution_reason(nil, _decision), do: :allowed
+  defp normalize_execution_reason(reason, _decision), do: reason
+
   defp put_outside_root_reason_code(authorization_meta, reason_code)
        when is_binary(reason_code) and reason_code != "" do
     reason_codes =
@@ -1097,4 +1169,9 @@ defmodule Jido.Code.Server.Project.Policy do
         end
     end
   end
+
+  defp map_get(map, key) when is_map(map) and is_atom(key),
+    do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
+
+  defp map_get(_map, _key), do: nil
 end
