@@ -12,6 +12,7 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
     "properties" => %{},
     "additionalProperties" => true
   }
+  @default_tool_providers [AssetProvider]
 
   @spec all_tools(map()) :: list(map())
   def all_tools(project_ctx) when is_map(project_ctx) do
@@ -47,7 +48,7 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
   def get_tool(project_ctx, name) when is_binary(name) do
     project_ctx
     |> all_tools()
-    |> Enum.find(:error, fn tool -> tool.name == name end)
+    |> Enum.find(:error, fn tool -> tool_name(tool) == name end)
     |> case do
       :error -> :error
       tool -> {:ok, tool}
@@ -110,9 +111,21 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
     ]
   end
 
-  defp asset_tools(project_ctx) do
-    asset_store = Map.fetch!(project_ctx, :asset_store)
+  @doc false
+  @spec asset_tools(map()) :: [map()]
+  def asset_tools(project_ctx) when is_map(project_ctx) do
+    asset_store = Map.get(project_ctx, :asset_store)
 
+    if is_nil(asset_store) do
+      []
+    else
+      asset_tools_from_store(asset_store)
+    end
+  end
+
+  def asset_tools(_project_ctx), do: []
+
+  defp asset_tools_from_store(asset_store) do
     command_tools =
       asset_store
       |> AssetStore.list(:command)
@@ -125,6 +138,117 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
 
     (command_tools ++ workflow_tools)
     |> Enum.sort_by(& &1.name)
+  end
+
+  defp provider_tools(project_ctx) do
+    project_ctx
+    |> configured_providers()
+    |> Enum.flat_map(&tools_from_provider(&1, project_ctx))
+    |> Enum.map(&normalize_provider_tool/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.sort_by(&tool_name/1)
+  end
+
+  defp configured_providers(project_ctx) when is_map(project_ctx) do
+    project_ctx
+    |> Map.get(:tool_providers, Application.get_env(:jido_code_server, :tool_providers))
+    |> case do
+      nil -> @default_tool_providers
+      providers -> providers
+    end
+    |> List.wrap()
+    |> Enum.filter(&is_atom/1)
+  end
+
+  defp tools_from_provider(provider, project_ctx) when is_atom(provider) do
+    with {:module, _loaded} <- Code.ensure_loaded(provider),
+         true <- function_exported?(provider, :tools, 1) do
+      case provider.tools(project_ctx) do
+        tools when is_list(tools) ->
+          tools
+
+        {:ok, tools} when is_list(tools) ->
+          tools
+
+        _other ->
+          []
+      end
+    else
+      _other -> []
+    end
+  rescue
+    _error ->
+      []
+  end
+
+  defp normalize_provider_tool(%{} = tool) do
+    case normalized_provider_fields(tool) do
+      {:ok, fields} -> put_provider_fields(tool, fields)
+      :error -> nil
+    end
+  end
+
+  defp normalize_provider_tool(_tool), do: nil
+
+  defp normalized_provider_fields(tool) do
+    fields = %{
+      name: tool_name(tool),
+      description: tool_field(tool, :description),
+      input_schema: tool_field(tool, :input_schema),
+      kind: tool_field(tool, :kind),
+      output_schema: tool_field(tool, :output_schema, %{}),
+      safety: tool_field(tool, :safety, %{})
+    }
+
+    if valid_provider_fields?(fields) do
+      {:ok,
+       fields
+       |> Map.update!(:name, &String.trim/1)
+       |> Map.update!(:description, &String.trim/1)}
+    else
+      :error
+    end
+  end
+
+  defp valid_provider_fields?(%{
+         name: name,
+         description: description,
+         input_schema: input_schema,
+         kind: kind,
+         output_schema: output_schema,
+         safety: safety
+       }) do
+    is_binary(name) and String.trim(name) != "" and is_binary(description) and
+      is_map(input_schema) and is_map(output_schema) and is_map(safety) and is_atom(kind)
+  end
+
+  defp put_provider_fields(tool, fields) do
+    tool
+    |> Map.put(:name, fields.name)
+    |> Map.put(:description, fields.description)
+    |> Map.put(:input_schema, fields.input_schema)
+    |> Map.put(:output_schema, fields.output_schema)
+    |> Map.put(:safety, fields.safety)
+    |> Map.put(:kind, fields.kind)
+  end
+
+  defp tool_field(tool, key, default \\ nil) when is_map(tool) and is_atom(key) do
+    Map.get(tool, key) || Map.get(tool, Atom.to_string(key)) || default
+  end
+
+  defp uniq_by_name(tools) when is_list(tools) do
+    tools
+    |> Enum.reduce({MapSet.new(), []}, fn tool, {seen, acc} ->
+      name = tool_name(tool)
+
+      if is_binary(name) and not MapSet.member?(seen, name) do
+        {MapSet.put(seen, name), [tool | acc]}
+      else
+        {seen, acc}
+      end
+    end)
+    |> elem(1)
+    |> Enum.reverse()
   end
 
   defp spawn_tools(project_ctx) do
