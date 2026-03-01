@@ -38,7 +38,16 @@ defmodule Jido.Code.Server.Engine do
     :protocol_allowlist,
     :subagent_templates_allowlist
   ]
-  @passthrough_runtime_opts [:project_id, :data_dir, :llm_adapter]
+  @passthrough_runtime_opts [
+    :project_id,
+    :data_dir,
+    :llm_adapter,
+    :conversation_default_mode,
+    :conversation_mode_defaults,
+    :conversation_mode_registry,
+    :conversation_mode_unknown_key_policy,
+    :tool_providers
+  ]
   @allowed_command_executors [WorkspaceShell]
 
   @type project_id :: String.t()

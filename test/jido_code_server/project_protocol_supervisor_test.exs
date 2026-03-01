@@ -76,12 +76,16 @@ defmodule Jido.Code.Server.ProjectProtocolSupervisorTest do
     assert {:ok, mcp_timeline} =
              Runtime.conversation_projection(project_id, "phase8-mcp-c1", :timeline)
 
-    assert Enum.map(mcp_timeline, &get_in(&1, ["data", "content"])) == ["hello from mcp"]
+    assert mcp_timeline
+           |> Enum.filter(&(&1["type"] == "conversation.user.message"))
+           |> Enum.map(&get_in(&1, ["data", "content"])) == ["hello from mcp"]
 
     assert {:ok, a2a_timeline} =
              Runtime.conversation_projection(project_id, "phase8-a2a-c1", :timeline)
 
-    assert Enum.map(a2a_timeline, &get_in(&1, ["data", "content"])) == [
+    assert a2a_timeline
+           |> Enum.filter(&(&1["type"] == "conversation.user.message"))
+           |> Enum.map(&get_in(&1, ["data", "content"])) == [
              "hello from a2a",
              "a2a follow-up"
            ]

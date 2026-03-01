@@ -3,8 +3,9 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
   Tool inventory composition for each project instance.
   """
 
+  alias Jido.Code.Server.Conversation.ModeRegistry
   alias Jido.Code.Server.Project.AssetStore
-  alias Jido.Code.Server.Project.ToolCatalog.Providers.AssetProvider
+  alias Jido.Code.Server.Project.Policy
 
   @permissive_asset_input_schema %{
     "type" => "object",
@@ -15,10 +16,32 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
 
   @spec all_tools(map()) :: list(map())
   def all_tools(project_ctx) when is_map(project_ctx) do
-    builtin_tools()
-    |> Kernel.++(provider_tools(project_ctx))
-    |> Kernel.++(spawn_tools(project_ctx))
-    |> uniq_by_name()
+    (builtin_tools() ++
+       asset_tools(project_ctx) ++ provider_tools(project_ctx) ++ spawn_tools(project_ctx))
+    |> dedupe_tools()
+    |> Enum.sort_by(& &1.name)
+  end
+
+  @spec llm_tools(map(), keyword()) :: list(map())
+  def llm_tools(project_ctx, opts \\ []) when is_map(project_ctx) and is_list(opts) do
+    mode = Keyword.get(opts, :mode) || Map.get(project_ctx, :mode) || :coding
+    allowed_execution_kinds = ModeRegistry.allowed_execution_kinds(mode, project_ctx)
+
+    project_ctx
+    |> all_tools()
+    |> Enum.filter(&(llm_exposed?(&1) and allowed_in_mode?(&1, allowed_execution_kinds)))
+    |> maybe_filter_with_policy(project_ctx)
+    |> Enum.sort_by(& &1.name)
+  end
+
+  @spec llm_tool_allowed?(map(), String.t(), keyword()) ::
+          {:ok, map()} | {:error, :tool_not_exposed}
+  def llm_tool_allowed?(project_ctx, name, opts \\ [])
+      when is_map(project_ctx) and is_binary(name) and is_list(opts) do
+    case Enum.find(llm_tools(project_ctx, opts), fn tool -> tool.name == name end) do
+      nil -> {:error, :tool_not_exposed}
+      tool -> {:ok, tool}
+    end
   end
 
   @spec get_tool(map(), String.t()) :: {:ok, map()} | :error
@@ -44,7 +67,10 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
         },
         output_schema: %{"type" => "array"},
         safety: %{sandboxed: true, network_capable: false},
-        kind: :asset_list
+        kind: :asset_list,
+        execution_kind: :tool_run,
+        llm_exposed: true,
+        provider: :builtin
       },
       %{
         name: "asset.search",
@@ -59,7 +85,10 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
         },
         output_schema: %{"type" => "array"},
         safety: %{sandboxed: true, network_capable: false},
-        kind: :asset_search
+        kind: :asset_search,
+        execution_kind: :tool_run,
+        llm_exposed: true,
+        provider: :builtin
       },
       %{
         name: "asset.get",
@@ -74,7 +103,10 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
         },
         output_schema: %{"type" => "object"},
         safety: %{sandboxed: true, network_capable: false},
-        kind: :asset_get
+        kind: :asset_get,
+        execution_kind: :tool_run,
+        llm_exposed: true,
+        provider: :builtin
       }
     ]
   end
@@ -97,32 +129,12 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
     command_tools =
       asset_store
       |> AssetStore.list(:command)
-      |> Enum.map(fn command ->
-        %{
-          name: "command.run.#{command.name}",
-          description: "Execute project command #{command.name}.",
-          input_schema: command_input_schema(command),
-          output_schema: %{"type" => "object"},
-          safety: %{sandboxed: true, network_capable: true},
-          kind: :command_run,
-          asset_name: command.name
-        }
-      end)
+      |> Enum.map(&command_tool_spec/1)
 
     workflow_tools =
       asset_store
       |> AssetStore.list(:workflow)
-      |> Enum.map(fn workflow ->
-        %{
-          name: "workflow.run.#{workflow.name}",
-          description: "Execute workflow #{workflow.name}.",
-          input_schema: workflow_input_schema(workflow),
-          output_schema: %{"type" => "object"},
-          safety: %{sandboxed: true, network_capable: true},
-          kind: :workflow_run,
-          asset_name: workflow.name
-        }
-      end)
+      |> Enum.map(&workflow_tool_spec/1)
 
     (command_tools ++ workflow_tools)
     |> Enum.sort_by(& &1.name)
@@ -264,6 +276,9 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
             output_schema: %{"type" => "object"},
             safety: %{sandboxed: true, network_capable: false},
             kind: :subagent_spawn,
+            execution_kind: :subagent_spawn,
+            llm_exposed: true,
+            provider: :subagent_template,
             template_id: template_id,
             template: template
           }
@@ -275,11 +290,135 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
     |> Enum.sort_by(& &1.name)
   end
 
-  defp command_input_schema(asset) when is_map(asset) do
-    case parse_command_definition(asset) do
-      {:ok, definition} -> command_schema_from_definition(definition)
-      {:error, _reason} -> @permissive_asset_input_schema
+  defp provider_tools(project_ctx) do
+    project_ctx
+    |> tool_provider_modules()
+    |> Enum.flat_map(fn provider ->
+      provider
+      |> load_provider_tools(project_ctx)
+      |> Enum.map(&normalize_provider_tool(&1, provider))
+      |> Enum.reject(&is_nil/1)
+    end)
+    |> Enum.sort_by(& &1.name)
+  end
+
+  defp tool_provider_modules(project_ctx) do
+    project_ctx
+    |> Map.get(:tool_providers, [])
+    |> List.wrap()
+    |> Enum.filter(&is_atom/1)
+  end
+
+  defp load_provider_tools(provider, project_ctx) when is_atom(provider) do
+    cond do
+      function_exported?(provider, :tools, 1) ->
+        provider.tools(project_ctx)
+
+      function_exported?(provider, :list_tools, 1) ->
+        provider.list_tools(project_ctx)
+
+      true ->
+        []
     end
+    |> List.wrap()
+  rescue
+    _error ->
+      []
+  end
+
+  defp normalize_provider_tool(raw_tool, provider) when is_map(raw_tool) do
+    tool = normalize_string_key_map(raw_tool)
+    name = Map.get(tool, "name")
+    kind = normalize_provider_kind(Map.get(tool, "kind"))
+
+    if is_binary(name) and String.trim(name) != "" and is_map(Map.get(tool, "input_schema")) do
+      %{
+        name: name,
+        description:
+          normalize_description(Map.get(tool, "description"), "Provider tool #{name}."),
+        input_schema: Map.get(tool, "input_schema"),
+        output_schema: Map.get(tool, "output_schema", %{"type" => "object"}),
+        safety: normalize_safety(Map.get(tool, "safety")),
+        kind: kind,
+        execution_kind: execution_kind_for_kind(kind),
+        llm_exposed: Map.get(tool, "llm_exposed", true) == true,
+        provider: provider
+      }
+    else
+      nil
+    end
+  end
+
+  defp normalize_provider_tool(_raw_tool, _provider), do: nil
+
+  defp command_tool_spec(command) when is_map(command) do
+    {description, input_schema, llm_exposed, registration} =
+      case parse_command_definition(command) do
+        {:ok, definition} ->
+          {
+            command_description(definition, command),
+            command_schema_from_definition(definition),
+            true,
+            %{status: :registered}
+          }
+
+        {:error, reason} ->
+          {
+            "Execute project command #{command.name}.",
+            @permissive_asset_input_schema,
+            false,
+            %{status: :invalid, reason: reason}
+          }
+      end
+
+    %{
+      name: "command.run.#{command.name}",
+      description: description,
+      input_schema: input_schema,
+      output_schema: %{"type" => "object"},
+      safety: %{sandboxed: true, network_capable: true},
+      kind: :command_run,
+      execution_kind: :command_run,
+      llm_exposed: llm_exposed,
+      provider: :jido_command,
+      registration: registration,
+      asset_name: command.name
+    }
+  end
+
+  defp workflow_tool_spec(workflow) when is_map(workflow) do
+    {description, input_schema, llm_exposed, registration} =
+      case parse_workflow_definition(workflow) do
+        {:ok, definition} ->
+          {
+            workflow_description(definition, workflow),
+            workflow_schema_from_definition(definition),
+            true,
+            %{status: :registered}
+          }
+
+        {:error, reason} ->
+          {
+            "Execute workflow #{workflow.name}.",
+            @permissive_asset_input_schema,
+            false,
+            %{status: :invalid, reason: reason}
+          }
+      end
+
+    %{
+      name: "workflow.run.#{workflow.name}",
+      description: description,
+      input_schema: input_schema,
+      output_schema: %{"type" => "object"},
+      safety: %{sandboxed: true, network_capable: true},
+      kind: :workflow_run,
+      execution_kind: :workflow_run,
+      llm_exposed: llm_exposed,
+      provider: :jido_workflow,
+      registration: registration,
+      asset_name: workflow.name
+    }
   end
 
   defp command_schema_from_definition(definition) when is_map(definition) do
@@ -304,8 +443,6 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
       }
     end
   end
-
-  defp command_schema_from_definition(_definition), do: @permissive_asset_input_schema
 
   defp command_parameter_schema(definition) do
     definition
@@ -377,13 +514,6 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
   defp command_type_to_json_schema(:list), do: "array"
   defp command_type_to_json_schema(:atom), do: "string"
   defp command_type_to_json_schema(_type), do: nil
-
-  defp workflow_input_schema(asset) when is_map(asset) do
-    case parse_workflow_definition(asset) do
-      {:ok, definition} -> workflow_schema_from_definition(definition)
-      {:error, _reason} -> @permissive_asset_input_schema
-    end
-  end
 
   defp workflow_schema_from_definition(definition) when is_map(definition) do
     {input_properties, input_required} = workflow_inputs_schema(definition)
@@ -511,9 +641,120 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
   defp append_required(required, field_name, true), do: [field_name | required]
   defp append_required(required, _field_name, _required_flag), do: required
 
-  defp tool_name(%{} = tool) do
-    Map.get(tool, :name) || Map.get(tool, "name")
+  defp llm_exposed?(tool) when is_map(tool) do
+    Map.get(tool, :llm_exposed, true) == true
   end
+
+  defp allowed_in_mode?(_tool, :all), do: true
+
+  defp allowed_in_mode?(tool, allowed_execution_kinds)
+       when is_map(tool) and is_list(allowed_execution_kinds) do
+    execution_kind = Map.get(tool, :execution_kind, :tool_run)
+    execution_kind in allowed_execution_kinds
+  end
+
+  defp allowed_in_mode?(_tool, _allowed_execution_kinds), do: true
+
+  defp maybe_filter_with_policy(tools, project_ctx) when is_list(tools) and is_map(project_ctx) do
+    case Map.get(project_ctx, :policy) do
+      nil -> tools
+      policy -> Policy.filter_tools(policy, tools)
+    end
+  end
+
+  defp dedupe_tools(tools) when is_list(tools) do
+    tools
+    |> Enum.reduce({MapSet.new(), []}, fn tool, {seen_names, acc} ->
+      name = Map.get(tool, :name)
+
+      if is_binary(name) and not MapSet.member?(seen_names, name) do
+        {MapSet.put(seen_names, name), [tool | acc]}
+      else
+        {seen_names, acc}
+      end
+    end)
+    |> elem(1)
+    |> Enum.reverse()
+  end
+
+  defp normalize_provider_kind(kind) when is_atom(kind), do: kind
+
+  defp normalize_provider_kind(kind) when is_binary(kind) do
+    kind
+    |> String.trim()
+    |> String.downcase()
+    |> case do
+      "" -> :tool_run
+      "asset_list" -> :asset_list
+      "asset_search" -> :asset_search
+      "asset_get" -> :asset_get
+      "command_run" -> :command_run
+      "workflow_run" -> :workflow_run
+      "subagent_spawn" -> :subagent_spawn
+      _other -> :tool_run
+    end
+  end
+
+  defp normalize_provider_kind(_kind), do: :tool_run
+
+  defp execution_kind_for_kind(kind)
+       when kind in [:asset_list, :asset_search, :asset_get, :tool_run],
+       do: :tool_run
+
+  defp execution_kind_for_kind(:command_run), do: :command_run
+  defp execution_kind_for_kind(:workflow_run), do: :workflow_run
+  defp execution_kind_for_kind(:subagent_spawn), do: :subagent_spawn
+  defp execution_kind_for_kind(_kind), do: :tool_run
+
+  defp normalize_safety(safety) when is_map(safety) do
+    %{
+      sandboxed: Map.get(safety, :sandboxed, true),
+      network_capable: Map.get(safety, :network_capable, false)
+    }
+  end
+
+  defp normalize_safety(_safety), do: %{sandboxed: true, network_capable: false}
+
+  defp command_description(definition, command) do
+    normalize_description(
+      fetch_field(definition, :description),
+      "Execute project command #{command.name}."
+    )
+  end
+
+  defp workflow_description(definition, workflow) do
+    normalize_description(
+      fetch_field(definition, :description),
+      "Execute workflow #{workflow.name}."
+    )
+  end
+
+  defp normalize_description(description, fallback) when is_binary(description) do
+    normalized = String.trim(description)
+    if normalized == "", do: fallback, else: normalized
+  end
+
+  defp normalize_description(_description, fallback), do: fallback
+
+  defp normalize_string_key_map(value) when is_map(value) do
+    Enum.reduce(value, %{}, fn {key, nested}, acc ->
+      normalized_key = if(is_atom(key), do: Atom.to_string(key), else: key)
+
+      normalized_value =
+        cond do
+          is_map(nested) -> normalize_string_key_map(nested)
+          is_list(nested) -> Enum.map(nested, &normalize_string_key_map/1)
+          true -> nested
+        end
+
+      Map.put(acc, normalized_key, normalized_value)
+    end)
+  end
+
+  defp normalize_string_key_map(value) when is_list(value),
+    do: Enum.map(value, &normalize_string_key_map/1)
+
+  defp normalize_string_key_map(value), do: value
 
   defp parse_command_definition(%{body: body, path: path})
        when is_binary(body) and is_binary(path) do

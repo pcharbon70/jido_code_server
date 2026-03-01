@@ -31,7 +31,7 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
     assert :ok = ConversationAgent.cast(pid, signal)
     assert {:ok, timeline} = await_projection(pid, :timeline)
 
-    assert [%{"type" => "conversation.user.message", "data" => %{"content" => "ping"}}] = timeline
+    assert user_message_contents(timeline) == ["ping"]
   end
 
   test "project conversation projections are deterministic for same event sequence" do
@@ -104,7 +104,9 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
                "data" => %{"content" => "two"}
              })
 
-    refute_receive {:conversation_event, "sub-c", _event}, 200
+    refute_receive {:conversation_event, "sub-c",
+                    %{"type" => "conversation.user.message", "data" => %{"content" => "two"}}},
+                   200
   end
 
   test "project conversation cast notifies subscribers asynchronously" do
@@ -146,8 +148,8 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
                "data" => %{"content" => "before"}
              })
 
-    assert {:ok, [%{"data" => %{"content" => "before"}}]} =
-             Runtime.conversation_projection(project_id, "restart-c", :timeline)
+    assert {:ok, timeline} = Runtime.conversation_projection(project_id, "restart-c", :timeline)
+    assert user_message_contents(timeline) == ["before"]
 
     assert :ok = Runtime.stop_conversation(project_id, "restart-c")
 
@@ -162,6 +164,12 @@ defmodule Jido.Code.Server.ConversationEventProjectionTest do
 
   defp event_types(timeline) when is_list(timeline) do
     Enum.map(timeline, &Map.get(&1, "type"))
+  end
+
+  defp user_message_contents(timeline) when is_list(timeline) do
+    timeline
+    |> Enum.filter(&(Map.get(&1, "type") == "conversation.user.message"))
+    |> Enum.map(&get_in(&1, ["data", "content"]))
   end
 
   defp await_projection(pid, key, attempts \\ 30)

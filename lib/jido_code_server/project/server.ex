@@ -13,6 +13,7 @@ defmodule Jido.Code.Server.Project.Server do
   alias Jido.Code.Server.Config
   alias Jido.Code.Server.Conversation.Agent, as: ConversationAgent
   alias Jido.Code.Server.Conversation.JournalBridge
+  alias Jido.Code.Server.Conversation.ModeConfig
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
   alias Jido.Code.Server.Conversation.ToolBridge
   alias Jido.Code.Server.Project.AssetStore
@@ -233,82 +234,22 @@ defmodule Jido.Code.Server.Project.Server do
 
   @impl true
   def handle_call({:start_conversation, opts}, _from, state) do
-    conversation_id =
-      case Keyword.get(opts, :conversation_id) do
-        id when is_binary(id) and id != "" ->
-          id
+    conversation_id = conversation_id_from_opts(opts)
 
-        _ ->
-          "conversation_" <> Integer.to_string(System.unique_integer([:positive]))
-      end
-
-    case ConversationRegistry.fetch(state.conversation_registry, conversation_id) do
+    with :error <- ConversationRegistry.fetch(state.conversation_registry, conversation_id),
+         {:ok, resolved_mode} <- resolve_conversation_mode(opts, state, conversation_id),
+         {:ok, updated_state} <-
+           start_conversation_with_mode(state, conversation_id, resolved_mode) do
+      {:reply, {:ok, conversation_id}, updated_state}
+    else
       {:ok, _existing_pid} ->
         {:reply, {:error, {:conversation_already_started, conversation_id}}, state}
 
-      :error ->
-        conversation_project_ctx =
-          state
-          |> project_ctx()
-          |> Map.put(:conversation_id, conversation_id)
-          |> Map.put(:conversation_server, self())
-          |> Map.put(:subagent_manager, state.subagent_manager)
-          |> Map.put(:subagent_templates, state.subagent_templates)
-          |> Map.put(
-            :llm_timeout_ms,
-            runtime_opt(state, :llm_timeout_ms, Config.llm_timeout_ms())
-          )
-          |> Map.put(:llm_adapter, Keyword.get(state.runtime_opts, :llm_adapter))
-          |> Map.put(:llm_model, Keyword.get(state.runtime_opts, :llm_model))
-          |> Map.put(:llm_system_prompt, Keyword.get(state.runtime_opts, :llm_system_prompt))
-          |> Map.put(:llm_temperature, Keyword.get(state.runtime_opts, :llm_temperature))
-          |> Map.put(:llm_max_tokens, Keyword.get(state.runtime_opts, :llm_max_tokens))
+      {:error, {:invalid_mode_config, diagnostics}} ->
+        {:reply, {:error, {:invalid_mode_config, diagnostics}}, state}
 
-        conversation_opts = [
-          project_id: state.project_id,
-          conversation_id: conversation_id,
-          project_ctx: conversation_project_ctx,
-          max_queue_size:
-            runtime_opt(state, :conversation_max_queue_size, Config.conversation_max_queue_size()),
-          max_drain_steps:
-            runtime_opt(
-              state,
-              :conversation_max_drain_steps,
-              Config.conversation_max_drain_steps()
-            ),
-          orchestration_enabled: conversation_orchestration_enabled?(state.runtime_opts),
-          subagent_templates: state.subagent_templates
-        ]
-
-        case ConversationSupervisor.start_conversation(
-               state.conversation_supervisor,
-               conversation_opts
-             ) do
-          {:ok, pid} ->
-            monitor_ref = Process.monitor(pid)
-            :ok = ConversationRegistry.put(state.conversation_registry, conversation_id, pid)
-
-            conversations =
-              Map.put(state.conversations, conversation_id, %{pid: pid, monitor_ref: monitor_ref})
-
-            last_notified_event_index =
-              Map.put(state.last_notified_event_index, conversation_id, 0)
-
-            Telemetry.emit("conversation.started", %{
-              project_id: state.project_id,
-              conversation_id: conversation_id
-            })
-
-            {:reply, {:ok, conversation_id},
-             %{
-               state
-               | conversations: conversations,
-                 last_notified_event_index: last_notified_event_index
-             }}
-
-          {:error, reason} ->
-            {:reply, {:error, {:start_conversation_failed, reason}}, state}
-        end
+      {:error, {:start_conversation_failed, reason}} ->
+        {:reply, {:error, {:start_conversation_failed, reason}}, state}
     end
   end
 
@@ -755,7 +696,13 @@ defmodule Jido.Code.Server.Project.Server do
       llm_model: Keyword.get(state.runtime_opts, :llm_model),
       llm_system_prompt: Keyword.get(state.runtime_opts, :llm_system_prompt),
       llm_temperature: Keyword.get(state.runtime_opts, :llm_temperature),
-      llm_max_tokens: Keyword.get(state.runtime_opts, :llm_max_tokens)
+      llm_max_tokens: Keyword.get(state.runtime_opts, :llm_max_tokens),
+      conversation_default_mode: runtime_opt(state, :conversation_default_mode, :coding),
+      conversation_mode_defaults: runtime_opt(state, :conversation_mode_defaults, %{}),
+      conversation_mode_registry: runtime_opt(state, :conversation_mode_registry, %{}),
+      conversation_mode_unknown_key_policy:
+        runtime_opt(state, :conversation_mode_unknown_key_policy, :reject),
+      tool_providers: runtime_opt(state, :tool_providers, [])
     }
   end
 
@@ -823,6 +770,100 @@ defmodule Jido.Code.Server.Project.Server do
        total_entries: total_entries,
        entries: entries
      }}
+  end
+
+  defp conversation_id_from_opts(opts) do
+    case Keyword.get(opts, :conversation_id) do
+      id when is_binary(id) and id != "" ->
+        id
+
+      _ ->
+        "conversation_" <> Integer.to_string(System.unique_integer([:positive]))
+    end
+  end
+
+  defp resolve_conversation_mode(opts, state, conversation_id) do
+    base_project_ctx = base_project_ctx_for_conversation(state, conversation_id)
+
+    case ModeConfig.resolve(opts, nil, base_project_ctx) do
+      {:ok, resolved_mode} ->
+        {:ok, resolved_mode}
+
+      {:error, diagnostics} ->
+        {:error, {:invalid_mode_config, diagnostics}}
+    end
+  end
+
+  defp start_conversation_with_mode(state, conversation_id, resolved_mode) do
+    conversation_project_ctx =
+      state
+      |> base_project_ctx_for_conversation(conversation_id)
+      |> Map.put(:mode, resolved_mode.mode)
+      |> Map.put(:mode_state, resolved_mode.mode_state)
+      |> Map.put(:mode_spec, resolved_mode.mode_spec)
+      |> Map.put(:mode_diagnostics, resolved_mode.diagnostics)
+
+    conversation_opts =
+      build_conversation_opts(state, conversation_id, conversation_project_ctx, resolved_mode)
+
+    case ConversationSupervisor.start_conversation(
+           state.conversation_supervisor,
+           conversation_opts
+         ) do
+      {:ok, pid} ->
+        {:ok, register_started_conversation(state, conversation_id, pid)}
+
+      {:error, reason} ->
+        {:error, {:start_conversation_failed, reason}}
+    end
+  end
+
+  defp base_project_ctx_for_conversation(state, conversation_id) do
+    state
+    |> project_ctx()
+    |> Map.put(:conversation_id, conversation_id)
+    |> Map.put(:conversation_server, self())
+    |> Map.put(:subagent_manager, state.subagent_manager)
+    |> Map.put(:subagent_templates, state.subagent_templates)
+    |> Map.put(:llm_timeout_ms, runtime_opt(state, :llm_timeout_ms, Config.llm_timeout_ms()))
+    |> Map.put(:llm_adapter, Keyword.get(state.runtime_opts, :llm_adapter))
+    |> Map.put(:llm_model, Keyword.get(state.runtime_opts, :llm_model))
+    |> Map.put(:llm_system_prompt, Keyword.get(state.runtime_opts, :llm_system_prompt))
+    |> Map.put(:llm_temperature, Keyword.get(state.runtime_opts, :llm_temperature))
+    |> Map.put(:llm_max_tokens, Keyword.get(state.runtime_opts, :llm_max_tokens))
+  end
+
+  defp build_conversation_opts(state, conversation_id, conversation_project_ctx, resolved_mode) do
+    [
+      project_id: state.project_id,
+      conversation_id: conversation_id,
+      project_ctx: conversation_project_ctx,
+      mode: resolved_mode.mode,
+      mode_state: resolved_mode.mode_state,
+      max_queue_size:
+        runtime_opt(state, :conversation_max_queue_size, Config.conversation_max_queue_size()),
+      max_drain_steps:
+        runtime_opt(state, :conversation_max_drain_steps, Config.conversation_max_drain_steps()),
+      orchestration_enabled: conversation_orchestration_enabled?(state.runtime_opts),
+      subagent_templates: state.subagent_templates
+    ]
+  end
+
+  defp register_started_conversation(state, conversation_id, pid) do
+    monitor_ref = Process.monitor(pid)
+    :ok = ConversationRegistry.put(state.conversation_registry, conversation_id, pid)
+
+    Telemetry.emit("conversation.started", %{
+      project_id: state.project_id,
+      conversation_id: conversation_id
+    })
+
+    %{
+      state
+      | conversations:
+          Map.put(state.conversations, conversation_id, %{pid: pid, monitor_ref: monitor_ref}),
+        last_notified_event_index: Map.put(state.last_notified_event_index, conversation_id, 0)
+    }
   end
 
   defp runtime_opt(state, key, default) do

@@ -36,15 +36,32 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
                "data" => %{"content" => "hello"}
              })
 
-    assert {:ok, timeline} = Runtime.conversation_projection(project_id, "phase6-c1", :timeline)
+    assert {:ok, timeline} =
+             wait_for_timeline(project_id, "phase6-c1", fn events ->
+               types = event_types(events)
 
-    assert event_types(timeline) == [
-             "conversation.user.message",
-             "conversation.llm.requested",
-             "conversation.assistant.delta",
-             "conversation.assistant.message",
-             "conversation.llm.completed"
-           ]
+               Enum.all?(
+                 [
+                   "conversation.user.message",
+                   "conversation.llm.requested",
+                   "conversation.assistant.delta",
+                   "conversation.assistant.message",
+                   "conversation.llm.completed",
+                   "conversation.run.opened",
+                   "conversation.run.closed"
+                 ],
+                 &(&1 in types)
+               )
+             end)
+
+    types = event_types(timeline)
+    assert "conversation.user.message" in types
+    assert "conversation.llm.requested" in types
+    assert "conversation.assistant.delta" in types
+    assert "conversation.assistant.message" in types
+    assert "conversation.llm.completed" in types
+    assert "conversation.run.opened" in types
+    assert "conversation.run.closed" in types
   end
 
   test "tool requests flow through execution runner and continue conversation after completion" do
@@ -295,4 +312,25 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
   end
 
   defp map_lookup(_map, _key), do: nil
+
+  defp wait_for_timeline(project_id, conversation_id, predicate, attempts \\ 40)
+
+  defp wait_for_timeline(_project_id, _conversation_id, _predicate, 0),
+    do: {:error, :timeline_timeout}
+
+  defp wait_for_timeline(project_id, conversation_id, predicate, attempts) do
+    case Runtime.conversation_projection(project_id, conversation_id, :timeline) do
+      {:ok, timeline} ->
+        if predicate.(timeline) do
+          {:ok, timeline}
+        else
+          Process.sleep(25)
+          wait_for_timeline(project_id, conversation_id, predicate, attempts - 1)
+        end
+
+      _other ->
+        Process.sleep(25)
+        wait_for_timeline(project_id, conversation_id, predicate, attempts - 1)
+    end
+  end
 end

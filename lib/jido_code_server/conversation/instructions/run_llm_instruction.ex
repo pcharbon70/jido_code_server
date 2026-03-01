@@ -17,6 +17,8 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunLLMInstruction do
   def run(params, context) when is_map(params) and is_map(context) do
     project_ctx = map_get(context, "project_ctx") || %{}
     conversation_id = map_get(params, "conversation_id") || map_get(context, "conversation_id")
+    mode = resolve_mode(params, context)
+    mode_state = resolve_mode_state(params, context)
 
     with {:ok, source_signal} <- normalize_source_signal(params),
          true <- is_binary(conversation_id) do
@@ -35,7 +37,7 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunLLMInstruction do
         [
           source_event: ConversationSignal.to_map(source_signal)
         ]
-        |> maybe_put_opt(:tool_specs, available_tool_specs(project_ctx))
+        |> maybe_put_opt(:tool_specs, available_tool_specs(project_ctx, mode, mode_state))
 
       case LLM.start_completion(project_ctx, conversation_id, llm_context, opts) do
         {:ok, %{events: events}} ->
@@ -91,8 +93,8 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunLLMInstruction do
     end
   end
 
-  defp available_tool_specs(project_ctx) do
-    tools = ToolCatalog.all_tools(project_ctx)
+  defp available_tool_specs(project_ctx, mode, mode_state) do
+    tools = ToolCatalog.llm_tools(project_ctx, mode: mode, mode_state: mode_state)
 
     project_ctx
     |> filter_available_tools(tools)
@@ -138,6 +140,14 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunLLMInstruction do
     end
   end
 
+  defp resolve_mode(params, context) do
+    map_get(params, "mode") || map_get(context, "mode") || :coding
+  end
+
+  defp resolve_mode_state(params, context) do
+    map_get(params, "mode_state") || map_get(context, "mode_state") || %{}
+  end
+
   defp tool_spec(tool) do
     %{
       name: tool.name,
@@ -166,11 +176,8 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunLLMInstruction do
   defp normalize_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp normalize_reason(reason), do: inspect(reason)
 
-  defp map_get(map, key) when is_map(map) do
-    Map.get(map, key) || Map.get(map, to_existing_atom(key))
-  end
-
-  defp map_get(_map, _key), do: nil
+  defp map_get(map, key) when is_map(map) and is_binary(key),
+    do: Map.get(map, key) || Map.get(map, to_existing_atom(key))
 
   defp to_existing_atom(key) when is_binary(key) do
     String.to_existing_atom(key)

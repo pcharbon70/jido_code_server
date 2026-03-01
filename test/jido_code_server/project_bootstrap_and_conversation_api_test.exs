@@ -69,9 +69,11 @@ defmodule Jido.Code.Server.ProjectBootstrapAndConversationApiTest do
                event
              )
 
-    assert {:ok, [timeline_event]} =
+    assert {:ok, timeline} =
              Runtime.conversation_projection(project_id, "conversation-a", :timeline)
 
+    user_timeline_events = Enum.filter(timeline, &(&1["type"] == "conversation.user.message"))
+    assert [timeline_event] = user_timeline_events
     assert timeline_event["type"] == "conversation.user.message"
     assert get_in(timeline_event, ["data", "content"]) == "hello"
     assert is_binary(get_in(timeline_event, ["meta", "correlation_id"]))
@@ -82,7 +84,8 @@ defmodule Jido.Code.Server.ProjectBootstrapAndConversationApiTest do
 
     assert llm_context.project_id == project_id
     assert llm_context.conversation_id == "conversation-a"
-    assert [context_event] = llm_context.events
+    context_events = Enum.filter(llm_context.events, &(&1["type"] == "conversation.user.message"))
+    assert [context_event] = context_events
     assert context_event["type"] == "conversation.user.message"
     assert get_in(context_event, ["data", "content"]) == "hello"
     assert get_in(context_event, ["meta", "correlation_id"]) == correlation_id
@@ -167,7 +170,11 @@ defmodule Jido.Code.Server.ProjectBootstrapAndConversationApiTest do
     assert {:ok, events} =
              Runtime.conversation_projection(project_id, "conversation-b", :timeline)
 
-    assert Enum.map(events, & &1["type"]) == [
+    assert events
+           |> Enum.map(& &1["type"])
+           |> Enum.filter(
+             &(&1 in ["conversation.user.message", "conversation.cancel", "conversation.resume"])
+           ) == [
              "conversation.user.message",
              "conversation.cancel",
              "conversation.resume"

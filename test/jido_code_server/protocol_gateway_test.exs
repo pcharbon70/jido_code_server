@@ -66,7 +66,9 @@ defmodule Jido.Code.Server.ProtocolGatewayTest do
 
     assert {:ok, timeline} = Runtime.conversation_projection(project_id, "mcp-c1", :timeline)
 
-    assert Enum.map(timeline, &get_in(&1, ["data", "content"])) == [
+    assert timeline
+           |> Enum.filter(&(&1["type"] == "conversation.user.message"))
+           |> Enum.map(&get_in(&1, ["data", "content"])) == [
              "hello from mcp",
              "hello from project server"
            ]
@@ -88,7 +90,7 @@ defmodule Jido.Code.Server.ProtocolGatewayTest do
     assert_receive {:conversation_event, ^conversation_id, event1}, 1_000
     assert event1["type"] == "conversation.user.message"
 
-    assert_receive {:conversation_event, ^conversation_id, event2}, 1_000
+    event2 = assert_receive_event_type(conversation_id, "conversation.cancel", 1_000)
     assert event2["type"] == "conversation.cancel"
 
     assert :ok = A2AGateway.unsubscribe_task(project_id, conversation_id, self())
@@ -96,7 +98,9 @@ defmodule Jido.Code.Server.ProtocolGatewayTest do
     assert {:ok, timeline} =
              Runtime.conversation_projection(project_id, conversation_id, :timeline)
 
-    assert Enum.map(timeline, &Map.get(&1, "type")) == [
+    assert timeline
+           |> Enum.map(&Map.get(&1, "type"))
+           |> Enum.filter(&(&1 in ["conversation.user.message", "conversation.cancel"])) == [
              "conversation.user.message",
              "conversation.user.message",
              "conversation.cancel"
@@ -167,5 +171,26 @@ defmodule Jido.Code.Server.ProtocolGatewayTest do
     |> Map.get(:telemetry, %{})
     |> Map.get(:event_counts, %{})
     |> Map.get(event_name, 0)
+  end
+
+  defp assert_receive_event_type(conversation_id, expected_type, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    receive_event_type(conversation_id, expected_type, deadline)
+  end
+
+  defp receive_event_type(conversation_id, expected_type, deadline_ms) do
+    remaining = max(deadline_ms - System.monotonic_time(:millisecond), 0)
+
+    receive do
+      {:conversation_event, ^conversation_id, event} ->
+        if event["type"] == expected_type do
+          event
+        else
+          receive_event_type(conversation_id, expected_type, deadline_ms)
+        end
+    after
+      remaining ->
+        flunk("expected #{expected_type} event for #{conversation_id}")
+    end
   end
 end

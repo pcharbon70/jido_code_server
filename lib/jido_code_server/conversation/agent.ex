@@ -27,7 +27,8 @@ defmodule Jido.Code.Server.Conversation.Agent do
   @external_signal_types [
     "conversation.user.message",
     "conversation.cancel",
-    "conversation.resume"
+    "conversation.resume",
+    "conversation.mode.switch.requested"
   ]
   @external_signal_type_set MapSet.new(@external_signal_types)
 
@@ -35,6 +36,8 @@ defmodule Jido.Code.Server.Conversation.Agent do
           project_id: String.t(),
           conversation_id: String.t(),
           status: atom(),
+          mode: atom(),
+          active_run: map() | nil,
           queue_size: non_neg_integer(),
           pending_tool_calls: [map()],
           pending_subagents: [map()]
@@ -56,6 +59,8 @@ defmodule Jido.Code.Server.Conversation.Agent do
       State.new(
         project_id: project_id,
         conversation_id: conversation_id,
+        mode: Keyword.get(opts, :mode, :coding),
+        mode_state: Keyword.get(opts, :mode_state, %{}),
         max_queue_size: Keyword.get(opts, :max_queue_size, Config.conversation_max_queue_size()),
         max_drain_steps:
           Keyword.get(opts, :max_drain_steps, Config.conversation_max_drain_steps()),
@@ -196,11 +201,17 @@ defmodule Jido.Code.Server.Conversation.Agent do
     %{
       project_id: state.project_id,
       conversation_id: state.conversation_id,
-      status: diagnostics[:status] || diagnostics["status"] || domain.status,
-      queue_size: diagnostics[:queue_size] || diagnostics["queue_size"] || domain.queue_size,
+      status: diagnostic_value(diagnostics, :status, domain.status),
+      mode: diagnostic_value(diagnostics, :mode, domain.mode),
+      active_run: diagnostic_value(diagnostics, :active_run, domain.active_run),
+      queue_size: diagnostic_value(diagnostics, :queue_size, domain.queue_size),
       pending_tool_calls: domain.pending_tool_calls,
       pending_subagents: domain.pending_subagents |> Map.values()
     }
+  end
+
+  defp diagnostic_value(diagnostics, key, fallback) do
+    diagnostics[key] || diagnostics[Atom.to_string(key)] || fallback
   end
 
   defp normalize_projection_key(key) when is_atom(key), do: key
