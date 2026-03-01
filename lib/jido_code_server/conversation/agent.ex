@@ -27,7 +27,8 @@ defmodule Jido.Code.Server.Conversation.Agent do
   @external_signal_types [
     "conversation.user.message",
     "conversation.cancel",
-    "conversation.resume"
+    "conversation.resume",
+    "conversation.mode.switch.requested"
   ]
   @external_signal_type_set MapSet.new(@external_signal_types)
 

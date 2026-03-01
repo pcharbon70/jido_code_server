@@ -9,6 +9,14 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
 
   @type effect_intent :: map()
+  @runtime_lifecycle_types [
+    "conversation.mode.switch.accepted",
+    "conversation.mode.switch.rejected",
+    "conversation.run.opened",
+    "conversation.run.closed",
+    "conversation.run.interrupted",
+    "conversation.run.resumed"
+  ]
 
   @spec enqueue_signal(State.t(), Jido.Signal.t()) :: State.t()
   def enqueue_signal(%State{} = state, %Jido.Signal{} = signal) do
@@ -50,33 +58,96 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
       |> put_correlation_index(signal)
       |> update_pending_sets(signal)
       |> update_mode_runtime(signal)
+      |> update_mode_switch(signal)
       |> increment_drain_iteration()
 
-    intents = derive_effect_intents(next_state, signal)
+    intents = derive_effect_intents(state, next_state, signal)
     {next_state, intents}
   end
 
   @spec derive_effect_intents(State.t(), Jido.Signal.t()) :: [effect_intent()]
   def derive_effect_intents(%State{} = state, %Jido.Signal{} = signal) do
-    case signal.type do
-      "conversation.cancel" ->
-        cancel_effect_intents(state, signal)
+    derive_effect_intents(state, state, signal)
+  end
 
-      _other when state.status == :cancelled and signal.type != "conversation.resume" ->
-        []
+  @spec derive_effect_intents(State.t(), State.t(), Jido.Signal.t()) :: [effect_intent()]
+  def derive_effect_intents(%State{} = previous_state, %State{} = state, %Jido.Signal{} = signal) do
+    lifecycle_intents = mode_run_lifecycle_intents(previous_state, state, signal)
+    effect_intents_for_signal(previous_state, state, signal, lifecycle_intents)
+  end
 
-      "conversation.user.message" ->
-        maybe_run_llm_intent(state, signal)
+  defp effect_intents_for_signal(
+         _previous_state,
+         %State{} = state,
+         %Jido.Signal{type: "conversation.cancel"} = signal,
+         lifecycle_intents
+       ) do
+    cancel_effect_intents(state, signal) ++ lifecycle_intents
+  end
 
-      "conversation.tool.requested" ->
-        tool_requested_intents(signal)
+  defp effect_intents_for_signal(
+         %State{} = previous_state,
+         %State{} = state,
+         %Jido.Signal{type: "conversation.mode.switch.requested"} = signal,
+         lifecycle_intents
+       ) do
+    mode_switch_effect_intents(previous_state, state, signal) ++ lifecycle_intents
+  end
 
-      type when type in ["conversation.tool.completed", "conversation.tool.failed"] ->
-        maybe_run_llm_after_tool_intent(state, signal)
+  defp effect_intents_for_signal(
+         _previous_state,
+         %State{status: :cancelled},
+         %Jido.Signal{type: type},
+         _lifecycle_intents
+       )
+       when type != "conversation.resume" do
+    []
+  end
 
-      _other ->
-        []
-    end
+  defp effect_intents_for_signal(
+         _previous_state,
+         %State{} = state,
+         %Jido.Signal{type: "conversation.user.message"} = signal,
+         lifecycle_intents
+       ) do
+    lifecycle_intents ++ maybe_run_llm_intent(state, signal)
+  end
+
+  defp effect_intents_for_signal(
+         _previous_state,
+         _state,
+         %Jido.Signal{type: "conversation.tool.requested"} = signal,
+         _lifecycle_intents
+       ) do
+    tool_requested_intents(signal)
+  end
+
+  defp effect_intents_for_signal(
+         _previous_state,
+         %State{} = state,
+         %Jido.Signal{type: type} = signal,
+         lifecycle_intents
+       )
+       when type in ["conversation.tool.completed", "conversation.tool.failed"] do
+    maybe_run_llm_after_tool_intent(state, signal) ++ lifecycle_intents
+  end
+
+  defp effect_intents_for_signal(
+         _previous_state,
+         _state,
+         %Jido.Signal{type: type},
+         lifecycle_intents
+       )
+       when type in [
+              "conversation.llm.completed",
+              "conversation.llm.failed",
+              "conversation.resume"
+            ] do
+    lifecycle_intents
+  end
+
+  defp effect_intents_for_signal(_previous_state, _state, _signal, lifecycle_intents) do
+    lifecycle_intents
   end
 
   @spec update_pending_sets(State.t(), Jido.Signal.t()) :: State.t()
@@ -120,6 +191,96 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
     |> update_pending_steps(signal)
     |> maybe_finalize_mode_run(signal)
     |> sync_active_run_step_count()
+  end
+
+  @spec update_mode_switch(State.t(), Jido.Signal.t()) :: State.t()
+  def update_mode_switch(
+        %State{} = state,
+        %Jido.Signal{
+          type: "conversation.mode.switch.requested",
+          data: data
+        } = signal
+      )
+      when is_map(data) do
+    requested_mode = normalize_switch_mode(map_get(data, "mode"))
+    force? = switch_force?(data)
+    reason = switch_reason(data)
+    requested_mode_state = normalize_switch_mode_state(map_get(data, "mode_state"))
+
+    cond do
+      is_nil(requested_mode) ->
+        state
+
+      state.active_run != nil and not force? ->
+        state
+
+      true ->
+        next_mode_state =
+          resolve_switched_mode_state(state, requested_mode, requested_mode_state)
+
+        state
+        |> maybe_interrupt_active_run_for_switch(signal, force?, reason)
+        |> Map.put(:mode, requested_mode)
+        |> Map.put(:mode_state, next_mode_state)
+    end
+  end
+
+  def update_mode_switch(%State{} = state, _signal), do: state
+
+  defp maybe_interrupt_active_run_for_switch(state, _signal, false, _reason), do: state
+
+  defp maybe_interrupt_active_run_for_switch(
+         %State{active_run: nil} = state,
+         _signal,
+         true,
+         _reason
+       ),
+       do: state
+
+  defp maybe_interrupt_active_run_for_switch(
+         %State{} = state,
+         %Jido.Signal{} = signal,
+         true,
+         reason
+       ) do
+    close_active_run(state, :interrupted, signal, reason)
+  end
+
+  defp normalize_switch_mode(mode) when is_atom(mode), do: mode
+
+  defp normalize_switch_mode(mode) when is_binary(mode) do
+    case String.trim(mode) do
+      "" -> nil
+      normalized -> String.to_atom(String.downcase(normalized))
+    end
+  end
+
+  defp normalize_switch_mode(_mode), do: nil
+
+  defp normalize_switch_mode_state(mode_state) when is_map(mode_state),
+    do: normalize_string_key_map(mode_state)
+
+  defp normalize_switch_mode_state(_mode_state), do: nil
+
+  defp resolve_switched_mode_state(state, requested_mode, nil) do
+    if state.mode == requested_mode, do: state.mode_state, else: %{}
+  end
+
+  defp resolve_switched_mode_state(_state, _requested_mode, mode_state), do: mode_state
+
+  defp switch_force?(data) when is_map(data) do
+    value = map_get(data, "force")
+    value == true or value == "true"
+  end
+
+  defp switch_reason(data) when is_map(data) do
+    reason = map_get(data, "reason")
+
+    if is_binary(reason) and String.trim(reason) != "" do
+      String.trim(reason)
+    else
+      "mode_switch_forced"
+    end
   end
 
   defp maybe_start_mode_run(
@@ -360,6 +521,11 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
     if state.pending_tool_calls == [], do: %{state | status: :idle}, else: state
   end
 
+  defp update_status(%State{} = state, %Jido.Signal{type: type})
+       when type in @runtime_lifecycle_types do
+    state
+  end
+
   defp update_status(%State{} = state, _signal) do
     if state.status == :idle, do: %{state | status: :running}, else: state
   end
@@ -459,6 +625,176 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
           }
         ]
     end
+  end
+
+  defp mode_switch_effect_intents(previous_state, state, signal) do
+    data = normalize_string_key_map(signal.data || %{})
+    requested_mode = normalize_switch_mode(map_get(data, "mode"))
+    force? = switch_force?(data)
+
+    cond do
+      is_nil(requested_mode) ->
+        [
+          emit_signal_intent(
+            new_runtime_signal(
+              state,
+              signal,
+              "conversation.mode.switch.rejected",
+              %{
+                "requested_mode" => map_get(data, "mode"),
+                "reason" => "invalid_mode"
+              }
+            )
+          )
+        ]
+
+      previous_state.active_run != nil and not force? ->
+        [
+          emit_signal_intent(
+            new_runtime_signal(
+              state,
+              signal,
+              "conversation.mode.switch.rejected",
+              %{
+                "requested_mode" => mode_label(requested_mode),
+                "reason" => "active_run_conflict"
+              }
+            )
+          )
+        ]
+
+      true ->
+        accepted =
+          emit_signal_intent(
+            new_runtime_signal(
+              state,
+              signal,
+              "conversation.mode.switch.accepted",
+              %{
+                "from_mode" => mode_label(previous_state.mode),
+                "to_mode" => mode_label(state.mode),
+                "force" => force?,
+                "reason" => map_get(data, "reason"),
+                "mode_state_policy" => "reset_unless_explicit"
+              }
+            )
+          )
+
+        additional_intents =
+          if force? and previous_state.active_run != nil do
+            cancel_effect_intents(state, signal)
+          else
+            []
+          end
+
+        [accepted | additional_intents]
+    end
+  end
+
+  defp mode_run_lifecycle_intents(previous_state, state, signal) do
+    maybe_run_opened_intents(previous_state, state, signal) ++
+      maybe_run_resumed_intents(previous_state, state, signal) ++
+      maybe_run_closed_intents(previous_state, state, signal)
+  end
+
+  defp maybe_run_opened_intents(
+         %State{active_run: nil},
+         %State{active_run: active_run} = state,
+         signal
+       )
+       when is_map(active_run) do
+    [
+      emit_signal_intent(
+        new_runtime_signal(
+          state,
+          signal,
+          "conversation.run.opened",
+          %{
+            "run_id" => map_get(active_run, "run_id"),
+            "mode" => mode_label(map_get(active_run, "mode")),
+            "source_signal_id" => map_get(active_run, "source_signal_id")
+          }
+        )
+      )
+    ]
+  end
+
+  defp maybe_run_opened_intents(_previous_state, _state, _signal), do: []
+
+  defp maybe_run_resumed_intents(
+         %State{status: :cancelled},
+         %State{status: :idle} = state,
+         %Jido.Signal{type: "conversation.resume"} = signal
+       ) do
+    [
+      emit_signal_intent(
+        new_runtime_signal(
+          state,
+          signal,
+          "conversation.run.resumed",
+          %{
+            "mode" => mode_label(state.mode)
+          }
+        )
+      )
+    ]
+  end
+
+  defp maybe_run_resumed_intents(_previous_state, _state, _signal), do: []
+
+  defp maybe_run_closed_intents(previous_state, %State{} = state, signal) do
+    if length(state.run_history) > length(previous_state.run_history) do
+      run = List.first(state.run_history) || %{}
+      status = map_get(run, "status")
+
+      closed =
+        emit_signal_intent(
+          new_runtime_signal(
+            state,
+            signal,
+            "conversation.run.closed",
+            %{
+              "run_id" => map_get(run, "run_id"),
+              "mode" => mode_label(map_get(run, "mode")),
+              "status" => status_label(status),
+              "reason" => map_get(run, "reason")
+            }
+          )
+        )
+
+      if status == :interrupted do
+        interrupted =
+          emit_signal_intent(
+            new_runtime_signal(
+              state,
+              signal,
+              "conversation.run.interrupted",
+              %{
+                "run_id" => map_get(run, "run_id"),
+                "mode" => mode_label(map_get(run, "mode")),
+                "reason" => map_get(run, "reason")
+              }
+            )
+          )
+
+        [closed, interrupted]
+      else
+        [closed]
+      end
+    else
+      []
+    end
+  end
+
+  defp emit_signal_intent(%Jido.Signal{} = signal), do: %{kind: :emit_signal, signal: signal}
+
+  defp new_runtime_signal(%State{} = state, source_signal, type, data) do
+    correlation_id = source_signal |> ConversationSignal.correlation_id()
+
+    Jido.Signal.new!(type, data,
+      source: "/conversation/#{state.conversation_id}",
+      extensions: if(correlation_id, do: %{"correlation_id" => correlation_id}, else: %{})
+    )
   end
 
   defp maybe_run_llm_intent(%State{orchestration_enabled: true}, signal) do
@@ -575,6 +911,14 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
       source: "/project/#{state.project_id}/conversation/#{state.conversation_id}"
     )
   end
+
+  defp mode_label(mode) when is_atom(mode), do: Atom.to_string(mode)
+  defp mode_label(mode) when is_binary(mode), do: mode
+  defp mode_label(_mode), do: nil
+
+  defp status_label(status) when is_atom(status), do: Atom.to_string(status)
+  defp status_label(status) when is_binary(status), do: status
+  defp status_label(_status), do: nil
 
   defp map_get(map, key) when is_map(map) do
     Map.get(map, key) || Map.get(map, to_existing_atom(key))

@@ -61,6 +61,14 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
     {domain, directives}
   end
 
+  defp intent_to_directive(
+         %{kind: :emit_signal, signal: %Jido.Signal{} = signal},
+         _domain,
+         state_map
+       ) do
+    [Directive.schedule(0, ingest_signal(signal, state_map))]
+  end
+
   defp intent_to_directive(%{kind: :continue_drain}, domain, _state_map) do
     signal =
       Jido.Signal.new!("conversation.cmd.drain", %{},
@@ -135,6 +143,17 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
   end
 
   defp envelope_to_directive(_envelope, _domain, _state_map), do: []
+
+  defp ingest_signal(%Jido.Signal{} = signal, state_map) do
+    project_id = map_get(state_map, "project_id")
+    conversation_id = map_get(state_map, "conversation_id")
+
+    Jido.Signal.new!(
+      "conversation.cmd.ingest",
+      %{"signal" => ConversationSignal.to_map(signal)},
+      source: "/project/#{project_id}/conversation/#{conversation_id}"
+    )
+  end
 
   defp envelope_meta(envelope) when is_map(envelope) do
     envelope

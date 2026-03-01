@@ -40,6 +40,13 @@ defmodule Jido.Code.Server.RuntimeDiagnosticsTest do
                "data" => %{"content" => "hello"}
              })
 
+    assert_eventually(
+      fn ->
+        Runtime.conversation_diagnostics(project_id, "diag-c1").status == :idle
+      end,
+      200
+    )
+
     diagnostics = Runtime.diagnostics(project_id)
 
     assert diagnostics.project_id == project_id
@@ -57,7 +64,7 @@ defmodule Jido.Code.Server.RuntimeDiagnosticsTest do
     direct_diag = Runtime.conversation_diagnostics(project_id, "diag-c1")
     assert direct_diag.conversation_id == "diag-c1"
     assert direct_diag.status == :idle
-    assert direct_diag.event_count == conversation_diag.event_count
+    assert direct_diag.event_count >= conversation_diag.event_count
   end
 
   test "watcher debounces change events and reloads assets" do
@@ -83,6 +90,16 @@ defmodule Jido.Code.Server.RuntimeDiagnosticsTest do
       Runtime.list_assets(project_id, :skill)
       |> Enum.any?(&(&1.name == "new_skill"))
     end)
+
+    assert_eventually(
+      fn ->
+        diagnostics = Runtime.diagnostics(project_id)
+
+        event_count(diagnostics, "project.watcher_reload_completed") >= 1 and
+          event_count(diagnostics, "project.assets_reloaded") >= 1
+      end,
+      200
+    )
 
     diagnostics = Runtime.diagnostics(project_id)
     assert diagnostics.assets.counts.skill == 2

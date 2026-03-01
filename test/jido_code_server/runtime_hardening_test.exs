@@ -1973,14 +1973,25 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
                }
              )
 
-    assert {:ok, timeline} =
-             Runtime.conversation_projection(project_id, "phase9-llm-c1", :timeline)
+    assert_eventually(
+      fn ->
+        case Runtime.conversation_projection(project_id, "phase9-llm-c1", :timeline) do
+          {:ok, timeline} ->
+            Enum.count(timeline, &(map_lookup(&1, :type) == "conversation.llm.failed")) >= 2
 
-    failed_count =
-      timeline
-      |> Enum.count(&(map_lookup(&1, :type) == "conversation.llm.failed"))
+          _ ->
+            false
+        end
+      end,
+      200
+    )
 
-    assert failed_count >= 2
+    assert_eventually(
+      fn ->
+        Runtime.conversation_diagnostics(project_id, "phase9-llm-c1").status == :idle
+      end,
+      200
+    )
 
     diagnostics = Runtime.conversation_diagnostics(project_id, "phase9-llm-c1")
     assert diagnostics.status == :idle
