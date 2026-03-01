@@ -29,7 +29,10 @@ defmodule Jido.Code.Server.Conversation.ExecutionEnvelope do
         } = intent,
         opts
       ) do
-    strategy_envelope(source_signal, Keyword.put(opts, :intent_meta, map_get(intent, :meta) || %{}))
+    strategy_envelope(
+      source_signal,
+      Keyword.put(opts, :intent_meta, map_get(intent, :meta) || %{})
+    )
   end
 
   def from_intent(
@@ -63,14 +66,19 @@ defmodule Jido.Code.Server.Conversation.ExecutionEnvelope do
 
   def from_intent(%{kind: :cancel_pending_tools, pending_tool_calls: pending} = intent, opts)
       when is_list(pending) do
+    source_signal = map_get(intent, :source_signal)
+
     {:ok,
      %{
        execution_kind: :cancel_tools,
        name: "conversation.cancel_pending_tools",
-       args: %{"pending_tool_calls" => pending},
-       meta: build_meta(opts, map_get(intent, :source_signal)),
+       args: %{
+         "pending_tool_calls" => pending,
+         "reason" => map_get(intent, :reason)
+       },
+       meta: build_meta(opts, source_signal),
        correlation_id: map_get(intent, :correlation_id),
-       cause_id: nil,
+       cause_id: source_signal_id(source_signal),
        pending_tool_calls: pending
      }}
   end
@@ -113,9 +121,9 @@ defmodule Jido.Code.Server.Conversation.ExecutionEnvelope do
          "strategy_type" => strategy_type,
          "strategy_opts" => strategy_opts
        },
-      meta:
-        build_meta(opts, source_signal)
-        |> deep_merge(normalize_map(Keyword.get(opts, :intent_meta, %{}))),
+       meta:
+         build_meta(opts, source_signal)
+         |> deep_merge(normalize_map(Keyword.get(opts, :intent_meta, %{}))),
        correlation_id: ConversationSignal.correlation_id(source_signal),
        cause_id: source_signal.id,
        source_signal: source_signal
@@ -155,6 +163,9 @@ defmodule Jido.Code.Server.Conversation.ExecutionEnvelope do
 
   defp source_signal_type(%Jido.Signal{} = signal), do: signal.type
   defp source_signal_type(_signal), do: nil
+
+  defp source_signal_id(%Jido.Signal{} = signal), do: signal.id
+  defp source_signal_id(_signal), do: nil
 
   defp normalize_tool_call(tool_call) when is_map(tool_call) do
     tool_call
