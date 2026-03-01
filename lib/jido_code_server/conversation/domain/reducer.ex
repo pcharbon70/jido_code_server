@@ -798,7 +798,7 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
   end
 
   defp maybe_run_llm_intent(%State{orchestration_enabled: true}, signal) do
-    [%{kind: :run_llm, source_signal: signal}]
+    [%{kind: :run_execution, execution_kind: :strategy_run, source_signal: signal}]
   end
 
   defp maybe_run_llm_intent(_state, _signal), do: []
@@ -817,7 +817,7 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
          %State{orchestration_enabled: true, pending_tool_calls: []},
          signal
        ) do
-    [%{kind: :run_llm, source_signal: signal}]
+    [%{kind: :run_execution, execution_kind: :strategy_run, source_signal: signal}]
   end
 
   defp maybe_run_llm_after_tool_intent(_state, _signal), do: []

@@ -59,6 +59,7 @@ defmodule Jido.Code.Server.Conversation.Actions.HandleInstructionResultAction do
     meta = map_get(params, "meta")
     reason = map_get(params, "reason") || :instruction_failed
     effect_kind = map_get(meta, "effect_kind") || "instruction"
+    execution_kind = map_get(meta, "execution_kind")
 
     type =
       case effect_kind do
@@ -66,10 +67,13 @@ defmodule Jido.Code.Server.Conversation.Actions.HandleInstructionResultAction do
         "tool" -> "conversation.tool.failed"
         "cancel_pending_tools" -> "conversation.tool.failed"
         "cancel_pending_subagents" -> "conversation.subagent.failed"
+        "execution" -> execution_failure_type(execution_kind)
         _ -> "conversation.llm.failed"
       end
 
-    data = %{"reason" => normalize_reason(reason), "effect_kind" => effect_kind}
+    data =
+      %{"reason" => normalize_reason(reason), "effect_kind" => effect_kind}
+      |> maybe_put("execution_kind", execution_kind)
 
     Jido.Signal.new!(type, data,
       source:
@@ -81,9 +85,19 @@ defmodule Jido.Code.Server.Conversation.Actions.HandleInstructionResultAction do
   defp normalize_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp normalize_reason(reason), do: inspect(reason)
 
+  defp execution_failure_type("strategy_run"), do: "conversation.llm.failed"
+  defp execution_failure_type("tool_run"), do: "conversation.tool.failed"
+  defp execution_failure_type("command_run"), do: "conversation.tool.failed"
+  defp execution_failure_type("workflow_run"), do: "conversation.tool.failed"
+  defp execution_failure_type("subagent_spawn"), do: "conversation.subagent.failed"
+  defp execution_failure_type(_execution_kind), do: "conversation.llm.failed"
+
   defp map_get(map, key) when is_map(map) do
     Map.get(map, key) || Map.get(map, to_existing_atom(key))
   end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp to_existing_atom(key) when is_binary(key) do
     String.to_existing_atom(key)

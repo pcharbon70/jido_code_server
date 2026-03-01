@@ -18,18 +18,18 @@ defmodule Jido.Code.Server.Conversation.ExecutionEnvelope do
   def from_intent(intent, opts \\ [])
 
   def from_intent(%{kind: :run_llm, source_signal: %Jido.Signal{} = source_signal}, opts) do
-    mode = normalize_mode(Keyword.get(opts, :mode))
+    strategy_envelope(source_signal, opts)
+  end
 
-    {:ok,
-     %{
-       execution_kind: :strategy_run,
-       name: "mode.#{mode}.strategy",
-       args: %{},
-       meta: build_meta(opts, source_signal),
-       correlation_id: ConversationSignal.correlation_id(source_signal),
-       cause_id: source_signal.id,
-       source_signal: source_signal
-     }}
+  def from_intent(
+        %{
+          kind: :run_execution,
+          execution_kind: :strategy_run,
+          source_signal: %Jido.Signal{} = source_signal
+        },
+        opts
+      ) do
+    strategy_envelope(source_signal, opts)
   end
 
   def from_intent(
@@ -94,6 +94,31 @@ defmodule Jido.Code.Server.Conversation.ExecutionEnvelope do
 
   def from_intent(%{kind: kind}, _opts), do: {:error, {:unsupported_intent_kind, kind}}
   def from_intent(_intent, _opts), do: {:error, :invalid_intent}
+
+  defp strategy_envelope(source_signal, opts) do
+    mode = normalize_mode(Keyword.get(opts, :mode))
+    mode_state = Keyword.get(opts, :mode_state, %{}) |> normalize_map()
+    strategy_type = map_get(mode_state, "strategy") || default_strategy_type(mode)
+    strategy_opts = Map.delete(mode_state, "strategy")
+
+    {:ok,
+     %{
+       execution_kind: :strategy_run,
+       name: "mode.#{mode}.strategy",
+       mode: mode,
+       strategy_type: strategy_type,
+       strategy_opts: strategy_opts,
+       args: %{
+         "mode" => Atom.to_string(mode),
+         "strategy_type" => strategy_type,
+         "strategy_opts" => strategy_opts
+       },
+       meta: build_meta(opts, source_signal),
+       correlation_id: ConversationSignal.correlation_id(source_signal),
+       cause_id: source_signal.id,
+       source_signal: source_signal
+     }}
+  end
 
   @spec execution_kind_for_tool(String.t()) ::
           :tool_run | :command_run | :workflow_run | :subagent_spawn
@@ -172,6 +197,10 @@ defmodule Jido.Code.Server.Conversation.ExecutionEnvelope do
 
   defp normalize_map(map) when is_map(map), do: map
   defp normalize_map(_map), do: %{}
+
+  defp default_strategy_type(:planning), do: "planning"
+  defp default_strategy_type(:engineering), do: "engineering_design"
+  defp default_strategy_type(_mode), do: "code_generation"
 
   defp deep_merge(left, right) when is_map(left) and is_map(right) do
     Map.merge(left, right, fn _key, left_value, right_value ->

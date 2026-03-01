@@ -76,11 +76,18 @@ defmodule Jido.Code.Server.ConversationModeRegistryConfigTest do
 
     assert {:ok, llm_envelope} =
              ExecutionEnvelope.from_intent(
-               %{kind: :run_llm, source_signal: source_signal},
-               mode: :planning
+               %{
+                 kind: :run_execution,
+                 execution_kind: :strategy_run,
+                 source_signal: source_signal
+               },
+               mode: :planning,
+               mode_state: %{"strategy" => "planning"}
              )
 
     assert llm_envelope.execution_kind == :strategy_run
+    assert llm_envelope.strategy_type == "planning"
+    assert llm_envelope.strategy_opts == %{}
     assert llm_envelope.correlation_id == "corr-envelope"
     assert llm_envelope.cause_id == source_signal.id
 

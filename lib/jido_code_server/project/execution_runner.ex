@@ -4,6 +4,8 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
   """
 
   alias Jido.Code.Server.Config
+  alias Jido.Code.Server.Conversation.LLM
+  alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
   alias Jido.Code.Server.Correlation
   alias Jido.Code.Server.Project.CommandRunner
   alias Jido.Code.Server.Project.Policy
@@ -69,6 +71,35 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  @spec run_execution(map(), map()) :: {:ok, map()} | {:error, term()}
+  def run_execution(project_ctx, execution_envelope)
+      when is_map(project_ctx) and is_map(execution_envelope) do
+    started_at = System.monotonic_time(:millisecond)
+
+    with {:ok, envelope} <- normalize_execution_envelope(project_ctx, execution_envelope),
+         :ok <- emit_execution_started(project_ctx, envelope),
+         {:ok, result} <- execute_envelope(project_ctx, envelope) do
+      duration_ms = System.monotonic_time(:millisecond) - started_at
+
+      response =
+        normalize_execution_success(project_ctx, envelope, result)
+        |> Map.put("duration_ms", duration_ms)
+
+      Telemetry.emit("conversation.execution.completed", response)
+      {:ok, response}
+    else
+      {:error, reason} ->
+        duration_ms = System.monotonic_time(:millisecond) - started_at
+
+        error =
+          normalize_execution_error(project_ctx, execution_envelope, reason)
+          |> Map.put("duration_ms", duration_ms)
+
+        Telemetry.emit("conversation.execution.failed", error)
+        {:error, error}
     end
   end
 
@@ -246,6 +277,327 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
       _other ->
         {:error, :unsupported_tool}
     end
+  end
+
+  defp execute_envelope(project_ctx, %{execution_kind: :strategy_run} = envelope) do
+    execute_strategy(project_ctx, envelope)
+  end
+
+  defp execute_envelope(_project_ctx, %{execution_kind: execution_kind}) do
+    {:error, {:unsupported_execution_kind, execution_kind}}
+  end
+
+  defp normalize_execution_envelope(project_ctx, execution_envelope) do
+    envelope = normalize_string_key_map(execution_envelope)
+    execution_kind = normalize_execution_kind(map_get_any(envelope, "execution_kind"))
+    mode = normalize_execution_mode(map_get_any(envelope, "mode"))
+    mode_state = normalize_map(map_get_any(envelope, "mode_state"))
+    strategy_type = normalize_strategy_type(map_get_any(envelope, "strategy_type"), mode)
+
+    with :strategy_run <- execution_kind,
+         {:ok, source_signal} <- normalize_source_signal(map_get_any(envelope, "source_signal")),
+         conversation_id when is_binary(conversation_id) <-
+           map_get_any(envelope, "conversation_id") || Map.get(project_ctx, :conversation_id) do
+      {:ok,
+       %{
+         execution_kind: execution_kind,
+         name: map_get_any(envelope, "name") || "mode.#{mode}.strategy",
+         conversation_id: conversation_id,
+         mode: mode,
+         mode_state: mode_state,
+         strategy_type: strategy_type,
+         strategy_opts: normalize_map(map_get_any(envelope, "strategy_opts")),
+         source_signal: source_signal,
+         llm_context: normalize_map(map_get_any(envelope, "llm_context")),
+         correlation_id:
+           map_get_any(envelope, "correlation_id") ||
+             ConversationSignal.correlation_id(source_signal),
+         cause_id: map_get_any(envelope, "cause_id") || source_signal.id,
+         meta: normalize_map(map_get_any(envelope, "meta"))
+       }}
+    else
+      nil -> {:error, :invalid_execution_kind}
+      false -> {:error, :missing_conversation_id}
+      other -> other
+    end
+  end
+
+  defp emit_execution_started(project_ctx, envelope) do
+    Telemetry.emit("conversation.execution.started", %{
+      project_id: project_ctx.project_id,
+      conversation_id: envelope.conversation_id,
+      execution_kind: envelope.execution_kind,
+      strategy_type: envelope.strategy_type,
+      correlation_id: envelope.correlation_id,
+      cause_id: envelope.cause_id
+    })
+
+    :ok
+  end
+
+  defp normalize_execution_success(project_ctx, envelope, result) do
+    %{
+      "status" => "ok",
+      "project_id" => project_ctx.project_id,
+      "conversation_id" => envelope.conversation_id,
+      "execution_kind" => Atom.to_string(envelope.execution_kind),
+      "signals" => normalize_execution_signals(map_get_any(result, "signals")),
+      "result_meta" =>
+        normalize_map(map_get_any(result, "result_meta"))
+        |> Map.put_new("strategy_type", envelope.strategy_type)
+        |> Map.put_new("mode", Atom.to_string(envelope.mode)),
+      "execution_ref" => strategy_execution_ref(envelope)
+    }
+  end
+
+  defp normalize_execution_error(project_ctx, execution_envelope, reason) do
+    envelope = normalize_string_key_map(execution_envelope)
+    execution_kind = normalize_execution_kind(map_get_any(envelope, "execution_kind")) || :unknown
+
+    %{
+      "status" => "error",
+      "project_id" => project_ctx.project_id,
+      "conversation_id" =>
+        map_get_any(envelope, "conversation_id") || Map.get(project_ctx, :conversation_id),
+      "execution_kind" => Atom.to_string(execution_kind),
+      "reason" => normalize_reason(reason),
+      "retryable" => retryable_execution_error?(reason)
+    }
+  end
+
+  defp execute_strategy(project_ctx, envelope) do
+    requested_signal =
+      new_strategy_signal(
+        "conversation.llm.requested",
+        %{"source_signal_id" => envelope.source_signal.id},
+        envelope.conversation_id,
+        envelope.correlation_id
+      )
+
+    opts =
+      [source_event: ConversationSignal.to_map(envelope.source_signal)]
+      |> maybe_put_opt(
+        :tool_specs,
+        available_tool_specs(project_ctx, envelope.mode, envelope.mode_state)
+      )
+      |> maybe_put_opt(:model, map_get_any(envelope.strategy_opts, "model"))
+      |> maybe_put_opt(:system_prompt, map_get_any(envelope.strategy_opts, "system_prompt"))
+      |> maybe_put_opt(:temperature, map_get_any(envelope.strategy_opts, "temperature"))
+      |> maybe_put_opt(:max_tokens, map_get_any(envelope.strategy_opts, "max_tokens"))
+      |> maybe_put_opt(:timeout_ms, map_get_any(envelope.strategy_opts, "timeout_ms"))
+      |> maybe_put_opt(:adapter, map_get_any(envelope.strategy_opts, "adapter"))
+
+    case LLM.start_completion(project_ctx, envelope.conversation_id, envelope.llm_context, opts) do
+      {:ok, %{events: events}} ->
+        completion_signals =
+          events
+          |> List.wrap()
+          |> Enum.flat_map(
+            &event_to_strategy_signals(&1, envelope.conversation_id, envelope.correlation_id)
+          )
+
+        {:ok,
+         %{
+           "signals" =>
+             Enum.map([requested_signal | completion_signals], &ConversationSignal.to_map/1),
+           "result_meta" => %{
+             "execution_kind" => "strategy_run",
+             "strategy_type" => envelope.strategy_type,
+             "mode" => Atom.to_string(envelope.mode),
+             "signal_count" => length(completion_signals) + 1
+           },
+           "execution_ref" => strategy_execution_ref(envelope)
+         }}
+
+      {:error, reason} ->
+        failed_signal =
+          new_strategy_signal(
+            "conversation.llm.failed",
+            %{"reason" => normalize_reason(reason)},
+            envelope.conversation_id,
+            envelope.correlation_id
+          )
+
+        {:error,
+         %{
+           "signals" => Enum.map([requested_signal, failed_signal], &ConversationSignal.to_map/1),
+           "result_meta" => %{
+             "execution_kind" => "strategy_run",
+             "strategy_type" => envelope.strategy_type,
+             "mode" => Atom.to_string(envelope.mode),
+             "retryable" => retryable_execution_error?(reason)
+           },
+           "execution_ref" => strategy_execution_ref(envelope),
+           "reason" => normalize_reason(reason),
+           "retryable" => retryable_execution_error?(reason)
+         }}
+    end
+  end
+
+  defp available_tool_specs(project_ctx, mode, mode_state) do
+    tools = ToolCatalog.llm_tools(project_ctx, mode: mode, mode_state: mode_state)
+
+    project_ctx
+    |> filter_available_tools(tools)
+    |> Enum.map(&tool_spec/1)
+  rescue
+    _error ->
+      []
+  catch
+    :exit, _reason ->
+      []
+  end
+
+  defp filter_available_tools(project_ctx, tools) when is_list(tools) do
+    case Map.get(project_ctx, :policy) do
+      nil -> tools
+      policy -> Policy.filter_tools(policy, tools)
+    end
+  end
+
+  defp event_to_strategy_signals(raw_event, conversation_id, fallback_correlation_id)
+       when is_map(raw_event) do
+    case ConversationSignal.normalize(raw_event) do
+      {:ok, %Jido.Signal{type: "conversation.llm.started"}} ->
+        []
+
+      {:ok, normalized_event} ->
+        correlation_id =
+          ConversationSignal.correlation_id(normalized_event) || fallback_correlation_id
+
+        [
+          new_strategy_signal(
+            normalized_event.type,
+            normalized_event.data,
+            conversation_id,
+            correlation_id
+          )
+        ]
+
+      {:error, _reason} ->
+        []
+    end
+  end
+
+  defp event_to_strategy_signals(_raw_event, _conversation_id, _fallback_correlation_id), do: []
+
+  defp new_strategy_signal(type, data, conversation_id, correlation_id) do
+    attrs =
+      [
+        source: "/conversation/#{conversation_id}",
+        extensions: if(correlation_id, do: %{"correlation_id" => correlation_id}, else: %{})
+      ]
+
+    Jido.Signal.new!(type, normalize_execution_map(data), attrs)
+  end
+
+  defp normalize_execution_signals(signals) when is_list(signals) do
+    signals
+    |> Enum.flat_map(fn signal ->
+      case ConversationSignal.normalize(signal) do
+        {:ok, normalized} -> [ConversationSignal.to_map(normalized)]
+        {:error, _reason} -> []
+      end
+    end)
+  end
+
+  defp normalize_execution_signals(_signals), do: []
+
+  defp retryable_execution_error?(reason) do
+    match?(%{"retryable" => true}, reason) or
+      match?({:task_exit, _}, reason) or
+      reason in [:timeout, :temporary_failure]
+  end
+
+  defp strategy_execution_ref(envelope) do
+    base = envelope.correlation_id || envelope.cause_id || "unknown"
+    "strategy:#{base}"
+  end
+
+  defp normalize_execution_kind(:strategy_run), do: :strategy_run
+  defp normalize_execution_kind("strategy_run"), do: :strategy_run
+  defp normalize_execution_kind(_kind), do: nil
+
+  defp normalize_execution_mode(mode) when is_atom(mode), do: mode
+
+  defp normalize_execution_mode(mode) when is_binary(mode) do
+    case String.trim(mode) do
+      "" -> :coding
+      normalized -> String.to_atom(String.downcase(normalized))
+    end
+  end
+
+  defp normalize_execution_mode(_mode), do: :coding
+
+  defp normalize_strategy_type(strategy_type, _mode)
+       when is_binary(strategy_type) and strategy_type != "",
+       do: strategy_type
+
+  defp normalize_strategy_type(strategy_type, _mode) when is_atom(strategy_type),
+    do: Atom.to_string(strategy_type)
+
+  defp normalize_strategy_type(_strategy_type, :planning), do: "planning"
+  defp normalize_strategy_type(_strategy_type, :engineering), do: "engineering_design"
+  defp normalize_strategy_type(_strategy_type, _mode), do: "code_generation"
+
+  defp normalize_source_signal(%Jido.Signal{} = signal), do: {:ok, signal}
+
+  defp normalize_source_signal(signal) when is_map(signal),
+    do: ConversationSignal.normalize(signal)
+
+  defp normalize_source_signal(_signal), do: {:error, :invalid_source_signal}
+
+  defp normalize_execution_map(map) when is_map(map), do: map
+  defp normalize_execution_map(_map), do: %{}
+
+  defp normalize_map(map) when is_map(map), do: map
+  defp normalize_map(_map), do: %{}
+
+  defp tool_spec(tool) do
+    %{
+      name: tool.name,
+      description: tool.description,
+      input_schema: tool.input_schema
+    }
+  end
+
+  defp maybe_put_opt(opts, _key, nil), do: opts
+  defp maybe_put_opt(opts, _key, []), do: opts
+  defp maybe_put_opt(opts, key, value), do: Keyword.put(opts, key, value)
+
+  defp normalize_reason(reason) when is_binary(reason), do: reason
+  defp normalize_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp normalize_reason(reason), do: inspect(reason)
+
+  defp map_get_any(map, key) when is_map(map) and is_binary(key),
+    do: Map.get(map, key) || Map.get(map, safe_to_existing_atom(key))
+
+  defp normalize_string_key_map(%_{} = value), do: value
+
+  defp normalize_string_key_map(value) when is_map(value) do
+    Enum.reduce(value, %{}, fn {key, nested}, acc ->
+      normalized_key = if(is_atom(key), do: Atom.to_string(key), else: key)
+
+      normalized_value =
+        cond do
+          is_map(nested) -> normalize_string_key_map(nested)
+          is_list(nested) -> Enum.map(nested, &normalize_string_key_map/1)
+          true -> nested
+        end
+
+      Map.put(acc, normalized_key, normalized_value)
+    end)
+  end
+
+  defp normalize_string_key_map(value) when is_list(value),
+    do: Enum.map(value, &normalize_string_key_map/1)
+
+  defp normalize_string_key_map(value), do: value
+
+  defp safe_to_existing_atom(key) when is_binary(key) do
+    String.to_existing_atom(key)
+  rescue
+    ArgumentError -> nil
   end
 
   defp enforce_env_controls(_project_ctx, %{kind: kind}, _args)
