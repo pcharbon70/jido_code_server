@@ -22,6 +22,20 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     "additionalProperties" => :additionalProperties,
     "additional_properties" => :additional_properties
   }
+  @kind_call_type %{
+    command_run: "command",
+    workflow_run: "workflow",
+    subagent_spawn: "subagent"
+  }
+  @kind_target_type %{
+    command_run: "command",
+    workflow_run: "workflow",
+    subagent_spawn: "subagent",
+    asset_list: "asset",
+    asset_search: "asset",
+    asset_get: "asset"
+  }
+
   @max_sensitivity_findings 25
   @sensitive_key_fragments [
     "token",
@@ -142,27 +156,28 @@ defmodule Jido.Code.Server.Project.ToolRunner do
       |> put_ctx_value(:correlation_id, correlation_id_from_call(call))
 
     with {:ok, spec} <- ToolCatalog.get_tool(project_ctx, call.name),
-         :ok <- validate_tool_args(spec, call.args),
-         :ok <- enforce_env_controls(project_ctx, spec, call.args),
+         {:ok, classified_call} <- classify_and_validate_call(call, spec),
+         :ok <- validate_tool_args(spec, classified_call.args),
+         :ok <- enforce_env_controls(project_ctx, spec, classified_call.args),
          :ok <-
            Policy.authorize_tool(
              project_ctx.policy,
-             call.name,
-             call.args,
-             call.meta,
+             classified_call.name,
+             classified_call.args,
+             classified_call.meta,
              Map.get(spec, :safety, %{}) || %{},
              run_ctx
            ) do
-      case acquire_capacity(project_ctx, call) do
+      case acquire_capacity(project_ctx, classified_call) do
         {:ok, capacity_token} ->
           try do
-            with :ok <- emit_started(project_ctx, call, spec),
-                 {:ok, result} <- execute_within_task(project_ctx, spec, call),
+            with :ok <- emit_started(project_ctx, classified_call, spec),
+                 {:ok, result} <- execute_within_task(project_ctx, spec, classified_call),
                  :ok <- enforce_result_limits(project_ctx, result) do
               duration_ms = System.monotonic_time(:millisecond) - started_at
 
               response =
-                call
+                classified_call
                 |> success_response(project_ctx.project_id, spec, duration_ms, result)
                 |> maybe_flag_sensitive_result(project_ctx)
 
@@ -170,14 +185,14 @@ defmodule Jido.Code.Server.Project.ToolRunner do
               {:ok, response}
             else
               {:error, reason} ->
-                run_failed(project_ctx, call, started_at, reason)
+                run_failed(project_ctx, classified_call, started_at, reason)
             end
           after
             release_capacity(capacity_token)
           end
 
         {:error, reason} ->
-          run_failed(project_ctx, call, started_at, reason)
+          run_failed(project_ctx, classified_call, started_at, reason)
       end
     else
       {:error, reason} ->
@@ -894,14 +909,18 @@ defmodule Jido.Code.Server.Project.ToolRunner do
   end
 
   defp emit_started(project_ctx, call, spec) do
-    Telemetry.emit("conversation.tool.started", %{
-      project_id: project_ctx.project_id,
-      conversation_id: conversation_id_from_call(call),
-      correlation_id: correlation_id_from_call(call),
-      tool: call.name,
-      kind: spec.kind,
-      args: call.args
-    })
+    Telemetry.emit(
+      "conversation.tool.started",
+      %{
+        project_id: project_ctx.project_id,
+        conversation_id: conversation_id_from_call(call),
+        correlation_id: correlation_id_from_call(call),
+        tool: call.name,
+        kind: spec.kind,
+        args: call.args
+      }
+      |> Map.merge(call_classification(call, spec))
+    )
 
     :ok
   end
@@ -917,6 +936,7 @@ defmodule Jido.Code.Server.Project.ToolRunner do
       duration_ms: duration_ms,
       result: result
     }
+    |> Map.merge(call_classification(call, spec))
   end
 
   defp error_response(project_id, tool_call, duration_ms, reason) do
@@ -929,24 +949,204 @@ defmodule Jido.Code.Server.Project.ToolRunner do
       duration_ms: duration_ms,
       reason: reason
     }
+    |> Map.merge(call_classification(tool_call))
   end
 
-  defp normalize_call(%ToolCall{name: name, args: args, meta: meta}) do
-    normalize_call(%{name: name, args: args, meta: meta})
+  defp normalize_call(%ToolCall{} = call) do
+    normalize_call(%{
+      name: call.name,
+      args: call.args,
+      meta: call.meta,
+      call_type: call.call_type,
+      target_type: call.target_type,
+      target_name: call.target_name
+    })
   end
 
-  defp normalize_call(%{name: name} = call) when is_binary(name) do
-    args = Map.get(call, :args, %{}) || %{}
-    meta = Map.get(call, :meta, %{}) || %{}
+  defp normalize_call(call) when is_map(call) do
+    name = Map.get(call, :name) || Map.get(call, "name")
+    args = Map.get(call, :args) || Map.get(call, "args") || %{}
+    meta = Map.get(call, :meta) || Map.get(call, "meta") || %{}
 
-    if is_map(args) and is_map(meta) do
-      {:ok, %{name: name, args: args, meta: meta}}
+    with true <- is_binary(name),
+         trimmed_name = String.trim(name),
+         true <- trimmed_name != "",
+         true <- is_map(args),
+         true <- is_map(meta) do
+      {:ok,
+       %{
+         name: trimmed_name,
+         args: args,
+         meta: meta,
+         call_type: Map.get(call, :call_type) || Map.get(call, "call_type"),
+         target_type: Map.get(call, :target_type) || Map.get(call, "target_type"),
+         target_name: Map.get(call, :target_name) || Map.get(call, "target_name")
+       }}
     else
-      {:error, :invalid_tool_call}
+      _ -> {:error, :invalid_tool_call}
     end
   end
 
   defp normalize_call(_invalid), do: {:error, :invalid_tool_call}
+
+  defp classify_and_validate_call(call, spec) when is_map(call) and is_map(spec) do
+    expected_call_type = expected_call_type(spec)
+    expected_target_type = expected_target_type(spec)
+    expected_target_name = expected_target_name(spec)
+
+    with {:ok, call_type} <-
+           resolve_call_classification_field(
+             call,
+             :call_type,
+             expected_call_type,
+             :call_type_mismatch,
+             :call_type_invalid
+           ),
+         {:ok, target_type} <-
+           resolve_call_classification_field(
+             call,
+             :target_type,
+             expected_target_type,
+             :target_type_mismatch,
+             :target_type_invalid
+           ),
+         {:ok, target_name} <-
+           resolve_call_classification_field(
+             call,
+             :target_name,
+             expected_target_name,
+             :target_name_mismatch,
+             :target_name_invalid
+           ) do
+      {:ok,
+       Map.merge(call, %{
+         call_type: call_type,
+         target_type: target_type,
+         target_name: target_name
+       })}
+    end
+  end
+
+  defp resolve_call_classification_field(
+         call,
+         field,
+         expected,
+         mismatch_reason,
+         invalid_reason
+       ) do
+    provided = call_field(call, field)
+
+    case normalize_optional_field(provided) do
+      {:ok, normalized_provided} ->
+        cond do
+          is_binary(normalized_provided) and is_binary(expected) and
+              normalized_provided != expected ->
+            {:error,
+             {:invalid_call_classification, {mismatch_reason, normalized_provided, expected}}}
+
+          is_binary(normalized_provided) ->
+            {:ok, normalized_provided}
+
+          is_binary(expected) ->
+            {:ok, expected}
+
+          true ->
+            {:ok, nil}
+        end
+
+      :error ->
+        {:error, {:invalid_call_classification, {invalid_reason, provided}}}
+    end
+  end
+
+  defp call_classification(call, spec \\ nil) do
+    %{
+      call_type:
+        call
+        |> call_field(:call_type)
+        |> classification_value(spec_field(spec, :call_type)),
+      target_type:
+        call
+        |> call_field(:target_type)
+        |> classification_value(spec_field(spec, :target_type)),
+      target_name:
+        call
+        |> call_field(:target_name)
+        |> classification_value(spec_field(spec, :target_name))
+    }
+  end
+
+  defp classification_value(primary, secondary) do
+    normalize_optional_field_or_nil(primary) || normalize_optional_field_or_nil(secondary)
+  end
+
+  defp expected_call_type(spec) do
+    case spec |> spec_field(:call_type) |> normalize_optional_field_or_nil() do
+      nil -> Map.get(@kind_call_type, spec_field(spec, :kind), "tool")
+      value -> value
+    end
+  end
+
+  defp expected_target_type(spec) do
+    case spec |> spec_field(:target_type) |> normalize_optional_field_or_nil() do
+      nil -> Map.get(@kind_target_type, spec_field(spec, :kind))
+      value -> value
+    end
+  end
+
+  defp expected_target_name(spec) do
+    spec
+    |> spec_field(:target_name)
+    |> normalize_optional_field_or_nil()
+    |> case do
+      nil ->
+        spec
+        |> spec_field(:asset_name)
+        |> normalize_optional_field_or_nil()
+        |> case do
+          nil ->
+            spec
+            |> spec_field(:template_id)
+            |> normalize_optional_field_or_nil()
+
+          value ->
+            value
+        end
+
+      value ->
+        value
+    end
+  end
+
+  defp spec_field(nil, _field), do: nil
+
+  defp spec_field(spec, field) when is_map(spec) and is_atom(field) do
+    Map.get(spec, field) || Map.get(spec, Atom.to_string(field))
+  end
+
+  defp call_field(call, field) when is_map(call) and is_atom(field) do
+    Map.get(call, field) || Map.get(call, Atom.to_string(field))
+  end
+
+  defp normalize_optional_field_or_nil(value) do
+    case normalize_optional_field(value) do
+      {:ok, normalized} -> normalized
+      :error -> nil
+    end
+  end
+
+  defp normalize_optional_field(nil), do: {:ok, nil}
+
+  defp normalize_optional_field(value) when is_atom(value) do
+    normalize_optional_field(Atom.to_string(value))
+  end
+
+  defp normalize_optional_field(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if trimmed == "", do: :error, else: {:ok, trimmed}
+  end
+
+  defp normalize_optional_field(_value), do: :error
 
   defp ensure_call_correlation(call) when is_map(call) do
     meta = call_meta(call)

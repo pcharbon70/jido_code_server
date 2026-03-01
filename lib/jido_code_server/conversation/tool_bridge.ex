@@ -77,7 +77,14 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
       |> Map.put("conversation_id", conversation_id)
       |> maybe_put_correlation(correlation_id)
 
-    %{name: call.name, args: call.args, meta: meta}
+    %{
+      name: call.name,
+      args: call.args,
+      meta: meta,
+      call_type: call.call_type,
+      target_type: call.target_type,
+      target_name: call.target_name
+    }
   end
 
   defp run_tool_request(project_ctx, conversation_id, call_with_meta) do

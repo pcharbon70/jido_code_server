@@ -8,14 +8,20 @@ defmodule Jido.Code.Server.Types.ToolSpec do
             description: nil,
             input_schema: %{},
             output_schema: %{},
-            safety: %{}
+            safety: %{},
+            call_type: nil,
+            target_type: nil,
+            target_name: nil
 
   @type t :: %__MODULE__{
           name: String.t(),
           description: String.t(),
           input_schema: map(),
           output_schema: map(),
-          safety: map()
+          safety: map(),
+          call_type: String.t() | nil,
+          target_type: String.t() | nil,
+          target_name: String.t() | nil
         }
 
   @spec from_map(map() | t()) :: {:ok, t()} | {:error, term()}
@@ -26,14 +32,20 @@ defmodule Jido.Code.Server.Types.ToolSpec do
          {:ok, description} <- normalize_required_string(map, :description),
          {:ok, input_schema} <- normalize_required_map(map, :input_schema),
          {:ok, output_schema} <- normalize_optional_map(map, :output_schema, %{}),
-         {:ok, safety} <- normalize_optional_map(map, :safety, %{}) do
+         {:ok, safety} <- normalize_optional_map(map, :safety, %{}),
+         {:ok, call_type} <- normalize_optional_string(map, :call_type),
+         {:ok, target_type} <- normalize_optional_string(map, :target_type),
+         {:ok, target_name} <- normalize_optional_string(map, :target_name) do
       {:ok,
        %__MODULE__{
          name: name,
          description: description,
          input_schema: input_schema,
          output_schema: output_schema,
-         safety: safety
+         safety: safety,
+         call_type: call_type,
+         target_type: target_type,
+         target_name: target_name
        }}
     end
   end
@@ -49,6 +61,9 @@ defmodule Jido.Code.Server.Types.ToolSpec do
       output_schema: spec.output_schema,
       safety: spec.safety
     }
+    |> maybe_put("call_type", spec.call_type)
+    |> maybe_put("target_type", spec.target_type)
+    |> maybe_put("target_name", spec.target_name)
   end
 
   defp normalize_required_string(map, key) do
@@ -78,4 +93,23 @@ defmodule Jido.Code.Server.Types.ToolSpec do
       true -> {:error, {:invalid_field, key}}
     end
   end
+
+  defp normalize_optional_string(map, key) do
+    value = Map.get(map, key) || Map.get(map, Atom.to_string(key))
+
+    cond do
+      is_nil(value) ->
+        {:ok, nil}
+
+      is_binary(value) ->
+        trimmed = String.trim(value)
+        if trimmed == "", do: {:error, {:invalid_field, key}}, else: {:ok, trimmed}
+
+      true ->
+        {:error, {:invalid_field, key}}
+    end
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end

@@ -55,6 +55,103 @@ defmodule Jido.Code.Server.ToolRuntimePolicyTest do
     assert "workflow.run.example_workflow" in tool_names
   end
 
+  test "list_tools includes typed call metadata for builtin, asset, and spawn tools" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase4-tool-call-types",
+               network_egress_policy: :allow,
+               subagent_templates: [
+                 %{
+                   template_id: "reviewer",
+                   agent_module: Jido.Code.Server.Conversation.Agent
+                 }
+               ]
+             )
+
+    tools = Runtime.list_tools(project_id)
+
+    asset_tool = Enum.find(tools, &(&1.name == "asset.list"))
+    command_tool = Enum.find(tools, &(&1.name == "command.run.example_command"))
+    workflow_tool = Enum.find(tools, &(&1.name == "workflow.run.example_workflow"))
+    spawn_tool = Enum.find(tools, &(&1.name == "agent.spawn.reviewer"))
+
+    assert asset_tool.call_type == "tool"
+    assert asset_tool.target_type == "asset"
+    assert is_nil(asset_tool.target_name)
+
+    assert command_tool.call_type == "command"
+    assert command_tool.target_type == "command"
+    assert command_tool.target_name == "example_command"
+
+    assert workflow_tool.call_type == "workflow"
+    assert workflow_tool.target_type == "workflow"
+    assert workflow_tool.target_name == "example_workflow"
+
+    assert spawn_tool.call_type == "subagent"
+    assert spawn_tool.target_type == "subagent"
+    assert spawn_tool.target_name == "reviewer"
+  end
+
+  test "run_tool classifies calls and rejects classification mismatches" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase4-tool-call-classification",
+               network_egress_policy: :allow
+             )
+
+    assert {:ok,
+            %{
+              status: :ok,
+              tool: "asset.list",
+              call_type: "tool",
+              target_type: "asset",
+              target_name: nil,
+              result: %{items: _items}
+            }} =
+             Runtime.run_tool(project_id, %{
+               "name" => "asset.list",
+               "args" => %{"type" => "skill"}
+             })
+
+    assert {:ok,
+            %{
+              status: :ok,
+              tool: "command.run.example_command",
+              call_type: "command",
+              target_type: "command",
+              target_name: "example_command",
+              result: %{asset: %{name: "example_command"}}
+            }} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               call_type: "command",
+               target_type: "command",
+               target_name: "example_command",
+               args: %{"path" => ".jido/commands/example_command.md"}
+             })
+
+    assert {:error,
+            %{
+              status: :error,
+              tool: "command.run.example_command",
+              call_type: "workflow",
+              target_type: nil,
+              target_name: nil,
+              reason: {:invalid_call_classification, {:call_type_mismatch, "workflow", "command"}}
+            }} =
+             Runtime.run_tool(project_id, %{
+               name: "command.run.example_command",
+               call_type: "workflow",
+               args: %{"path" => ".jido/commands/example_command.md"}
+             })
+  end
+
   test "run_tool uses unified policy and tool runner execution path" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)

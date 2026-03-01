@@ -39,7 +39,10 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
         },
         output_schema: %{"type" => "array"},
         safety: %{sandboxed: true, network_capable: false},
-        kind: :asset_list
+        kind: :asset_list,
+        call_type: "tool",
+        target_type: "asset",
+        target_name: nil
       },
       %{
         name: "asset.search",
@@ -54,7 +57,10 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
         },
         output_schema: %{"type" => "array"},
         safety: %{sandboxed: true, network_capable: false},
-        kind: :asset_search
+        kind: :asset_search,
+        call_type: "tool",
+        target_type: "asset",
+        target_name: nil
       },
       %{
         name: "asset.get",
@@ -69,7 +75,10 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
         },
         output_schema: %{"type" => "object"},
         safety: %{sandboxed: true, network_capable: false},
-        kind: :asset_get
+        kind: :asset_get,
+        call_type: "tool",
+        target_type: "asset",
+        target_name: nil
       }
     ]
   end
@@ -88,7 +97,10 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
           output_schema: %{"type" => "object"},
           safety: %{sandboxed: true, network_capable: true},
           kind: :command_run,
-          asset_name: command.name
+          asset_name: command.name,
+          call_type: "command",
+          target_type: "command",
+          target_name: command.name
         }
       end)
 
@@ -103,7 +115,10 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
           output_schema: %{"type" => "object"},
           safety: %{sandboxed: true, network_capable: true},
           kind: :workflow_run,
-          asset_name: workflow.name
+          asset_name: workflow.name,
+          call_type: "workflow",
+          target_type: "workflow",
+          target_name: workflow.name
         }
       end)
 
@@ -137,7 +152,10 @@ defmodule Jido.Code.Server.Project.ToolCatalog do
             safety: %{sandboxed: true, network_capable: false},
             kind: :subagent_spawn,
             template_id: template_id,
-            template: template
+            template: template,
+            call_type: "subagent",
+            target_type: "subagent",
+            target_name: template_id
           }
         ]
       else
