@@ -97,6 +97,14 @@ defmodule Jido.Code.Server.ConversationModeSwitchRuntimeTest do
     assert "conversation.run.opened" in event_types(timeline)
     assert "conversation.mode.switch.rejected" in event_types(timeline)
     refute "conversation.mode.switch.accepted" in event_types(timeline)
+
+    run_opened =
+      Enum.find(timeline, fn event ->
+        map_lookup(event, :type) == "conversation.run.opened"
+      end)
+
+    assert map_lookup(run_opened, :data) |> map_lookup(:pipeline_template_id) == "coding.baseline"
+    assert map_lookup(run_opened, :data) |> map_lookup(:pipeline_template_version) == "1.0.0"
   end
 
   test "forced mode switch interrupts run and emits lifecycle events" do
@@ -152,6 +160,14 @@ defmodule Jido.Code.Server.ConversationModeSwitchRuntimeTest do
     assert "conversation.mode.switch.accepted" in types
     assert "conversation.run.closed" in types
     assert "conversation.run.interrupted" in types
+
+    run_closed =
+      Enum.find(timeline, fn event ->
+        map_lookup(event, :type) == "conversation.run.closed"
+      end)
+
+    assert map_lookup(run_closed, :data) |> map_lookup(:pipeline_template_id) == "coding.baseline"
+    assert map_lookup(run_closed, :data) |> map_lookup(:pipeline_template_version) == "1.0.0"
   end
 
   test "run lifecycle emits resumed event after cancel and resume" do

@@ -43,12 +43,16 @@ defmodule Jido.Code.Server.ConversationModeRuntimeTest do
     assert state.active_run.status == :running
     assert state.active_run.mode == :coding
     assert state.active_run.run_id == "run-1"
+    assert state.active_run.pipeline_template_id == "coding.baseline"
+    assert state.active_run.pipeline_template_version == "1.0.0"
 
     {state, _intents} =
       Reducer.apply_signal(state, signal("conversation.llm.completed", %{}, "run-1"))
 
     assert state.active_run == nil
-    assert [%{status: :completed, run_id: "run-1"}] = state.run_history
+    assert [%{status: :completed, run_id: "run-1"} = run_snapshot] = state.run_history
+    assert run_snapshot.pipeline_template_id == "coding.baseline"
+    assert run_snapshot.pipeline_template_version == "1.0.0"
   end
 
   test "reducer tracks pending steps from requested/completed tool lifecycle" do

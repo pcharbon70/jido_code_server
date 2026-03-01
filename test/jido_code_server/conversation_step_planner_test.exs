@@ -27,7 +27,14 @@ defmodule Jido.Code.Server.ConversationStepPlannerTest do
     assert start_intent
     assert get_in(start_intent, [:meta, "pipeline", "reason"]) == "start"
     assert get_in(start_intent, [:meta, "pipeline", "step_index"]) == 1
+    assert get_in(start_intent, [:meta, "pipeline", "template_id"]) == "coding.baseline"
+    assert get_in(start_intent, [:meta, "pipeline", "template_version"]) == "1.0.0"
+    assert get_in(start_intent, [:meta, "pipeline", "output_profile"]) == "code_changes"
+    assert "strategy:code_generation" in get_in(start_intent, [:meta, "pipeline", "step_chain"])
+    assert "strategy.override" in get_in(start_intent, [:meta, "pipeline", "extension_points"])
     assert state.active_run.run_id == "planner-run-1"
+    assert state.active_run.pipeline_template_id == "coding.baseline"
+    assert state.active_run.pipeline_template_version == "1.0.0"
 
     {_state, intents} =
       Reducer.apply_signal(
@@ -220,6 +227,96 @@ defmodule Jido.Code.Server.ConversationStepPlannerTest do
     assert step.max_retries == 1
     assert step.tool_call_id == "tc-1"
     assert step.requested_by_signal_id
+  end
+
+  test "planning and engineering modes emit distinct baseline pipeline templates" do
+    scenarios = [
+      {:planning, "planning.artifact.baseline", "structured_artifact", "strategy:planning"},
+      {:engineering, "engineering.tradeoff.baseline", "tradeoff_analysis",
+       "strategy:engineering_design"}
+    ]
+
+    for {mode, template_id, output_profile, chain_step} <- scenarios do
+      state =
+        State.new(
+          project_id: "planner-mode-#{mode}",
+          conversation_id: "planner-mode-c-#{mode}",
+          orchestration_enabled: true,
+          mode: mode
+        )
+
+      {state, intents} =
+        Reducer.apply_signal(
+          state,
+          signal("conversation.user.message", %{"content" => "hello"}, "planner-run-#{mode}")
+        )
+
+      start_intent =
+        Enum.find(intents, fn intent ->
+          intent[:kind] == :run_execution and intent[:execution_kind] == :strategy_run
+        end)
+
+      assert start_intent
+      assert get_in(start_intent, [:meta, "pipeline", "mode"]) == Atom.to_string(mode)
+      assert get_in(start_intent, [:meta, "pipeline", "template_id"]) == template_id
+      assert get_in(start_intent, [:meta, "pipeline", "template_version"]) == "1.0.0"
+      assert get_in(start_intent, [:meta, "pipeline", "output_profile"]) == output_profile
+      assert chain_step in get_in(start_intent, [:meta, "pipeline", "step_chain"])
+
+      assert "conversation.llm.completed" in get_in(start_intent, [
+               :meta,
+               "pipeline",
+               "terminal_signals",
+               "completed"
+             ])
+
+      assert "conversation.llm.failed" in get_in(start_intent, [
+               :meta,
+               "pipeline",
+               "terminal_signals",
+               "failed"
+             ])
+
+      assert state.active_run.pipeline_template_id == template_id
+      assert state.active_run.pipeline_template_version == "1.0.0"
+    end
+  end
+
+  test "mode_state can override shared template extension points and version tags" do
+    state =
+      State.new(
+        project_id: "planner-p6",
+        conversation_id: "planner-c6",
+        orchestration_enabled: true,
+        mode: :planning,
+        mode_state: %{
+          "pipeline_template_version" => "2.2.0",
+          "pipeline_extension_points" => ["artifact.schema.custom", "artifact.sections.custom"]
+        }
+      )
+
+    {_state, intents} =
+      Reducer.apply_signal(
+        state,
+        signal("conversation.user.message", %{"content" => "draft a plan"}, "planner-run-6")
+      )
+
+    start_intent =
+      Enum.find(intents, fn intent ->
+        intent[:kind] == :run_execution and intent[:execution_kind] == :strategy_run
+      end)
+
+    assert start_intent
+
+    assert get_in(start_intent, [:meta, "pipeline", "template_id"]) ==
+             "planning.artifact.baseline"
+
+    assert get_in(start_intent, [:meta, "pipeline", "template_version"]) == "2.2.0"
+
+    assert get_in(start_intent, [:meta, "pipeline", "extension_points"]) == [
+             "artifact.schema.custom",
+             "artifact.sections.custom"
+           ]
   end
 
   defp signal(type, data, correlation_id) do
