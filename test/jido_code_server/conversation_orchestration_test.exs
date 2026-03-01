@@ -96,7 +96,11 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
       end)
 
     assert failed_event
-    assert String.contains?(map_lookup(map_lookup(failed_event, :data), :reason), "invalid_llm_adapter")
+
+    assert String.contains?(
+             map_lookup(map_lookup(failed_event, :data), :reason),
+             "invalid_llm_adapter"
+           )
 
     run_closed =
       Enum.find(timeline, fn event ->
@@ -334,6 +338,273 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
     assert map_lookup(execution_result, :output) =~ "workspace-sandbox-ok"
   end
 
+  test "mode templates drive deterministic start continue and terminal transitions" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase5-mode-template-integration",
+               conversation_orchestration: true,
+               llm_adapter: :deterministic
+             )
+
+    scenarios = [
+      {:coding, "coding.baseline"},
+      {:planning, "planning.artifact.baseline"},
+      {:engineering, "engineering.tradeoff.baseline"}
+    ]
+
+    Enum.each(scenarios, fn {mode, template_id} ->
+      conversation_id = "phase5-template-#{mode}"
+
+      assert {:ok, ^conversation_id} =
+               Runtime.start_conversation(project_id,
+                 conversation_id: conversation_id,
+                 mode: mode
+               )
+
+      assert :ok =
+               RuntimeSignal.send_signal(
+                 project_id,
+                 conversation_id,
+                 %{
+                   "type" => "conversation.user.message",
+                   "data" => %{"content" => "please list skills"}
+                 }
+               )
+
+      assert {:ok, timeline} =
+               wait_for_timeline(project_id, conversation_id, fn events ->
+                 types = event_types(events)
+
+                 "conversation.run.opened" in types and
+                   "conversation.tool.requested" in types and
+                   "conversation.tool.completed" in types and
+                   "conversation.run.closed" in types and
+                   count_type(events, "conversation.llm.requested") >= 2
+               end)
+
+      run_opened = find_event(timeline, "conversation.run.opened")
+      run_closed = find_last_event(timeline, "conversation.run.closed")
+
+      assert map_lookup(run_opened, :data) |> map_lookup(:mode) == Atom.to_string(mode)
+
+      assert map_lookup(run_opened, :data) |> map_lookup(:pipeline_template_id) == template_id
+
+      assert map_lookup(run_opened, :data) |> map_lookup(:pipeline_template_version) == "1.0.0"
+
+      assert map_lookup(run_closed, :data) |> map_lookup(:mode) == Atom.to_string(mode)
+      assert map_lookup(run_closed, :data) |> map_lookup(:status) == "completed"
+      assert map_lookup(run_closed, :data) |> map_lookup(:pipeline_template_id) == template_id
+      assert map_lookup(run_closed, :data) |> map_lookup(:pipeline_template_version) == "1.0.0"
+
+      assert count_type(timeline, "conversation.llm.requested") >= 2
+    end)
+  end
+
+  test "duplicate and out-of-order signals keep run lifecycle deterministic" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase5-deterministic-ingestion",
+               conversation_orchestration: true,
+               llm_adapter: :deterministic
+             )
+
+    assert {:ok, "phase5-deterministic-c1"} =
+             Runtime.start_conversation(project_id,
+               conversation_id: "phase5-deterministic-c1"
+             )
+
+    assert :ok =
+             RuntimeSignal.send_signal(project_id, "phase5-deterministic-c1", %{
+               "type" => "conversation.tool.completed",
+               "data" => %{"name" => "asset.list"},
+               "extensions" => %{"correlation_id" => "phase5-reorder"}
+             })
+
+    repeated_user_signal =
+      Jido.Signal.new!("conversation.user.message", %{"content" => "please list skills"},
+        source: "/test/phase5",
+        extensions: %{"correlation_id" => "phase5-repeat"}
+      )
+
+    assert :ok =
+             RuntimeSignal.send_signal(
+               project_id,
+               "phase5-deterministic-c1",
+               repeated_user_signal
+             )
+
+    assert :ok =
+             RuntimeSignal.send_signal(
+               project_id,
+               "phase5-deterministic-c1",
+               repeated_user_signal
+             )
+
+    assert {:ok, timeline} =
+             wait_for_timeline(project_id, "phase5-deterministic-c1", fn events ->
+               types = event_types(events)
+
+               "conversation.run.closed" in types and
+                 count_type(events, "conversation.user.message") == 1
+             end)
+
+    assert count_type(timeline, "conversation.user.message") == 1
+    assert count_type(timeline, "conversation.run.opened") == 1
+    assert count_type(timeline, "conversation.run.closed") == 1
+    assert count_type(timeline, "conversation.llm.requested") >= 2
+
+    run_closed = find_last_event(timeline, "conversation.run.closed")
+    assert map_lookup(run_closed, :data) |> map_lookup(:status) == "completed"
+  end
+
+  test "forced mode switch interrupts in-flight strategy with canonical runtime events" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase5-runtime-interrupt",
+               conversation_orchestration: false
+             )
+
+    assert {:ok, "phase5-runtime-interrupt-c1"} =
+             Runtime.start_conversation(project_id,
+               conversation_id: "phase5-runtime-interrupt-c1"
+             )
+
+    assert :ok =
+             RuntimeSignal.send_signal(project_id, "phase5-runtime-interrupt-c1", %{
+               "type" => "conversation.user.message",
+               "data" => %{"content" => "open run"},
+               "extensions" => %{"correlation_id" => "phase5-interrupt-run"}
+             })
+
+    assert :ok =
+             RuntimeSignal.send_signal(project_id, "phase5-runtime-interrupt-c1", %{
+               "type" => "conversation.llm.requested",
+               "data" => %{},
+               "extensions" => %{"correlation_id" => "phase5-interrupt-run"}
+             })
+
+    assert :ok =
+             RuntimeSignal.send_signal(project_id, "phase5-runtime-interrupt-c1", %{
+               "type" => "conversation.mode.switch.requested",
+               "data" => %{
+                 "mode" => "planning",
+                 "force" => true,
+                 "reason" => "phase5_force_switch"
+               },
+               "extensions" => %{"correlation_id" => "phase5-interrupt-run"}
+             })
+
+    assert {:ok, timeline} =
+             wait_for_timeline(project_id, "phase5-runtime-interrupt-c1", fn events ->
+               types = event_types(events)
+
+               "conversation.mode.switch.accepted" in types and
+                 "conversation.run.closed" in types and
+                 "conversation.run.interrupted" in types
+             end)
+
+    run_closed = find_last_event(timeline, "conversation.run.closed")
+    interrupted = find_last_event(timeline, "conversation.run.interrupted")
+
+    assert map_lookup(run_closed, :data) |> map_lookup(:status) == "interrupted"
+    assert map_lookup(run_closed, :data) |> map_lookup(:reason) == "phase5_force_switch"
+    assert map_lookup(run_closed, :data) |> map_lookup(:interruption_kind) == "strategy"
+    assert map_lookup(interrupted, :data) |> map_lookup(:reason) == "phase5_force_switch"
+  end
+
+  test "resume preconditions and cancel terminalization stay deterministic at runtime" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase5-runtime-resume-cancel",
+               conversation_orchestration: false
+             )
+
+    assert {:ok, "phase5-runtime-resume-c1"} =
+             Runtime.start_conversation(project_id, conversation_id: "phase5-runtime-resume-c1")
+
+    assert :ok =
+             RuntimeSignal.send_signal(project_id, "phase5-runtime-resume-c1", %{
+               "type" => "conversation.resume",
+               "extensions" => %{"correlation_id" => "phase5-resume-precondition"}
+             })
+
+    assert :ok =
+             RuntimeSignal.send_signal(project_id, "phase5-runtime-resume-c1", %{
+               "type" => "conversation.user.message",
+               "data" => %{"content" => "open run"},
+               "extensions" => %{"correlation_id" => "phase5-cancel-run"}
+             })
+
+    assert :ok =
+             RuntimeSignal.send_signal(project_id, "phase5-runtime-resume-c1", %{
+               "type" => "conversation.cancel",
+               "data" => %{"reason" => "phase5_cancel"},
+               "extensions" => %{"correlation_id" => "phase5-cancel-run"}
+             })
+
+    assert :ok =
+             RuntimeSignal.send_signal(project_id, "phase5-runtime-resume-c1", %{
+               "type" => "conversation.resume",
+               "extensions" => %{"correlation_id" => "phase5-cancel-run"}
+             })
+
+    assert :ok =
+             RuntimeSignal.send_signal(project_id, "phase5-runtime-resume-c1", %{
+               "type" => "conversation.user.message",
+               "data" => %{"content" => "after resume"},
+               "extensions" => %{"correlation_id" => "phase5-resumed-run"}
+             })
+
+    assert :ok =
+             RuntimeSignal.send_signal(project_id, "phase5-runtime-resume-c1", %{
+               "type" => "conversation.llm.completed",
+               "data" => %{},
+               "extensions" => %{"correlation_id" => "phase5-resumed-run"}
+             })
+
+    assert {:ok, timeline} =
+             wait_for_timeline(project_id, "phase5-runtime-resume-c1", fn events ->
+               types = event_types(events)
+
+               "conversation.resume.rejected" in types and
+                 "conversation.run.resumed" in types and
+                 count_type(events, "conversation.run.closed") >= 2
+             end)
+
+    resume_rejected = find_event(timeline, "conversation.resume.rejected")
+
+    assert map_lookup(resume_rejected, :data) |> map_lookup(:reason) == "not_cancelled"
+
+    cancelled_run_closed =
+      timeline
+      |> Enum.filter(&(map_lookup(&1, :type) == "conversation.run.closed"))
+      |> Enum.find(fn event ->
+        map_lookup(event, :data) |> map_lookup(:status) == "cancelled"
+      end)
+
+    assert is_map(cancelled_run_closed)
+    assert map_lookup(cancelled_run_closed, :data) |> map_lookup(:reason) == "phase5_cancel"
+
+    resumed_event = find_last_event(timeline, "conversation.run.resumed")
+    assert map_lookup(resumed_event, :data) |> map_lookup(:resume_policy) == "new_run_required"
+
+    last_run_closed = find_last_event(timeline, "conversation.run.closed")
+    assert map_lookup(last_run_closed, :data) |> map_lookup(:status) == "completed"
+    assert map_lookup(last_run_closed, :data) |> map_lookup(:run_id) == "phase5-resumed-run"
+  end
+
   defp valid_workspace_shell_command_markdown do
     """
     ---
@@ -348,6 +619,21 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
 
   defp event_types(timeline) do
     Enum.map(timeline, fn event -> map_lookup(event, :type) end)
+  end
+
+  defp count_type(timeline, type) do
+    timeline
+    |> Enum.count(&(map_lookup(&1, :type) == type))
+  end
+
+  defp find_event(timeline, type) do
+    Enum.find(timeline, &(map_lookup(&1, :type) == type))
+  end
+
+  defp find_last_event(timeline, type) do
+    timeline
+    |> Enum.reverse()
+    |> Enum.find(&(map_lookup(&1, :type) == type))
   end
 
   defp map_lookup(map, key) when is_map(map) do
