@@ -3,6 +3,7 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
   Bridge between conversation tool requests and project tool execution.
   """
 
+  alias Jido.Code.Server.Conversation.ExecutionLifecycle
   alias Jido.Code.Server.Correlation
   alias Jido.Code.Server.Project.ExecutionRunner
   alias Jido.Code.Server.Types.ToolCall
@@ -127,6 +128,7 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
 
   defp tool_completed_event(call, result) do
     event_meta = event_meta(call.meta)
+    execution = execution_from_call(call, "completed")
 
     %{
       type: "conversation.tool.completed",
@@ -136,13 +138,16 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
         "name" => call.name,
         "args" => call.args,
         "meta" => call.meta,
-        "result" => result
+        "result" => result,
+        "execution" => execution
       }
     }
   end
 
   defp tool_failed_event(call, reason) do
     event_meta = event_meta(call.meta)
+    lifecycle_status = failure_lifecycle_status(reason)
+    execution = execution_from_call(call, lifecycle_status)
 
     %{
       type: "conversation.tool.failed",
@@ -152,7 +157,8 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
         "name" => call.name,
         "args" => call.args,
         "meta" => call.meta,
-        "reason" => reason
+        "reason" => reason,
+        "execution" => execution
       }
     }
   end
@@ -169,10 +175,73 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
         "name" => "unknown",
         "args" => %{},
         "reason" => reason,
-        "raw_tool_call" => raw_tool_call
+        "raw_tool_call" => raw_tool_call,
+        "execution" =>
+          ExecutionLifecycle.execution_metadata(
+            %{
+              execution_kind: "tool_run",
+              correlation_id: map_get(meta, "correlation_id")
+            },
+            %{"lifecycle_status" => "failed"}
+          )
       }
     }
   end
+
+  defp execution_from_call(call, lifecycle_status) when is_map(call) do
+    meta = normalize_string_map(map_get(call, :meta) || map_get(call, "meta") || %{})
+    embedded_execution = map_get(meta, "execution") |> normalize_string_map()
+    execution_kind = execution_kind_for_call(call, embedded_execution)
+
+    ExecutionLifecycle.execution_metadata(
+      %{
+        execution_kind: execution_kind,
+        execution_id:
+          map_get(embedded_execution, "execution_id") || map_get(meta, "execution_id"),
+        correlation_id: map_get(meta, "correlation_id"),
+        cause_id: map_get(embedded_execution, "cause_id") || map_get(meta, "cause_id"),
+        run_id: map_get(embedded_execution, "run_id") || map_get(meta, "run_id"),
+        step_id: map_get(embedded_execution, "step_id") || map_get(meta, "step_id"),
+        mode: map_get(embedded_execution, "mode") || map_get(meta, "mode"),
+        meta: %{"pipeline" => %{}}
+      },
+      %{"lifecycle_status" => lifecycle_status}
+    )
+  end
+
+  defp execution_from_call(_call, lifecycle_status) do
+    ExecutionLifecycle.execution_metadata(
+      %{
+        execution_kind: "tool_run"
+      },
+      %{"lifecycle_status" => lifecycle_status}
+    )
+  end
+
+  defp execution_kind_for_call(call, embedded_execution) do
+    map_get(embedded_execution, "execution_kind") ||
+      call
+      |> map_get(:name)
+      |> ExecutionLifecycle.execution_kind_for_tool_name()
+  end
+
+  defp failure_lifecycle_status(reason) do
+    reason
+    |> normalize_failure_reason()
+    |> case do
+      "conversation_cancelled" -> "canceled"
+      _other -> "failed"
+    end
+  end
+
+  defp normalize_failure_reason(reason) when is_binary(reason), do: String.trim(reason)
+  defp normalize_failure_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
+
+  defp normalize_failure_reason(reason) when is_map(reason) do
+    map_get(normalize_string_map(reason), "reason") || inspect(reason)
+  end
+
+  defp normalize_failure_reason(reason), do: inspect(reason)
 
   defp maybe_put_correlation(meta, correlation_id) when is_binary(correlation_id) do
     case Correlation.fetch(meta) do
@@ -203,6 +272,35 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
   end
 
   defp event_source(_meta), do: "/jido/code/server/conversation"
+
+  defp normalize_string_map(value) when is_map(value) do
+    Enum.reduce(value, %{}, fn {key, nested}, acc ->
+      normalized_key = if(is_atom(key), do: Atom.to_string(key), else: key)
+
+      normalized_value =
+        cond do
+          match?(%_{}, nested) -> nested
+          is_map(nested) -> normalize_string_map(nested)
+          is_list(nested) -> Enum.map(nested, &normalize_string_map/1)
+          true -> nested
+        end
+
+      Map.put(acc, normalized_key, normalized_value)
+    end)
+  end
+
+  defp normalize_string_map(value) when is_list(value),
+    do: Enum.map(value, &normalize_string_map/1)
+
+  defp normalize_string_map(value), do: value
+
+  defp map_get(map, key) when is_map(map) and is_atom(key),
+    do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
+
+  defp map_get(map, key) when is_map(map) and is_binary(key),
+    do: Map.get(map, key) || Map.get(map, to_existing_atom(key))
+
+  defp map_get(_map, _key), do: nil
 
   defp project_id_from_ctx(project_ctx) when is_map(project_ctx) do
     Map.get(project_ctx, :project_id) || "global"
@@ -289,5 +387,11 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
   rescue
     ArgumentError ->
       :ok
+  end
+
+  defp to_existing_atom(key) when is_binary(key) do
+    String.to_existing_atom(key)
+  rescue
+    ArgumentError -> nil
   end
 end

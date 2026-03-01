@@ -144,10 +144,32 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
     assert "conversation.tool.completed" in types
     assert "conversation.assistant.message" in types
 
+    llm_requested =
+      Enum.find(timeline, fn event ->
+        map_lookup(event, :type) == "conversation.llm.requested"
+      end)
+
+    assert map_lookup(map_lookup(llm_requested, :data), :execution) |> map_lookup(:execution_kind) ==
+             "strategy_run"
+
+    assert map_lookup(map_lookup(llm_requested, :data), :execution)
+           |> map_lookup(:lifecycle_status) == "requested"
+
     tool_completed =
       Enum.find(timeline, fn event ->
         map_lookup(event, :type) == "conversation.tool.completed"
       end)
+
+    tool_execution_kind =
+      tool_completed
+      |> map_lookup(:data)
+      |> map_lookup(:execution)
+      |> map_lookup(:execution_kind)
+
+    assert tool_execution_kind in ["tool_run", "command_run", "workflow_run", "subagent_spawn"]
+
+    assert map_lookup(map_lookup(tool_completed, :data), :execution)
+           |> map_lookup(:lifecycle_status) == "completed"
 
     result = map_lookup(tool_completed, :data) |> map_lookup(:result)
 

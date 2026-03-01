@@ -7,6 +7,7 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunExecutionInstruction do
     name: "jido_code_server_conversation_run_execution_instruction",
     schema: []
 
+  alias Jido.Code.Server.Conversation.ExecutionLifecycle
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
   alias Jido.Code.Server.Project.ExecutionRunner
 
@@ -25,37 +26,79 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunExecutionInstruction do
 
   defp normalize_execution_envelope(params, context) do
     raw_envelope = map_get(params, "execution_envelope")
+    envelope = normalize_string_key_map(raw_envelope || %{})
 
-    with envelope when is_map(envelope) <- normalize_string_key_map(raw_envelope || %{}),
+    with true <- is_map(envelope),
          {:ok, source_signal} <- normalize_source_signal(map_get(envelope, "source_signal")),
          execution_kind when not is_nil(execution_kind) <-
-           normalize_execution_kind(map_get(envelope, "execution_kind")),
-         mode <- map_get(envelope, "mode") || map_get(context, "mode") || :coding,
-         mode_state <-
-           normalize_map(map_get(envelope, "mode_state") || map_get(context, "mode_state")),
-         conversation_id <-
-           map_get(envelope, "conversation_id") || map_get(context, "conversation_id"),
-         llm_context <-
-           normalize_map(map_get(envelope, "llm_context") || map_get(params, "llm_context")) do
-      {:ok,
-       %{
-         execution_kind: execution_kind,
-         name: map_get(envelope, "name"),
-         mode: mode,
-         mode_state: mode_state,
-         strategy_type: map_get(envelope, "strategy_type"),
-         strategy_opts: normalize_map(map_get(envelope, "strategy_opts")),
-         source_signal: source_signal,
-         llm_context: llm_context,
-         correlation_id:
-           map_get(envelope, "correlation_id") || ConversationSignal.correlation_id(source_signal),
-         cause_id: map_get(envelope, "cause_id") || source_signal.id,
-         conversation_id: conversation_id,
-         meta: normalize_map(map_get(envelope, "meta"))
-       }}
+           normalize_execution_kind(map_get(envelope, "execution_kind")) do
+      {:ok, build_execution_envelope(envelope, params, context, source_signal, execution_kind)}
     else
       _ -> {:error, :invalid_execution_envelope}
     end
+  end
+
+  defp build_execution_envelope(envelope, params, context, source_signal, execution_kind) do
+    mode = envelope_mode(envelope, context)
+    mode_state = envelope_mode_state(envelope, context)
+    conversation_id = envelope_conversation_id(envelope, context)
+    llm_context = envelope_llm_context(envelope, params)
+    normalized_meta = normalize_map(map_get(envelope, "meta"))
+
+    execution_context =
+      execution_context(envelope, source_signal, execution_kind, mode, normalized_meta)
+
+    %{
+      execution_kind: execution_kind,
+      execution_id: map_get(execution_context, "execution_id"),
+      name: map_get(envelope, "name"),
+      mode: mode,
+      mode_state: mode_state,
+      strategy_type: map_get(envelope, "strategy_type"),
+      strategy_opts: normalize_map(map_get(envelope, "strategy_opts")),
+      source_signal: source_signal,
+      llm_context: llm_context,
+      correlation_id:
+        map_get(envelope, "correlation_id") || ConversationSignal.correlation_id(source_signal),
+      cause_id: map_get(envelope, "cause_id") || source_signal.id,
+      run_id: map_get(execution_context, "run_id"),
+      step_id: map_get(execution_context, "step_id"),
+      conversation_id: conversation_id,
+      meta: normalized_meta
+    }
+  end
+
+  defp envelope_mode(envelope, context) do
+    map_get(envelope, "mode") || map_get(context, "mode") || :coding
+  end
+
+  defp envelope_mode_state(envelope, context) do
+    normalize_map(map_get(envelope, "mode_state") || map_get(context, "mode_state"))
+  end
+
+  defp envelope_conversation_id(envelope, context) do
+    map_get(envelope, "conversation_id") || map_get(context, "conversation_id")
+  end
+
+  defp envelope_llm_context(envelope, params) do
+    normalize_map(map_get(envelope, "llm_context") || map_get(params, "llm_context"))
+  end
+
+  defp execution_context(envelope, source_signal, execution_kind, mode, normalized_meta) do
+    ExecutionLifecycle.execution_metadata(
+      %{
+        execution_kind: execution_kind,
+        execution_id: map_get(envelope, "execution_id"),
+        run_id: map_get(envelope, "run_id"),
+        step_id: map_get(envelope, "step_id"),
+        mode: mode,
+        correlation_id:
+          map_get(envelope, "correlation_id") || ConversationSignal.correlation_id(source_signal),
+        cause_id: map_get(envelope, "cause_id") || source_signal.id,
+        meta: normalized_meta
+      },
+      %{"lifecycle_status" => "requested"}
+    )
   end
 
   defp validate_execution_kind(%{execution_kind: execution_kind})
@@ -92,7 +135,9 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunExecutionInstruction do
         |> List.wrap()
         |> normalize_signals(),
       "result_meta" => normalize_map(map_get(result, "result_meta")),
-      "execution_ref" => normalize_execution_ref(result)
+      "execution_ref" => normalize_execution_ref(result),
+      "execution" => normalize_map(map_get(result, "execution")),
+      "lifecycle_status" => normalize_lifecycle_status(map_get(result, "lifecycle_status"))
     }
   end
 
@@ -116,6 +161,10 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunExecutionInstruction do
       _other ->
         "execution:unknown"
     end
+  end
+
+  defp normalize_lifecycle_status(status) do
+    ExecutionLifecycle.normalize_status(status)
   end
 
   defp normalize_map(map) when is_map(map), do: map

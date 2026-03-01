@@ -110,6 +110,31 @@ defmodule Jido.Code.Server.ConversationJournalBridgeTest do
 
     assert "requested" in statuses
     assert "completed" in statuses
+
+    assert Enum.all?(tool_status_entries, fn entry ->
+             execution =
+               entry
+               |> map_lookup(:metadata)
+               |> map_lookup(:execution)
+
+             is_map(execution) and is_binary(map_lookup(execution, :execution_id)) and
+               is_binary(map_lookup(execution, :execution_kind))
+           end)
+
+    assistant_entries =
+      Enum.filter(canonical_timeline, fn entry ->
+        type = map_lookup(entry, :type)
+        type in ["conv.out.assistant.delta", "conv.out.assistant.completed"]
+      end)
+
+    assert Enum.all?(assistant_entries, fn entry ->
+             status =
+               entry
+               |> map_lookup(:metadata)
+               |> map_lookup(:status)
+
+             status in ["progress", "completed"]
+           end)
   end
 
   test "same conversation id is isolated across projects in canonical mirror" do

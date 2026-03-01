@@ -90,6 +90,10 @@ defmodule Jido.Code.Server.ConversationModeRegistryConfigTest do
     assert llm_envelope.strategy_opts == %{}
     assert llm_envelope.correlation_id == "corr-envelope"
     assert llm_envelope.cause_id == source_signal.id
+    assert is_binary(llm_envelope.execution_id)
+    assert llm_envelope.execution_id =~ "execution:strategy_run:"
+    assert llm_envelope.run_id == "corr-envelope"
+    assert llm_envelope.step_id =~ ":strategy:"
 
     assert {:ok, tool_envelope} =
              ExecutionEnvelope.from_intent(
@@ -108,6 +112,8 @@ defmodule Jido.Code.Server.ConversationModeRegistryConfigTest do
     assert tool_envelope.execution_kind == :command_run
     assert tool_envelope.name == "command.run.example_command"
     assert tool_envelope.correlation_id == "corr-envelope"
+    assert is_binary(tool_envelope.execution_id)
+    assert tool_envelope.execution_id =~ "execution:command_run:"
 
     assert {:ok, strategy_with_pipeline} =
              ExecutionEnvelope.from_intent(
@@ -123,6 +129,9 @@ defmodule Jido.Code.Server.ConversationModeRegistryConfigTest do
 
     assert get_in(strategy_with_pipeline, [:meta, "pipeline", "step_index"]) == 2
     assert get_in(strategy_with_pipeline, [:meta, "pipeline", "reason"]) == "continue"
+
+    assert get_in(strategy_with_pipeline, [:meta, "pipeline", "step_id"]) ==
+             strategy_with_pipeline.step_id
   end
 
   test "planning mode keeps asset tools exposed and rejects command tools for LLM turns" do

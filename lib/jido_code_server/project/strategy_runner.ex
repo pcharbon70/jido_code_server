@@ -7,6 +7,7 @@ defmodule Jido.Code.Server.Project.StrategyRunner do
   delegates execution to that adapter.
   """
 
+  alias Jido.Code.Server.Conversation.ExecutionLifecycle
   alias Jido.Code.Server.Conversation.ModeRegistry
   alias Jido.Code.Server.Project.StrategyRunner.Default
   alias Jido.Code.Server.Project.StrategyRunner.Normalizer
@@ -275,44 +276,89 @@ defmodule Jido.Code.Server.Project.StrategyRunner do
     Telemetry.emit("conversation.strategy.started", %{
       project_id: map_get(project_ctx, :project_id),
       conversation_id: map_get(envelope, :conversation_id),
+      execution_id: map_get(envelope, :execution_id),
       correlation_id: map_get(envelope, :correlation_id),
       cause_id: map_get(envelope, :cause_id),
+      run_id: map_get(envelope, :run_id),
+      step_id: map_get(envelope, :step_id),
       strategy_type: map_get(envelope, :strategy_type),
-      strategy_runner: runner_name(runner)
+      strategy_runner: runner_name(runner),
+      lifecycle_status: "started"
     })
   end
 
   defp emit_strategy_terminal(project_ctx, envelope, result) when is_map(result) do
-    result_meta = normalize_map(map_get(result, "result_meta"))
-    terminal_status = map_get(result_meta, "terminal_status") || "completed"
-    retryable = map_get(result, "retryable") == true or map_get(result_meta, "retryable") == true
+    result_meta = normalize_strategy_result_meta(result)
+    terminal_status = strategy_terminal_status(result_meta)
+    lifecycle_status = strategy_lifecycle_status(terminal_status)
+    retryable = strategy_retryable?(result, result_meta)
 
-    event_name =
-      case terminal_status do
-        "failed" -> "conversation.strategy.failed"
-        "cancelled" -> "conversation.strategy.cancelled"
-        _ -> "conversation.strategy.completed"
-      end
+    payload =
+      strategy_terminal_payload(
+        project_ctx,
+        envelope,
+        result,
+        result_meta,
+        retryable,
+        lifecycle_status
+      )
 
-    payload = %{
+    Telemetry.emit(strategy_terminal_event_name(terminal_status), payload)
+    maybe_emit_strategy_retryable(payload, retryable, terminal_status)
+  end
+
+  defp normalize_strategy_result_meta(result) do
+    normalize_map(map_get(result, "result_meta"))
+  end
+
+  defp strategy_terminal_status(result_meta) do
+    map_get(result_meta, "terminal_status") || "completed"
+  end
+
+  defp strategy_lifecycle_status(terminal_status) do
+    ExecutionLifecycle.normalize_status(terminal_status) || "completed"
+  end
+
+  defp strategy_retryable?(result, result_meta) do
+    map_get(result, "retryable") == true or map_get(result_meta, "retryable") == true
+  end
+
+  defp strategy_terminal_event_name("failed"), do: "conversation.strategy.failed"
+  defp strategy_terminal_event_name("cancelled"), do: "conversation.strategy.cancelled"
+  defp strategy_terminal_event_name(_status), do: "conversation.strategy.completed"
+
+  defp strategy_terminal_payload(
+         project_ctx,
+         envelope,
+         result,
+         result_meta,
+         retryable,
+         lifecycle_status
+       ) do
+    %{
       project_id: map_get(project_ctx, :project_id),
       conversation_id: map_get(envelope, :conversation_id),
+      execution_id: map_get(result_meta, "execution_id") || map_get(envelope, :execution_id),
       correlation_id: map_get(envelope, :correlation_id),
       cause_id: map_get(envelope, :cause_id),
+      run_id: map_get(result_meta, "run_id") || map_get(envelope, :run_id),
+      step_id: map_get(result_meta, "step_id") || map_get(envelope, :step_id),
       strategy_type: map_get(envelope, :strategy_type),
       strategy_runner:
         map_get(result_meta, "strategy_runner") ||
           runner_name(map_get(envelope, :strategy_runner)),
       execution_ref: map_get(result, "execution_ref"),
-      retryable: retryable
+      retryable: retryable,
+      lifecycle_status: lifecycle_status
     }
-
-    Telemetry.emit(event_name, payload)
-
-    if retryable and terminal_status in ["failed", "cancelled"] do
-      Telemetry.emit("conversation.strategy.retryable", payload)
-    end
   end
+
+  defp maybe_emit_strategy_retryable(payload, true, terminal_status)
+       when terminal_status in ["failed", "cancelled"] do
+    Telemetry.emit("conversation.strategy.retryable", payload)
+  end
+
+  defp maybe_emit_strategy_retryable(_payload, _retryable, _terminal_status), do: :ok
 
   defp runner_name(runner) when is_atom(runner) do
     runner

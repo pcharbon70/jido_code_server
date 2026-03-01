@@ -184,12 +184,18 @@ defmodule Jido.Code.Server.StrategyRunnerTest do
              get_in(signal, ["extensions", "cause_id"]) == source_signal.id
            end)
 
+    assert Enum.all?(result["signals"], fn signal ->
+             is_map(get_in(signal, ["data", "execution"]))
+           end)
+
     tool_requested =
       Enum.find(result["signals"], fn signal ->
         signal["type"] == "conversation.tool.requested"
       end)
 
     assert get_in(tool_requested, ["data", "tool_call", :name]) == "asset.list"
+    assert get_in(tool_requested, ["data", "execution", "execution_kind"]) == "tool_run"
+    assert get_in(tool_requested, ["data", "execution", "lifecycle_status"]) == "requested"
 
     completed =
       Enum.find(result["signals"], fn signal ->
@@ -199,7 +205,10 @@ defmodule Jido.Code.Server.StrategyRunnerTest do
     assert get_in(completed, ["data", "provider"]) == "jido_ai"
     assert get_in(completed, ["data", "model"]) == "claude-3-7-sonnet"
     assert get_in(completed, ["data", "strategy_type"]) == "code_generation"
+    assert get_in(completed, ["data", "execution", "execution_kind"]) == "strategy_run"
+    assert get_in(completed, ["data", "execution", "lifecycle_status"]) == "completed"
     assert result["result_meta"]["terminal_status"] == "completed"
+    assert result["result_meta"]["execution_id"] =~ "execution:strategy_run:"
   end
 
   test "run normalizes adapter errors with canonical failure signals and telemetry" do
@@ -239,6 +248,8 @@ defmodule Jido.Code.Server.StrategyRunnerTest do
 
     assert get_in(failed, ["data", "reason"]) == "temporary_failure"
     assert get_in(failed, ["extensions", "cause_id"]) == source_signal.id
+    assert get_in(failed, ["data", "execution", "lifecycle_status"]) == "failed"
+    assert result["result_meta"]["lifecycle_status"] == "failed"
 
     snapshot = Telemetry.snapshot(project_id)
     assert Map.get(snapshot.event_counts, "conversation.strategy.started", 0) >= 1

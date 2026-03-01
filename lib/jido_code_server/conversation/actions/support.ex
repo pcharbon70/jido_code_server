@@ -100,6 +100,9 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
         "execution_kind" => "strategy_run",
         "name" => map_get(envelope, :name),
         "conversation_id" => domain.conversation_id,
+        "execution_id" => map_get(envelope, :execution_id),
+        "run_id" => map_get(envelope, :run_id),
+        "step_id" => map_get(envelope, :step_id),
         "mode" => Atom.to_string(domain.mode),
         "mode_state" => domain.mode_state,
         "strategy_type" => map_get(envelope, :strategy_type),
@@ -199,7 +202,17 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
 
   defp envelope_meta(envelope) when is_map(envelope) do
     envelope
-    |> Map.take([:execution_kind, :name, :correlation_id, :cause_id, :meta])
+    |> Map.take([
+      :execution_kind,
+      :execution_id,
+      :run_id,
+      :step_id,
+      :name,
+      :correlation_id,
+      :cause_id,
+      :mode,
+      :meta
+    ])
     |> Enum.into(%{}, fn {key, value} -> {Atom.to_string(key), value} end)
   end
 

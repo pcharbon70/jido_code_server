@@ -7,6 +7,7 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunToolInstruction do
     name: "jido_code_server_conversation_run_tool_instruction",
     schema: []
 
+  alias Jido.Code.Server.Conversation.ExecutionLifecycle
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
   alias Jido.Code.Server.Conversation.ToolBridge
   alias Jido.Code.Server.Correlation
@@ -21,7 +22,12 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunToolInstruction do
     enforce_exposure = map_get(params, "enforce_tool_exposure") == true
 
     with true <- is_binary(conversation_id),
-         {:ok, tool_call} <- normalize_tool_call(map_get(params, "tool_call"), conversation_id),
+         {:ok, tool_call} <-
+           normalize_tool_call(
+             map_get(params, "tool_call"),
+             conversation_id,
+             map_get(params, "execution_envelope")
+           ),
          :ok <- maybe_ensure_tool_exposed(enforce_exposure, project_ctx, tool_call, mode) do
       requested_signals = subagent_requested_signals(tool_call, conversation_id)
 
@@ -108,13 +114,14 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunToolInstruction do
     })
   end
 
-  defp normalize_tool_call(raw_call, conversation_id) when is_map(raw_call) do
+  defp normalize_tool_call(raw_call, conversation_id, execution_envelope) when is_map(raw_call) do
     normalized = normalize_string_map(raw_call)
     name = map_get(normalized, "name")
 
     if not is_binary(name) or String.trim(name) == "" do
       {:error, :invalid_tool_call_name}
     else
+      normalized_execution_envelope = normalize_string_map(execution_envelope || %{})
       incoming_correlation_id = map_get(normalized, "correlation_id")
 
       meta =
@@ -123,10 +130,32 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunToolInstruction do
 
       {correlation_id, meta} = Correlation.ensure(meta)
 
+      execution =
+        ExecutionLifecycle.execution_metadata(
+          %{
+            execution_kind:
+              map_get(normalized_execution_envelope, "execution_kind") ||
+                ExecutionLifecycle.execution_kind_for_tool_name(name),
+            execution_id: map_get(normalized_execution_envelope, "execution_id"),
+            correlation_id: correlation_id,
+            cause_id: map_get(normalized_execution_envelope, "cause_id"),
+            run_id: map_get(normalized_execution_envelope, "run_id"),
+            step_id: map_get(normalized_execution_envelope, "step_id"),
+            mode: map_get(normalized_execution_envelope, "mode"),
+            meta: map_get(normalized_execution_envelope, "meta")
+          },
+          %{"lifecycle_status" => "requested"}
+        )
+
       meta =
         meta
         |> Map.put_new("conversation_id", conversation_id)
         |> Map.put_new("correlation_id", correlation_id)
+        |> Map.put("execution", execution)
+        |> Map.put_new("execution_id", map_get(execution, "execution_id"))
+        |> Map.put_new("run_id", map_get(execution, "run_id"))
+        |> Map.put_new("step_id", map_get(execution, "step_id"))
+        |> Map.put_new("mode", map_get(execution, "mode"))
 
       {:ok,
        %{
@@ -137,7 +166,8 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunToolInstruction do
     end
   end
 
-  defp normalize_tool_call(_raw_call, _conversation_id), do: {:error, :invalid_tool_call}
+  defp normalize_tool_call(_raw_call, _conversation_id, _execution_envelope),
+    do: {:error, :invalid_tool_call}
 
   defp subagent_requested_signals(tool_call, conversation_id) when is_map(tool_call) do
     tool_name = map_get(tool_call, "name") || map_get(tool_call, :name)
