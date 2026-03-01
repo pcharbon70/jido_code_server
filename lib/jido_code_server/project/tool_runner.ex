@@ -96,8 +96,6 @@ defmodule Jido.Code.Server.Project.ToolRunner do
     end
   end
 
-  defp subagent_spawn_request(_args, _template), do: {:error, :invalid_spawn_request}
-
   defp validate_spawn_goal(goal) when is_binary(goal) do
     if String.trim(goal) == "", do: {:error, :invalid_spawn_goal}, else: :ok
   end

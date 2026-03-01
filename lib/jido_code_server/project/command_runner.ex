@@ -80,8 +80,6 @@ defmodule Jido.Code.Server.Project.CommandRunner do
     end
   end
 
-  defp command_params_from_call(_args), do: %{}
-
   defp command_execution_context(project_ctx, call) do
     case Map.get(project_ctx, :root_path) do
       root_path when is_binary(root_path) and root_path != "" ->
