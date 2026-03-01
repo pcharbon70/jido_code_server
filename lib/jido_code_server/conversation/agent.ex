@@ -58,6 +58,8 @@ defmodule Jido.Code.Server.Conversation.Agent do
       State.new(
         project_id: project_id,
         conversation_id: conversation_id,
+        mode: Keyword.get(opts, :mode, :coding),
+        mode_state: Keyword.get(opts, :mode_state, %{}),
         max_queue_size: Keyword.get(opts, :max_queue_size, Config.conversation_max_queue_size()),
         max_drain_steps:
           Keyword.get(opts, :max_drain_steps, Config.conversation_max_drain_steps()),

@@ -10,14 +10,19 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunToolInstruction do
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
   alias Jido.Code.Server.Conversation.ToolBridge
   alias Jido.Code.Server.Correlation
+  alias Jido.Code.Server.Project.ToolCatalog
+  alias Jido.Code.Server.Telemetry
 
   @impl true
   def run(params, context) when is_map(params) and is_map(context) do
     project_ctx = map_get(context, "project_ctx") || %{}
     conversation_id = map_get(context, "conversation_id") || map_get(params, "conversation_id")
+    mode = map_get(params, "mode") || map_get(context, "mode") || :coding
+    enforce_exposure = map_get(params, "enforce_tool_exposure") == true
 
     with true <- is_binary(conversation_id),
-         {:ok, tool_call} <- normalize_tool_call(map_get(params, "tool_call"), conversation_id) do
+         {:ok, tool_call} <- normalize_tool_call(map_get(params, "tool_call"), conversation_id),
+         :ok <- maybe_ensure_tool_exposed(enforce_exposure, project_ctx, tool_call, mode) do
       requested_signals = subagent_requested_signals(tool_call, conversation_id)
 
       case ToolBridge.handle_tool_requested(project_ctx, conversation_id, tool_call) do
@@ -30,9 +35,77 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunToolInstruction do
           {:ok, %{"signals" => requested_signals ++ emitted_signals}}
       end
     else
-      false -> {:error, :missing_conversation_id}
-      {:error, reason} -> {:error, reason}
+      false ->
+        {:error, :missing_conversation_id}
+
+      {:error, :tool_not_exposed} ->
+        emit_tool_not_exposed_telemetry(project_ctx, params, mode, conversation_id)
+
+        {:ok,
+         %{
+           "signals" => [
+             tool_not_exposed_signal(map_get(params, "tool_call"), mode, conversation_id)
+           ]
+         }}
+
+      {:error, reason} ->
+        {:error, reason}
     end
+  end
+
+  defp maybe_ensure_tool_exposed(true, project_ctx, tool_call, mode),
+    do: ensure_tool_exposed(project_ctx, tool_call, mode)
+
+  defp maybe_ensure_tool_exposed(false, _project_ctx, _tool_call, _mode), do: :ok
+
+  defp ensure_tool_exposed(project_ctx, tool_call, mode) when is_map(tool_call) do
+    name = map_get(tool_call, "name")
+
+    case ToolCatalog.llm_tool_allowed?(project_ctx, name, mode: mode) do
+      {:ok, _spec} -> :ok
+      {:error, :tool_not_exposed} -> {:error, :tool_not_exposed}
+    end
+  end
+
+  defp tool_not_exposed_signal(raw_tool_call, mode, conversation_id) do
+    normalized_call = normalize_string_map(raw_tool_call || %{})
+    meta = map_get(normalized_call, "meta") || %{}
+    correlation_id = map_get(normalized_call, "correlation_id") || map_get(meta, "correlation_id")
+
+    signal_map(
+      "conversation.tool.failed",
+      %{
+        "name" => map_get(normalized_call, "name") || "unknown",
+        "args" => map_get(normalized_call, "args") || %{},
+        "meta" => meta,
+        "reason" => %{
+          "code" => "tool_not_exposed",
+          "mode" => normalize_mode_label(mode)
+        }
+      },
+      conversation_id,
+      correlation_id
+    )
+  end
+
+  defp normalize_mode_label(mode) when is_atom(mode), do: Atom.to_string(mode)
+  defp normalize_mode_label(mode) when is_binary(mode), do: mode
+  defp normalize_mode_label(_mode), do: "coding"
+
+  defp emit_tool_not_exposed_telemetry(project_ctx, params, mode, conversation_id) do
+    normalized_call = normalize_string_map(map_get(params, "tool_call") || %{})
+    meta = map_get(normalized_call, "meta") || %{}
+    correlation_id = map_get(normalized_call, "correlation_id") || map_get(meta, "correlation_id")
+    project_id = map_get(project_ctx, "project_id")
+
+    Telemetry.emit("conversation.tool.failed", %{
+      project_id: project_id,
+      conversation_id: conversation_id,
+      correlation_id: correlation_id,
+      tool: map_get(normalized_call, "name"),
+      reason: "tool_not_exposed",
+      mode: normalize_mode_label(mode)
+    })
   end
 
   defp normalize_tool_call(raw_call, conversation_id) when is_map(raw_call) do
@@ -179,9 +252,11 @@ defmodule Jido.Code.Server.Conversation.Instructions.RunToolInstruction do
 
   defp maybe_put_correlation(meta, _correlation_id), do: meta
 
-  defp map_get(map, key) when is_map(map) do
-    Map.get(map, key) || Map.get(map, to_existing_atom(key))
-  end
+  defp map_get(map, key) when is_map(map) and is_atom(key),
+    do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
+
+  defp map_get(map, key) when is_map(map) and is_binary(key),
+    do: Map.get(map, key) || Map.get(map, to_existing_atom(key))
 
   defp map_get(_map, _key), do: nil
 
