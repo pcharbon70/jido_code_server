@@ -4,6 +4,7 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
   """
 
   alias Jido.Code.Server.Config
+  alias Jido.Code.Server.Conversation.ExecutionLifecycle
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
   alias Jido.Code.Server.Correlation
   alias Jido.Code.Server.Project.CommandRunner
@@ -293,14 +294,32 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
     execution_kind = normalize_execution_kind(map_get_any(envelope, "execution_kind"))
     mode = normalize_execution_mode(map_get_any(envelope, "mode"))
     mode_state = normalize_map(map_get_any(envelope, "mode_state"))
+    normalized_meta = normalize_map(map_get_any(envelope, "meta"))
 
     with :strategy_run <- execution_kind,
          {:ok, source_signal} <- normalize_source_signal(map_get_any(envelope, "source_signal")),
          conversation_id when is_binary(conversation_id) <-
-           map_get_any(envelope, "conversation_id") || Map.get(project_ctx, :conversation_id) do
+           map_get_any(envelope, "conversation_id") || Map.get(project_ctx, :conversation_id),
+         execution_context <-
+           ExecutionLifecycle.execution_metadata(
+             %{
+               execution_kind: execution_kind,
+               execution_id: map_get_any(envelope, "execution_id"),
+               run_id: map_get_any(envelope, "run_id"),
+               step_id: map_get_any(envelope, "step_id"),
+               mode: mode,
+               correlation_id:
+                 map_get_any(envelope, "correlation_id") ||
+                   ConversationSignal.correlation_id(source_signal),
+               cause_id: map_get_any(envelope, "cause_id") || source_signal.id,
+               meta: normalized_meta
+             },
+             %{"lifecycle_status" => "requested"}
+           ) do
       {:ok,
        %{
          execution_kind: execution_kind,
+         execution_id: map_get(execution_context, "execution_id"),
          name: map_get_any(envelope, "name") || "mode.#{mode}.strategy",
          conversation_id: conversation_id,
          mode: mode,
@@ -313,7 +332,9 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
            map_get_any(envelope, "correlation_id") ||
              ConversationSignal.correlation_id(source_signal),
          cause_id: map_get_any(envelope, "cause_id") || source_signal.id,
-         meta: normalize_map(map_get_any(envelope, "meta"))
+         run_id: map_get(execution_context, "run_id"),
+         step_id: map_get(execution_context, "step_id"),
+         meta: normalized_meta
        }}
     else
       nil -> {:error, :invalid_execution_kind}
@@ -326,74 +347,137 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
     Telemetry.emit("conversation.execution.started", %{
       project_id: project_ctx.project_id,
       conversation_id: envelope.conversation_id,
+      execution_id: envelope.execution_id,
       execution_kind: envelope.execution_kind,
       strategy_type: envelope.strategy_type,
       strategy_runner: inspect(Map.get(envelope, :strategy_runner)),
       correlation_id: envelope.correlation_id,
-      cause_id: envelope.cause_id
+      cause_id: envelope.cause_id,
+      run_id: envelope.run_id,
+      step_id: envelope.step_id,
+      lifecycle_status: "started"
     })
 
     :ok
   end
 
   defp normalize_execution_success(project_ctx, envelope, result) do
+    result_meta = normalize_map(map_get_any(result, "result_meta"))
+
+    lifecycle_status =
+      result_meta
+      |> map_get("terminal_status")
+      |> ExecutionLifecycle.normalize_status()
+      |> case do
+        nil -> "completed"
+        normalized -> normalized
+      end
+
+    execution =
+      ExecutionLifecycle.execution_metadata(envelope, %{
+        "lifecycle_status" => lifecycle_status
+      })
+
     result_meta =
-      normalize_map(map_get_any(result, "result_meta"))
+      result_meta
       |> Map.put_new("strategy_type", envelope.strategy_type)
       |> Map.put_new("mode", Atom.to_string(envelope.mode))
       |> Map.put_new("strategy_runner", inspect(Map.get(envelope, :strategy_runner)))
+      |> Map.put_new("execution_id", map_get(execution, "execution_id"))
+      |> Map.put_new("run_id", map_get(execution, "run_id"))
+      |> Map.put_new("step_id", map_get(execution, "step_id"))
+      |> Map.put_new("lifecycle_status", lifecycle_status)
 
     %{
       "status" => "ok",
+      "lifecycle_status" => lifecycle_status,
       "project_id" => project_ctx.project_id,
       "conversation_id" => envelope.conversation_id,
       "execution_kind" => Atom.to_string(envelope.execution_kind),
       "signals" => normalize_execution_signals(map_get_any(result, "signals")),
       "result_meta" => result_meta,
-      "execution_ref" => map_get_any(result, "execution_ref") || strategy_execution_ref(envelope)
+      "execution_ref" => map_get_any(result, "execution_ref") || strategy_execution_ref(envelope),
+      "execution" => execution
     }
   end
 
   defp normalize_execution_error(project_ctx, execution_envelope, reason) do
     envelope = normalize_string_key_map(execution_envelope)
     execution_kind = normalize_execution_kind(map_get_any(envelope, "execution_kind")) || :unknown
-    reason_payload = normalize_string_key_map(reason)
-
-    signals =
-      if is_map(reason_payload) do
-        reason_payload
-        |> map_get_any("signals")
-        |> normalize_execution_signals()
-      else
-        []
-      end
-
-    result_meta =
-      if is_map(reason_payload) do
-        normalize_map(map_get_any(reason_payload, "result_meta"))
-      else
-        %{}
-      end
-
-    execution_ref =
-      if is_map(reason_payload) do
-        map_get_any(reason_payload, "execution_ref")
-      else
-        nil
-      end
+    reason_payload = normalize_reason_payload(reason)
+    signals = execution_error_signals(reason_payload)
+    result_meta = execution_error_result_meta(reason_payload)
+    execution_ref = execution_error_ref(reason_payload)
+    lifecycle_status = execution_error_lifecycle_status(reason_payload)
+    execution = execution_error_metadata(envelope, execution_kind, lifecycle_status)
 
     %{
       "status" => "error",
+      "lifecycle_status" => lifecycle_status,
       "project_id" => project_ctx.project_id,
       "conversation_id" =>
         map_get_any(envelope, "conversation_id") || Map.get(project_ctx, :conversation_id),
       "execution_kind" => Atom.to_string(execution_kind),
       "reason" => normalize_reason(reason),
-      "retryable" => retryable_execution_error?(reason)
+      "retryable" => retryable_execution_error?(reason),
+      "execution" => execution
     }
     |> maybe_put("signals", signals, signals != [])
     |> maybe_put("result_meta", result_meta, result_meta != %{})
     |> maybe_put("execution_ref", execution_ref, is_binary(execution_ref) and execution_ref != "")
+  end
+
+  defp normalize_reason_payload(reason) when is_map(reason), do: normalize_string_key_map(reason)
+  defp normalize_reason_payload(_reason), do: %{}
+
+  defp execution_error_signals(reason_payload) do
+    reason_payload
+    |> map_get_any("signals")
+    |> normalize_execution_signals()
+  end
+
+  defp execution_error_result_meta(reason_payload) do
+    reason_payload
+    |> map_get_any("result_meta")
+    |> normalize_map()
+  end
+
+  defp execution_error_ref(reason_payload), do: map_get_any(reason_payload, "execution_ref")
+
+  defp execution_error_lifecycle_status(reason_payload) do
+    map_get_any(reason_payload, "lifecycle_status")
+    |> ExecutionLifecycle.normalize_status()
+    |> default_lifecycle_status(reason_payload)
+  end
+
+  defp default_lifecycle_status(nil, reason_payload) do
+    reason_payload
+    |> map_get_any("result_meta")
+    |> normalize_map()
+    |> map_get_any("terminal_status")
+    |> ExecutionLifecycle.normalize_status()
+    |> case do
+      nil -> "failed"
+      normalized -> normalized
+    end
+  end
+
+  defp default_lifecycle_status(status, _reason_payload), do: status
+
+  defp execution_error_metadata(envelope, execution_kind, lifecycle_status) do
+    ExecutionLifecycle.execution_metadata(
+      %{
+        execution_kind: execution_kind,
+        execution_id: map_get_any(envelope, "execution_id"),
+        run_id: map_get_any(envelope, "run_id"),
+        step_id: map_get_any(envelope, "step_id"),
+        mode: map_get_any(envelope, "mode"),
+        correlation_id: map_get_any(envelope, "correlation_id"),
+        cause_id: map_get_any(envelope, "cause_id"),
+        meta: map_get_any(envelope, "meta")
+      },
+      %{"lifecycle_status" => lifecycle_status}
+    )
   end
 
   defp execute_strategy(project_ctx, envelope) do
@@ -463,6 +547,8 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
 
   defp map_get_any(map, key) when is_map(map) and is_binary(key),
     do: Map.get(map, key) || Map.get(map, safe_to_existing_atom(key))
+
+  defp map_get_any(_map, _key), do: nil
 
   defp normalize_string_key_map(%_{} = value), do: value
 

@@ -3,6 +3,7 @@ defmodule Jido.Code.Server.Conversation.ExecutionEnvelope do
   Normalized execution envelope mapper for reducer-derived mode step intents.
   """
 
+  alias Jido.Code.Server.Conversation.ExecutionLifecycle
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
 
   @type execution_kind ::
@@ -40,28 +41,7 @@ defmodule Jido.Code.Server.Conversation.ExecutionEnvelope do
         opts
       )
       when is_map(tool_call) do
-    normalized_tool_call = normalize_tool_call(tool_call)
-    tool_name = map_get(normalized_tool_call, "name")
-
-    if is_binary(tool_name) and String.trim(tool_name) != "" do
-      {:ok,
-       %{
-         execution_kind: execution_kind_for_tool(tool_name),
-         name: tool_name,
-         args: map_get(normalized_tool_call, "args") || %{},
-         meta:
-           build_meta(opts, source_signal)
-           |> deep_merge(map_get(normalized_tool_call, "meta") || %{}),
-         correlation_id:
-           map_get(normalized_tool_call, "correlation_id") ||
-             ConversationSignal.correlation_id(source_signal),
-         cause_id: source_signal.id,
-         source_signal: source_signal,
-         tool_call: normalized_tool_call
-       }}
-    else
-      {:error, :invalid_tool_name}
-    end
+    run_tool_envelope(tool_call, source_signal, opts)
   end
 
   def from_intent(%{kind: :cancel_pending_tools, pending_tool_calls: pending} = intent, opts)
@@ -103,11 +83,103 @@ defmodule Jido.Code.Server.Conversation.ExecutionEnvelope do
   def from_intent(%{kind: kind}, _opts), do: {:error, {:unsupported_intent_kind, kind}}
   def from_intent(_intent, _opts), do: {:error, :invalid_intent}
 
+  defp run_tool_envelope(tool_call, source_signal, opts) do
+    normalized_tool_call = normalize_tool_call(tool_call)
+
+    with {:ok, tool_name} <- validate_tool_name(map_get(normalized_tool_call, "name")) do
+      execution = build_tool_execution(normalized_tool_call, source_signal, opts, tool_name)
+      enriched_tool_call = enrich_tool_call_execution(normalized_tool_call, execution)
+      {:ok, build_tool_envelope(enriched_tool_call, execution, source_signal, tool_name, opts)}
+    end
+  end
+
+  defp validate_tool_name(name) when is_binary(name) do
+    case String.trim(name) do
+      "" -> {:error, :invalid_tool_name}
+      normalized -> {:ok, normalized}
+    end
+  end
+
+  defp validate_tool_name(_name), do: {:error, :invalid_tool_name}
+
+  defp build_tool_execution(normalized_tool_call, source_signal, opts, tool_name) do
+    source_execution = source_execution_metadata(source_signal)
+    normalized_mode = normalize_mode(Keyword.get(opts, :mode))
+    execution_kind = execution_kind_for_tool(tool_name)
+    correlation_id = tool_call_correlation_id(normalized_tool_call, source_signal)
+    cause_id = source_signal.id
+
+    ExecutionLifecycle.execution_metadata(
+      %{
+        execution_kind: execution_kind,
+        execution_id: tool_call_field(normalized_tool_call, source_execution, "execution_id"),
+        correlation_id: correlation_id,
+        cause_id: cause_id,
+        run_id: tool_call_field(normalized_tool_call, source_execution, "run_id"),
+        step_id: tool_call_field(normalized_tool_call, source_execution, "step_id"),
+        mode: normalized_mode
+      },
+      %{"lifecycle_status" => "requested"}
+    )
+  end
+
+  defp build_tool_envelope(enriched_tool_call, execution, source_signal, tool_name, opts) do
+    %{
+      execution_kind: execution_kind_for_tool(tool_name),
+      name: tool_name,
+      args: map_get(enriched_tool_call, "args") || %{},
+      meta:
+        build_meta(opts, source_signal)
+        |> deep_merge(map_get(enriched_tool_call, "meta") || %{}),
+      correlation_id: map_get(execution, "correlation_id"),
+      cause_id: map_get(execution, "cause_id"),
+      execution_id: map_get(execution, "execution_id"),
+      run_id: map_get(execution, "run_id"),
+      step_id: map_get(execution, "step_id"),
+      source_signal: source_signal,
+      tool_call: enriched_tool_call
+    }
+  end
+
+  defp tool_call_field(tool_call, source_execution, field) do
+    tool_meta = map_get(tool_call, "meta") || %{}
+    map_get(tool_call, field) || map_get(tool_meta, field) || map_get(source_execution, field)
+  end
+
+  defp tool_call_correlation_id(tool_call, source_signal) do
+    map_get(tool_call, "correlation_id") || ConversationSignal.correlation_id(source_signal)
+  end
+
   defp strategy_envelope(source_signal, opts) do
     mode = normalize_mode(Keyword.get(opts, :mode))
     mode_state = Keyword.get(opts, :mode_state, %{}) |> normalize_map()
     strategy_type = map_get(mode_state, "strategy") || default_strategy_type(mode)
     strategy_opts = Map.delete(mode_state, "strategy")
+    correlation_id = ConversationSignal.correlation_id(source_signal)
+    intent_meta = normalize_map(Keyword.get(opts, :intent_meta, %{}))
+    pipeline_meta = map_get(intent_meta, "pipeline") |> normalize_map()
+
+    run_id = map_get(pipeline_meta, "run_id") || correlation_id || source_signal.id
+    step_id = strategy_step_id(run_id, map_get(pipeline_meta, "step_index"))
+
+    meta =
+      build_meta(opts, source_signal)
+      |> deep_merge(intent_meta)
+      |> put_pipeline_runtime_ids(run_id, step_id)
+
+    execution =
+      ExecutionLifecycle.execution_metadata(
+        %{
+          execution_kind: :strategy_run,
+          correlation_id: correlation_id,
+          cause_id: source_signal.id,
+          run_id: run_id,
+          step_id: step_id,
+          mode: mode,
+          meta: meta
+        },
+        %{"lifecycle_status" => "requested"}
+      )
 
     {:ok,
      %{
@@ -121,12 +193,13 @@ defmodule Jido.Code.Server.Conversation.ExecutionEnvelope do
          "strategy_type" => strategy_type,
          "strategy_opts" => strategy_opts
        },
-       meta:
-         build_meta(opts, source_signal)
-         |> deep_merge(normalize_map(Keyword.get(opts, :intent_meta, %{}))),
-       correlation_id: ConversationSignal.correlation_id(source_signal),
+       meta: meta,
+       correlation_id: correlation_id,
        cause_id: source_signal.id,
-       source_signal: source_signal
+       source_signal: source_signal,
+       execution_id: map_get(execution, "execution_id"),
+       run_id: map_get(execution, "run_id"),
+       step_id: map_get(execution, "step_id")
      }}
   end
 
@@ -161,11 +234,70 @@ defmodule Jido.Code.Server.Conversation.ExecutionEnvelope do
     end
   end
 
+  defp put_pipeline_runtime_ids(meta, run_id, step_id) when is_map(meta) do
+    pipeline =
+      meta
+      |> map_get("pipeline")
+      |> normalize_map()
+      |> Map.put_new("run_id", run_id)
+      |> maybe_put("step_id", step_id)
+
+    Map.put(meta, "pipeline", pipeline)
+  end
+
+  defp put_pipeline_runtime_ids(meta, _run_id, _step_id), do: meta
+
   defp source_signal_type(%Jido.Signal{} = signal), do: signal.type
   defp source_signal_type(_signal), do: nil
 
   defp source_signal_id(%Jido.Signal{} = signal), do: signal.id
   defp source_signal_id(_signal), do: nil
+
+  defp strategy_step_id(run_id, step_index)
+       when is_binary(run_id) and run_id != "" and is_integer(step_index) and step_index > 0,
+       do: "#{run_id}:strategy:#{step_index}"
+
+  defp strategy_step_id(run_id, step_index)
+       when is_binary(run_id) and run_id != "" and is_binary(step_index) do
+    case Integer.parse(String.trim(step_index)) do
+      {index, ""} when index > 0 -> "#{run_id}:strategy:#{index}"
+      _ -> nil
+    end
+  end
+
+  defp strategy_step_id(run_id, _step_index) when is_binary(run_id) and run_id != "",
+    do: "#{run_id}:strategy:1"
+
+  defp strategy_step_id(_run_id, _step_index), do: nil
+
+  defp enrich_tool_call_execution(tool_call, execution)
+       when is_map(tool_call) and is_map(execution) do
+    meta =
+      tool_call
+      |> map_get("meta")
+      |> normalize_map()
+      |> Map.put("execution", execution)
+      |> maybe_put("execution_id", map_get(execution, "execution_id"))
+      |> maybe_put("run_id", map_get(execution, "run_id"))
+      |> maybe_put("step_id", map_get(execution, "step_id"))
+      |> maybe_put("mode", map_get(execution, "mode"))
+
+    tool_call
+    |> Map.put("meta", meta)
+    |> maybe_put("execution_id", map_get(execution, "execution_id"))
+    |> maybe_put("run_id", map_get(execution, "run_id"))
+    |> maybe_put("step_id", map_get(execution, "step_id"))
+  end
+
+  defp enrich_tool_call_execution(tool_call, _execution), do: tool_call
+
+  defp source_execution_metadata(%Jido.Signal{data: data}) when is_map(data) do
+    data
+    |> map_get("execution")
+    |> normalize_map()
+  end
+
+  defp source_execution_metadata(_source_signal), do: %{}
 
   defp normalize_tool_call(tool_call) when is_map(tool_call) do
     tool_call

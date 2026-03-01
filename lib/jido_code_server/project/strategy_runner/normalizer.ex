@@ -1,6 +1,7 @@
 defmodule Jido.Code.Server.Project.StrategyRunner.Normalizer do
   @moduledoc false
 
+  alias Jido.Code.Server.Conversation.ExecutionLifecycle
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
   alias Jido.Code.Server.Correlation
   alias Jido.Code.Server.Types.ToolCall
@@ -96,7 +97,7 @@ defmodule Jido.Code.Server.Project.StrategyRunner.Normalizer do
     tool_calls =
       payload
       |> map_get("tool_calls")
-      |> normalize_tool_calls(map_get(envelope, :correlation_id))
+      |> normalize_tool_calls(envelope)
 
     tool_signals =
       Enum.map(tool_calls, fn tool_call ->
@@ -187,6 +188,7 @@ defmodule Jido.Code.Server.Project.StrategyRunner.Normalizer do
       signal.data
       |> normalize_map()
       |> enrich_terminal_data(signal.type, payload, envelope)
+      |> enrich_execution_data(signal.type, envelope)
 
     normalized =
       %Jido.Signal{
@@ -201,6 +203,66 @@ defmodule Jido.Code.Server.Project.StrategyRunner.Normalizer do
       {:error, _reason} -> signal
     end
   end
+
+  defp enrich_execution_data(data, signal_type, envelope) when is_map(data) do
+    lifecycle_status =
+      signal_type
+      |> ExecutionLifecycle.status_for_signal_type()
+      |> default_lifecycle_status(signal_type)
+
+    {execution_kind, execution_overrides} =
+      execution_kind_and_overrides(signal_type, data, envelope)
+
+    execution =
+      ExecutionLifecycle.execution_metadata(
+        %{
+          execution_kind: execution_kind,
+          execution_id: map_get(data, "execution_id"),
+          correlation_id: map_get(envelope, :correlation_id),
+          cause_id: map_get(envelope, :cause_id),
+          run_id: map_get(envelope, :run_id),
+          step_id: map_get(envelope, :step_id),
+          mode: map_get(envelope, :mode),
+          meta: map_get(envelope, :meta)
+        },
+        Map.merge(execution_overrides, %{"lifecycle_status" => lifecycle_status})
+      )
+
+    Map.put(data, "execution", execution)
+  end
+
+  defp execution_kind_and_overrides("conversation.tool.requested", data, envelope)
+       when is_map(data) do
+    tool_call = map_get(data, "tool_call") |> normalize_map()
+    tool_name = map_get(tool_call, "name")
+    tool_meta = map_get(tool_call, "meta") |> normalize_map()
+    execution = map_get(tool_meta, "execution") |> normalize_map()
+
+    execution_kind =
+      map_get(execution, "execution_kind") ||
+        ExecutionLifecycle.execution_kind_for_tool_name(tool_name)
+
+    overrides = %{
+      "execution_id" => map_get(execution, "execution_id") || map_get(tool_call, "execution_id"),
+      "run_id" => map_get(execution, "run_id") || map_get(tool_call, "run_id"),
+      "step_id" => map_get(execution, "step_id") || map_get(tool_call, "step_id"),
+      "mode" => map_get(execution, "mode") || mode_label(map_get(envelope, :mode))
+    }
+
+    {execution_kind, drop_nil_values(overrides)}
+  end
+
+  defp execution_kind_and_overrides(_signal_type, _data, envelope) do
+    {map_get(envelope, :execution_kind) || :strategy_run, %{}}
+  end
+
+  defp default_lifecycle_status(nil, "conversation.llm.completed"), do: "completed"
+  defp default_lifecycle_status(nil, "conversation.llm.failed"), do: "failed"
+  defp default_lifecycle_status(nil, "conversation.tool.completed"), do: "completed"
+  defp default_lifecycle_status(nil, "conversation.tool.failed"), do: "failed"
+  defp default_lifecycle_status(nil, "conversation.tool.cancelled"), do: "canceled"
+  defp default_lifecycle_status(nil, _signal_type), do: "progress"
+  defp default_lifecycle_status(status, _signal_type), do: status
 
   defp enrich_extensions(extensions, envelope) do
     extensions = normalize_map(extensions)
@@ -254,9 +316,20 @@ defmodule Jido.Code.Server.Project.StrategyRunner.Normalizer do
   defp normalize_result_meta(payload, envelope, signals, status) do
     terminal_status = terminal_status(signals, status)
     retryable = terminal_retryable(signals) || retryable_error?(payload)
+    lifecycle_status = ExecutionLifecycle.normalize_status(terminal_status) || "completed"
+
+    execution =
+      ExecutionLifecycle.execution_metadata(
+        envelope,
+        %{"lifecycle_status" => lifecycle_status}
+      )
 
     normalize_map(map_get(payload, "result_meta"))
     |> Map.put_new("execution_kind", "strategy_run")
+    |> Map.put_new("execution_id", map_get(execution, "execution_id"))
+    |> Map.put_new("run_id", map_get(execution, "run_id"))
+    |> Map.put_new("step_id", map_get(execution, "step_id"))
+    |> Map.put_new("lifecycle_status", lifecycle_status)
     |> Map.put_new("strategy_type", map_get(envelope, :strategy_type))
     |> Map.put_new("mode", mode_label(map_get(envelope, :mode)))
     |> Map.put_new("strategy_runner", runner_name(map_get(envelope, :strategy_runner)))
@@ -422,37 +495,63 @@ defmodule Jido.Code.Server.Project.StrategyRunner.Normalizer do
     |> length()
   end
 
-  defp normalize_tool_calls(tool_calls, correlation_id) when is_list(tool_calls) do
+  defp normalize_tool_calls(tool_calls, envelope) when is_list(tool_calls) do
     Enum.flat_map(tool_calls, fn raw_tool_call ->
-      case normalize_tool_call(raw_tool_call, correlation_id) do
+      case normalize_tool_call(raw_tool_call, envelope) do
         {:ok, tool_call} -> [tool_call]
         {:error, _reason} -> []
       end
     end)
   end
 
-  defp normalize_tool_calls(_tool_calls, _correlation_id), do: []
+  defp normalize_tool_calls(_tool_calls, _envelope), do: []
 
-  defp normalize_tool_call(raw_tool_call, correlation_id) when is_map(raw_tool_call) do
+  defp normalize_tool_call(raw_tool_call, envelope) when is_map(raw_tool_call) do
     tool_call = normalize_string_key_map(raw_tool_call)
     function = normalize_map(map_get(tool_call, "function"))
     name = map_get(tool_call, "name") || map_get(function, "name")
+    correlation_id = map_get(envelope, :correlation_id)
 
     args =
       map_get(tool_call, "args") ||
         map_get(tool_call, "arguments") ||
         map_get(function, "arguments")
 
+    execution_kind = ExecutionLifecycle.execution_kind_for_tool_name(name)
+
+    execution =
+      ExecutionLifecycle.execution_metadata(
+        %{
+          execution_kind: execution_kind,
+          correlation_id: correlation_id,
+          cause_id: map_get(envelope, :cause_id),
+          run_id: map_get(envelope, :run_id),
+          step_id: map_get(envelope, :step_id),
+          mode: map_get(envelope, :mode),
+          meta: map_get(envelope, :meta)
+        },
+        %{"lifecycle_status" => "requested"}
+      )
+
     meta =
       tool_call
       |> map_get("meta")
       |> normalize_map()
       |> maybe_put_correlation(correlation_id)
+      |> Map.put("execution", execution)
+      |> maybe_put("execution_id", map_get(execution, "execution_id"))
+      |> maybe_put("run_id", map_get(execution, "run_id"))
+      |> maybe_put("step_id", map_get(execution, "step_id"))
+      |> maybe_put("mode", map_get(execution, "mode"))
 
     request = %{
       "name" => name,
       "args" => decode_tool_call_args(args),
-      "meta" => meta
+      "meta" => meta,
+      "correlation_id" => correlation_id,
+      "execution_id" => map_get(execution, "execution_id"),
+      "run_id" => map_get(execution, "run_id"),
+      "step_id" => map_get(execution, "step_id")
     }
 
     with {:ok, normalized} <- ToolCall.from_map(request) do
@@ -577,6 +676,13 @@ defmodule Jido.Code.Server.Project.StrategyRunner.Normalizer do
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp drop_nil_values(map) when is_map(map) do
+    Enum.reduce(map, %{}, fn
+      {_key, nil}, acc -> acc
+      {key, value}, acc -> Map.put(acc, key, value)
+    end)
+  end
 
   defp to_existing_atom(key) when is_binary(key) do
     String.to_existing_atom(key)

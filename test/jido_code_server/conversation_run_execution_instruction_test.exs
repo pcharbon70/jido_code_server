@@ -92,10 +92,24 @@ defmodule Jido.Code.Server.ConversationRunExecutionInstructionTest do
     assert is_list(result["signals"])
     assert is_map(result["result_meta"])
     assert is_binary(result["execution_ref"])
+    assert is_map(result["execution"])
+    assert result["lifecycle_status"] == "completed"
+    assert result["execution"]["execution_kind"] == "strategy_run"
+    assert result["execution"]["run_id"] == "corr-exec-1"
+    assert result["execution"]["step_id"] =~ ":strategy:"
 
     assert Enum.any?(result["signals"], fn signal ->
              signal["type"] == "conversation.llm.requested"
            end)
+
+    requested =
+      Enum.find(result["signals"], fn signal ->
+        signal["type"] == "conversation.llm.requested"
+      end)
+
+    assert requested
+    assert get_in(requested, ["data", "execution", "execution_kind"]) == "strategy_run"
+    assert get_in(requested, ["data", "execution", "lifecycle_status"]) == "requested"
   end
 
   test "rejects unsupported strategy and mode combinations" do
@@ -325,6 +339,16 @@ defmodule Jido.Code.Server.ConversationRunExecutionInstructionTest do
       end)
 
     assert get_in(tool_requested, ["data", "tool_call", :name]) == "asset.list"
+    assert get_in(tool_requested, ["data", "execution", "execution_kind"]) == "tool_run"
+    assert get_in(tool_requested, ["data", "execution", "lifecycle_status"]) == "requested"
+
+    completed =
+      Enum.find(result["signals"], fn signal ->
+        signal["type"] == "conversation.llm.completed"
+      end)
+
+    assert get_in(completed, ["data", "execution", "execution_kind"]) == "strategy_run"
+    assert get_in(completed, ["data", "execution", "lifecycle_status"]) == "completed"
   end
 
   test "maps cancelled strategy payloads to canonical failed terminal signal with cancelled status" do
@@ -364,6 +388,8 @@ defmodule Jido.Code.Server.ConversationRunExecutionInstructionTest do
 
     assert {:ok, result} = RunExecutionInstruction.run(params, context)
     assert result["result_meta"]["terminal_status"] == "cancelled"
+    assert result["result_meta"]["lifecycle_status"] == "canceled"
+    assert result["execution"]["lifecycle_status"] == "canceled"
 
     failed =
       Enum.find(result["signals"], fn signal ->
@@ -372,5 +398,6 @@ defmodule Jido.Code.Server.ConversationRunExecutionInstructionTest do
 
     assert failed
     assert get_in(failed, ["data", "reason"]) == "conversation_cancelled"
+    assert get_in(failed, ["data", "execution", "lifecycle_status"]) == "failed"
   end
 end
