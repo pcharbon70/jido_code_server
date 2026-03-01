@@ -228,7 +228,11 @@ defmodule Jido.Code.Server.Conversation.Domain.Projections do
       current_step_id: Map.get(normalized, "current_step_id"),
       last_completed_step_id: Map.get(normalized, "last_completed_step_id"),
       reason: Map.get(normalized, "reason"),
-      last_failure_reason: Map.get(normalized, "last_failure_reason")
+      last_failure_reason: Map.get(normalized, "last_failure_reason"),
+      interruption_kind: Map.get(normalized, "interruption_kind"),
+      cause_signal_id: Map.get(normalized, "cause_signal_id"),
+      cause_signal_type: Map.get(normalized, "cause_signal_type"),
+      cause_correlation_id: Map.get(normalized, "cause_correlation_id")
     }
   end
 

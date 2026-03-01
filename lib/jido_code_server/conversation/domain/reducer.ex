@@ -16,7 +16,8 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
     "conversation.run.opened",
     "conversation.run.closed",
     "conversation.run.interrupted",
-    "conversation.run.resumed"
+    "conversation.run.resumed",
+    "conversation.resume.rejected"
   ]
 
   @spec enqueue_signal(State.t(), Jido.Signal.t()) :: State.t()
@@ -139,8 +140,17 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
          %Jido.Signal{type: type} = _signal,
          lifecycle_intents
        )
-       when type in ["conversation.llm.completed", "conversation.resume"] do
+       when type in ["conversation.llm.completed"] do
     lifecycle_intents
+  end
+
+  defp effect_intents_for_signal(
+         previous_state,
+         %State{} = state,
+         %Jido.Signal{type: "conversation.resume"} = signal,
+         lifecycle_intents
+       ) do
+    resume_effect_intents(previous_state, state, signal, lifecycle_intents)
   end
 
   defp effect_intents_for_signal(
@@ -233,23 +243,22 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
 
   def update_mode_switch(%State{} = state, _signal), do: state
 
-  defp maybe_interrupt_active_run_for_switch(state, _signal, false, _reason), do: state
-
-  defp maybe_interrupt_active_run_for_switch(
-         %State{active_run: nil} = state,
-         _signal,
-         true,
-         _reason
-       ),
-       do: state
-
   defp maybe_interrupt_active_run_for_switch(
          %State{} = state,
          %Jido.Signal{} = signal,
-         true,
+         force?,
          reason
        ) do
-    close_active_run(state, :interrupted, signal, reason)
+    cond do
+      force? != true ->
+        state
+
+      state.active_run == nil ->
+        state
+
+      true ->
+        close_active_run(state, :interrupted, signal, reason)
+    end
   end
 
   defp normalize_switch_mode(mode) when is_atom(mode), do: mode
@@ -275,8 +284,11 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
   defp resolve_switched_mode_state(_state, _requested_mode, mode_state), do: mode_state
 
   defp switch_force?(data) when is_map(data) do
-    value = map_get(data, "force")
-    value == true or value == "true"
+    case map_get(data, "force") do
+      true -> true
+      "true" -> true
+      _other -> false
+    end
   end
 
   defp switch_reason(data) when is_map(data) do
@@ -391,16 +403,12 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
     if is_binary(step_name) do
       matching_step =
         Enum.find(state.pending_steps, fn step ->
-          same_name? = step.name == step_name
-          same_correlation? = is_nil(correlation_id) or step.correlation_id == correlation_id
-          same_name? and same_correlation?
+          tool_step_matches?(step, step_name, correlation_id)
         end)
 
       pending_steps =
         Enum.reject(state.pending_steps, fn step ->
-          same_name? = step.name == step_name
-          same_correlation? = is_nil(correlation_id) or step.correlation_id == correlation_id
-          same_name? and same_correlation?
+          tool_step_matches?(step, step_name, correlation_id)
         end)
 
       updated_run =
@@ -450,7 +458,7 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
          %State{} = state,
          %Jido.Signal{type: "conversation.cancel"} = signal
        ) do
-    close_active_run(state, :cancelled, signal, "conversation_cancelled")
+    close_active_run(state, :cancelled, signal, cancel_reason(signal))
   end
 
   defp maybe_finalize_mode_run(
@@ -501,6 +509,10 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
     if ModeRun.valid_transition?(active_run.status, status) do
       existing_step_count = normalize_non_neg_integer(active_run.step_count, 0)
       pending_step_count = length(state.pending_steps)
+      interruption_kind = interruption_kind(state, status)
+      cause_signal_type = signal.type
+      cause_signal_id = signal.id
+      cause_correlation_id = ConversationSignal.correlation_id(signal)
 
       completed_run =
         active_run
@@ -508,6 +520,10 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
         |> Map.put(:updated_at, signal.time)
         |> Map.put(:ended_at, signal.time)
         |> maybe_put(:reason, reason)
+        |> maybe_put(:interruption_kind, interruption_kind)
+        |> maybe_put(:cause_signal_type, cause_signal_type)
+        |> maybe_put(:cause_signal_id, cause_signal_id)
+        |> maybe_put(:cause_correlation_id, cause_correlation_id)
         |> Map.put(:step_count, max(existing_step_count, pending_step_count))
         |> Map.put(:current_step_id, nil)
         |> Map.put(:pending_retry, false)
@@ -638,7 +654,7 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
   end
 
   defp update_status(%State{} = state, %Jido.Signal{type: "conversation.resume"}) do
-    %{state | status: :idle}
+    if state.status == :cancelled, do: %{state | status: :idle}, else: state
   end
 
   defp update_status(%State{} = state, %Jido.Signal{type: type})
@@ -726,12 +742,15 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
 
   defp cancel_effect_intents(state, signal) do
     correlation_id = ConversationSignal.correlation_id(signal)
+    reason = cancel_reason(signal)
 
     intents = [
       %{
         kind: :cancel_pending_tools,
         pending_tool_calls: state.pending_tool_calls,
-        correlation_id: correlation_id
+        correlation_id: correlation_id,
+        reason: reason,
+        source_signal: signal
       }
     ]
 
@@ -746,7 +765,8 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
             kind: :cancel_pending_subagents,
             pending_subagents: pending_subagents,
             correlation_id: correlation_id,
-            reason: cancel_reason(signal)
+            reason: reason,
+            source_signal: signal
           }
         ]
     end
@@ -822,6 +842,40 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
       maybe_run_closed_intents(previous_state, state, signal)
   end
 
+  defp resume_effect_intents(
+         %State{status: :cancelled},
+         _state,
+         _signal,
+         lifecycle_intents
+       ) do
+    lifecycle_intents
+  end
+
+  defp resume_effect_intents(
+         %State{} = previous_state,
+         %State{} = state,
+         %Jido.Signal{} = signal,
+         lifecycle_intents
+       ) do
+    reason = resume_rejection_reason(previous_state)
+
+    rejected =
+      emit_signal_intent(
+        new_runtime_signal(
+          state,
+          signal,
+          "conversation.resume.rejected",
+          %{
+            "reason" => reason,
+            "status" => status_label(previous_state.status),
+            "active_run" => is_map(previous_state.active_run)
+          }
+        )
+      )
+
+    [rejected | lifecycle_intents]
+  end
+
   defp maybe_run_opened_intents(
          %State{active_run: nil},
          %State{active_run: active_run} = state,
@@ -858,7 +912,9 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
           signal,
           "conversation.run.resumed",
           %{
-            "mode" => mode_label(state.mode)
+            "mode" => mode_label(state.mode),
+            "resume_policy" => "new_run_required",
+            "replay_boundary" => "post_resume_user_message"
           }
         )
       )
@@ -882,7 +938,10 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
               "run_id" => map_get(run, "run_id"),
               "mode" => mode_label(map_get(run, "mode")),
               "status" => status_label(status),
-              "reason" => map_get(run, "reason")
+              "reason" => map_get(run, "reason"),
+              "interruption_kind" => map_get(run, "interruption_kind"),
+              "cause_signal_id" => map_get(run, "cause_signal_id"),
+              "cause_signal_type" => map_get(run, "cause_signal_type")
             }
           )
         )
@@ -897,7 +956,10 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
               %{
                 "run_id" => map_get(run, "run_id"),
                 "mode" => mode_label(map_get(run, "mode")),
-                "reason" => map_get(run, "reason")
+                "reason" => map_get(run, "reason"),
+                "interruption_kind" => map_get(run, "interruption_kind"),
+                "cause_signal_id" => map_get(run, "cause_signal_id"),
+                "cause_signal_type" => map_get(run, "cause_signal_type")
               }
             )
           )
@@ -915,10 +977,14 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
 
   defp new_runtime_signal(%State{} = state, source_signal, type, data) do
     correlation_id = source_signal |> ConversationSignal.correlation_id()
+    cause_id = map_get(source_signal, "id")
+
+    extensions =
+      %{} |> maybe_put("correlation_id", correlation_id) |> maybe_put("cause_id", cause_id)
 
     Jido.Signal.new!(type, data,
       source: "/conversation/#{state.conversation_id}",
-      extensions: if(correlation_id, do: %{"correlation_id" => correlation_id}, else: %{})
+      extensions: extensions
     )
   end
 
@@ -956,10 +1022,72 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
 
   defp cancel_reason(%Jido.Signal{data: data}) when is_map(data) do
     reason = map_get(data, "reason")
-    if is_binary(reason) and String.trim(reason) != "", do: reason, else: "conversation_cancelled"
+
+    if is_binary(reason) and String.trim(reason) != "",
+      do: String.trim(reason),
+      else: "conversation_cancelled"
   end
 
   defp cancel_reason(_signal), do: "conversation_cancelled"
+
+  defp interruption_kind(%State{} = state, status) do
+    case status do
+      status when status in [:cancelled, :interrupted] ->
+        do_interruption_kind(state)
+
+      _other ->
+        nil
+    end
+  end
+
+  defp do_interruption_kind(%State{} = state) do
+    active_run = state.active_run || %{}
+    current_step_id = map_get(active_run, "current_step_id")
+
+    cond do
+      pending_tool_inflight?(state) -> "tool"
+      subagent_inflight?(state) -> "subagent"
+      true -> step_interruption_kind(current_step_id)
+    end
+  end
+
+  defp pending_tool_inflight?(%State{} = state) do
+    pending_tool_call_count = length(state.pending_tool_calls)
+    pending_tool_step_count = Enum.count(state.pending_steps, &tool_step?/1)
+
+    pending_tool_call_count + pending_tool_step_count > 0
+  end
+
+  defp subagent_inflight?(%State{} = state) do
+    map_size(state.pending_subagents) > 0
+  end
+
+  defp tool_step?(step) when is_map(step), do: map_get(step, "kind") == :tool
+  defp tool_step?(_step), do: false
+
+  defp tool_step_matches?(step, step_name, correlation_id) when is_map(step) do
+    step.name == step_name and tool_step_correlation_matches?(step, correlation_id)
+  end
+
+  defp tool_step_matches?(_step, _step_name, _correlation_id), do: false
+
+  defp tool_step_correlation_matches?(_step, nil), do: true
+
+  defp tool_step_correlation_matches?(step, correlation_id) when is_binary(correlation_id) do
+    step.correlation_id == correlation_id
+  end
+
+  defp step_interruption_kind(step_id) when is_binary(step_id) do
+    if String.contains?(step_id, ":strategy:"), do: "strategy", else: "step"
+  end
+
+  defp step_interruption_kind(_step_id), do: "run"
+
+  defp resume_rejection_reason(%State{status: :running, active_run: active_run})
+       when is_map(active_run),
+       do: "active_run_in_progress"
+
+  defp resume_rejection_reason(_state), do: "not_cancelled"
 
   defp put_pending_subagent(%State{} = state, %Jido.Signal{data: data}) when is_map(data) do
     child_id = map_get(data, "child_id")
@@ -1165,7 +1293,11 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
       current_step_id: map_get(run, "current_step_id"),
       last_completed_step_id: map_get(run, "last_completed_step_id"),
       reason: map_get(run, "reason"),
-      last_failure_reason: map_get(run, "last_failure_reason")
+      last_failure_reason: map_get(run, "last_failure_reason"),
+      interruption_kind: map_get(run, "interruption_kind"),
+      cause_signal_id: map_get(run, "cause_signal_id"),
+      cause_signal_type: map_get(run, "cause_signal_type"),
+      cause_correlation_id: map_get(run, "cause_correlation_id")
     }
   end
 

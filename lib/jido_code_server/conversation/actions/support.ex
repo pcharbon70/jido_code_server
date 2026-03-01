@@ -150,7 +150,9 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
   defp envelope_to_directive(%{execution_kind: :cancel_tools} = envelope, _domain, state_map) do
     params = %{
       "pending_tool_calls" => map_get(envelope, :pending_tool_calls) || [],
-      "correlation_id" => map_get(envelope, :correlation_id)
+      "correlation_id" => map_get(envelope, :correlation_id),
+      "reason" => map_get(envelope, :args) |> map_get("reason"),
+      "cause_id" => map_get(envelope, :cause_id)
     }
 
     [
