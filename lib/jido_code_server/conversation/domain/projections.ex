@@ -221,7 +221,14 @@ defmodule Jido.Code.Server.Conversation.Domain.Projections do
       last_signal_id: Map.get(normalized, "last_signal_id"),
       last_signal_type: Map.get(normalized, "last_signal_type"),
       step_count: Map.get(normalized, "step_count", 0),
-      reason: Map.get(normalized, "reason")
+      retry_count: Map.get(normalized, "retry_count", 0),
+      pending_retry: Map.get(normalized, "pending_retry", false),
+      max_retries: Map.get(normalized, "max_retries", 1),
+      max_turn_steps: Map.get(normalized, "max_turn_steps", 32),
+      current_step_id: Map.get(normalized, "current_step_id"),
+      last_completed_step_id: Map.get(normalized, "last_completed_step_id"),
+      reason: Map.get(normalized, "reason"),
+      last_failure_reason: Map.get(normalized, "last_failure_reason")
     }
   end
 
@@ -233,12 +240,19 @@ defmodule Jido.Code.Server.Conversation.Domain.Projections do
     %{
       step_id: Map.get(normalized, "step_id"),
       run_id: Map.get(normalized, "run_id"),
+      step_index: Map.get(normalized, "step_index"),
+      predecessor_step_id: Map.get(normalized, "predecessor_step_id"),
       kind: Map.get(normalized, "kind"),
       status: Map.get(normalized, "status"),
       name: Map.get(normalized, "name"),
       correlation_id: Map.get(normalized, "correlation_id"),
+      tool_call_id: Map.get(normalized, "tool_call_id"),
+      retry_count: Map.get(normalized, "retry_count", 0),
+      max_retries: Map.get(normalized, "max_retries", 1),
       created_at: Map.get(normalized, "created_at"),
-      updated_at: Map.get(normalized, "updated_at")
+      updated_at: Map.get(normalized, "updated_at"),
+      requested_by_signal_id: Map.get(normalized, "requested_by_signal_id"),
+      completed_by_signal_id: Map.get(normalized, "completed_by_signal_id")
     }
   end
 

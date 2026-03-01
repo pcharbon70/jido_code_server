@@ -108,6 +108,21 @@ defmodule Jido.Code.Server.ConversationModeRegistryConfigTest do
     assert tool_envelope.execution_kind == :command_run
     assert tool_envelope.name == "command.run.example_command"
     assert tool_envelope.correlation_id == "corr-envelope"
+
+    assert {:ok, strategy_with_pipeline} =
+             ExecutionEnvelope.from_intent(
+               %{
+                 kind: :run_execution,
+                 execution_kind: :strategy_run,
+                 source_signal: source_signal,
+                 meta: %{"pipeline" => %{"step_index" => 2, "reason" => "continue"}}
+               },
+               mode: :planning,
+               mode_state: %{"strategy" => "planning"}
+             )
+
+    assert get_in(strategy_with_pipeline, [:meta, "pipeline", "step_index"]) == 2
+    assert get_in(strategy_with_pipeline, [:meta, "pipeline", "reason"]) == "continue"
   end
 
   test "planning mode keeps asset tools exposed and rejects command tools for LLM turns" do
