@@ -50,10 +50,74 @@ defmodule Jido.Code.Server.ConversationRunExecutionInstructionTest.CancelledPayl
   end
 end
 
+defmodule Jido.Code.Server.ConversationRunExecutionInstructionTest.BlockingRunner do
+  @behaviour Jido.Code.Server.Project.StrategyRunner
+
+  @impl true
+  def start(_project_ctx, envelope, _opts) do
+    strategy_opts = Map.get(envelope, :strategy_opts) || %{}
+    owner = Map.get(strategy_opts, "test_owner") || Map.get(strategy_opts, :test_owner)
+
+    if is_pid(owner), do: send(owner, {:blocking_runner_started, self()})
+
+    receive do
+      :continue -> :ok
+    after
+      2_000 -> :ok
+    end
+
+    {:ok,
+     %{
+       "delta_chunks" => ["done"],
+       "finish_reason" => "stop",
+       "provider" => "test",
+       "model" => "blocking"
+     }}
+  end
+
+  @impl true
+  def capabilities do
+    %{
+      streaming?: true,
+      tool_calling?: true,
+      cancellable?: true,
+      supported_strategies: [:code_generation, :planning, :engineering_design, :reasoning]
+    }
+  end
+end
+
+defmodule Jido.Code.Server.ConversationRunExecutionInstructionTest.LargePayloadRunner do
+  @behaviour Jido.Code.Server.Project.StrategyRunner
+
+  @impl true
+  def start(_project_ctx, _envelope, _opts) do
+    chunk = String.duplicate("x", 1_024)
+
+    {:ok,
+     %{
+       "delta_chunks" => [chunk, chunk, chunk],
+       "finish_reason" => "stop",
+       "provider" => "test",
+       "model" => "large"
+     }}
+  end
+
+  @impl true
+  def capabilities do
+    %{
+      streaming?: true,
+      tool_calling?: true,
+      cancellable?: true,
+      supported_strategies: [:code_generation, :planning, :engineering_design, :reasoning]
+    }
+  end
+end
+
 defmodule Jido.Code.Server.ConversationRunExecutionInstructionTest do
   use ExUnit.Case, async: true
 
   alias Jido.Code.Server.Conversation.Instructions.RunExecutionInstruction
+  alias Jido.Code.Server.Project.Policy
 
   test "returns normalized execution payload for strategy_run envelope" do
     source_signal =
@@ -399,5 +463,151 @@ defmodule Jido.Code.Server.ConversationRunExecutionInstructionTest do
     assert failed
     assert get_in(failed, ["data", "reason"]) == "conversation_cancelled"
     assert get_in(failed, ["data", "execution", "lifecycle_status"]) == "failed"
+  end
+
+  test "records policy decision entries for strategy execution with run and step correlation" do
+    assert {:ok, policy} =
+             Policy.start_link(
+               project_id: "p-1",
+               root_path: File.cwd!(),
+               allow_tools: nil
+             )
+
+    on_exit(fn ->
+      if Process.alive?(policy), do: GenServer.stop(policy)
+    end)
+
+    source_signal =
+      Jido.Signal.new!("conversation.user.message", %{"content" => "hello"},
+        source: "/conversation/c-1",
+        extensions: %{"correlation_id" => "corr-exec-policy"}
+      )
+
+    params = %{
+      "execution_envelope" => %{
+        "execution_kind" => "strategy_run",
+        "conversation_id" => "c-1",
+        "mode" => "coding",
+        "mode_state" => %{"strategy" => "code_generation"},
+        "strategy_type" => "code_generation",
+        "strategy_opts" => %{},
+        "source_signal" => Jido.Code.Server.Conversation.Signal.to_map(source_signal),
+        "llm_context" => %{
+          "messages" => [%{"role" => "user", "content" => "hello"}]
+        },
+        "correlation_id" => "corr-exec-policy",
+        "cause_id" => source_signal.id
+      }
+    }
+
+    context = %{
+      "conversation_id" => "c-1",
+      "project_ctx" => %{
+        project_id: "p-1",
+        conversation_id: "c-1",
+        llm_adapter: :deterministic,
+        policy: policy
+      }
+    }
+
+    assert {:ok, _result} = RunExecutionInstruction.run(params, context)
+
+    diagnostics = Policy.diagnostics(policy)
+
+    assert Enum.any?(diagnostics.recent_decisions, fn decision ->
+             decision.decision == :allow and
+               decision.execution_kind == "strategy_run" and
+               decision.run_id == "corr-exec-policy" and
+               is_binary(decision.step_id) and
+               decision.step_id =~ ":strategy:"
+           end)
+  end
+
+  test "enforces shared conversation concurrency limits for strategy execution" do
+    source_signal =
+      Jido.Signal.new!("conversation.user.message", %{"content" => "hello"},
+        source: "/conversation/c-1",
+        extensions: %{"correlation_id" => "corr-exec-concurrency-1"}
+      )
+
+    params = %{
+      "execution_envelope" => %{
+        "execution_kind" => "strategy_run",
+        "conversation_id" => "c-1",
+        "mode" => "coding",
+        "mode_state" => %{"strategy" => "code_generation"},
+        "strategy_type" => "code_generation",
+        "strategy_opts" => %{
+          "runner" => Jido.Code.Server.ConversationRunExecutionInstructionTest.BlockingRunner,
+          "test_owner" => self()
+        },
+        "source_signal" => Jido.Code.Server.Conversation.Signal.to_map(source_signal),
+        "llm_context" => %{
+          "messages" => [%{"role" => "user", "content" => "hello"}]
+        },
+        "correlation_id" => "corr-exec-concurrency-1",
+        "cause_id" => source_signal.id
+      }
+    }
+
+    context = %{
+      "conversation_id" => "c-1",
+      "project_ctx" => %{
+        project_id: "p-1",
+        conversation_id: "c-1",
+        tool_max_concurrency_per_conversation: 1
+      }
+    }
+
+    task = Task.async(fn -> RunExecutionInstruction.run(params, context) end)
+    assert_receive {:blocking_runner_started, worker_pid}, 1_000
+
+    params_2 =
+      put_in(params, ["execution_envelope", "correlation_id"], "corr-exec-concurrency-2")
+
+    assert {:error, result} = RunExecutionInstruction.run(params_2, context)
+    assert result["reason"] =~ "execution_conversation_max_concurrency_reached"
+
+    send(worker_pid, :continue)
+    assert {:ok, _result} = Task.await(task, 3_000)
+  end
+
+  test "fails strategy execution when output limits are exceeded" do
+    source_signal =
+      Jido.Signal.new!("conversation.user.message", %{"content" => "hello"},
+        source: "/conversation/c-1",
+        extensions: %{"correlation_id" => "corr-exec-large-1"}
+      )
+
+    params = %{
+      "execution_envelope" => %{
+        "execution_kind" => "strategy_run",
+        "conversation_id" => "c-1",
+        "mode" => "coding",
+        "mode_state" => %{"strategy" => "code_generation"},
+        "strategy_type" => "code_generation",
+        "strategy_opts" => %{
+          "runner" => Jido.Code.Server.ConversationRunExecutionInstructionTest.LargePayloadRunner
+        },
+        "source_signal" => Jido.Code.Server.Conversation.Signal.to_map(source_signal),
+        "llm_context" => %{
+          "messages" => [%{"role" => "user", "content" => "hello"}]
+        },
+        "correlation_id" => "corr-exec-large-1",
+        "cause_id" => source_signal.id
+      }
+    }
+
+    context = %{
+      "conversation_id" => "c-1",
+      "project_ctx" => %{
+        project_id: "p-1",
+        conversation_id: "c-1",
+        tool_max_output_bytes: 256
+      }
+    }
+
+    assert {:error, result} = RunExecutionInstruction.run(params, context)
+    assert result["reason"] =~ "execution_output_too_large"
   end
 end

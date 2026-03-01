@@ -5,6 +5,7 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
 
   alias Jido.Code.Server.Config
   alias Jido.Code.Server.Conversation.ExecutionLifecycle
+  alias Jido.Code.Server.Conversation.ModeRegistry
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
   alias Jido.Code.Server.Correlation
   alias Jido.Code.Server.Project.CommandRunner
@@ -46,6 +47,7 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
     {:aws_access_key, ~r/\bAKIA[0-9A-Z]{16}\b/},
     {:slack_token, ~r/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/}
   ]
+  @default_execution_max_signal_count 256
 
   @spec run(map(), map()) :: {:ok, map()} | {:error, term()}
   def run(project_ctx, tool_call) when is_map(project_ctx) do
@@ -82,8 +84,9 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
 
     with {:ok, envelope} <- normalize_execution_envelope(project_ctx, execution_envelope),
          {:ok, envelope} <- StrategyRunner.prepare(project_ctx, envelope),
+         :ok <- authorize_execution(project_ctx, envelope),
          :ok <- emit_execution_started(project_ctx, envelope),
-         {:ok, result} <- execute_envelope(project_ctx, envelope) do
+         {:ok, result} <- execute_envelope_with_capacity(project_ctx, envelope) do
       duration_ms = System.monotonic_time(:millisecond) - started_at
 
       response =
@@ -94,6 +97,7 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
       {:ok, response}
     else
       {:error, reason} ->
+        reason = unwrap_execution_error(reason)
         duration_ms = System.monotonic_time(:millisecond) - started_at
 
         error =
@@ -104,6 +108,219 @@ defmodule Jido.Code.Server.Project.ExecutionRunner do
         {:error, error}
     end
   end
+
+  defp execute_envelope_with_capacity(project_ctx, envelope) do
+    case acquire_execution_capacity(project_ctx, envelope) do
+      {:ok, capacity_token} ->
+        try do
+          with {:ok, result} <- execute_envelope(project_ctx, envelope),
+               :ok <- enforce_execution_limits(project_ctx, envelope, result) do
+            {:ok, result}
+          else
+            {:error, reason} = error ->
+              maybe_record_execution_denial(project_ctx, envelope, reason)
+              error
+          end
+        after
+          release_capacity(capacity_token)
+        end
+
+      {:error, reason} = error ->
+        maybe_record_execution_denial(project_ctx, envelope, reason)
+        error
+    end
+  end
+
+  defp authorize_execution(project_ctx, envelope) do
+    case execution_allowed?(project_ctx, envelope) do
+      :ok ->
+        record_execution_policy_decision(project_ctx, envelope, :allow, :allowed)
+        :ok
+
+      {:error, reason} ->
+        record_execution_policy_decision(project_ctx, envelope, :deny, reason)
+        {:error, {:execution_policy_denied, reason}}
+    end
+  end
+
+  defp execution_allowed?(project_ctx, envelope) do
+    execution_kind = map_get_any(envelope, "execution_kind")
+    mode = normalize_execution_mode(map_get_any(envelope, "mode"))
+    allowed_execution_kinds = ModeRegistry.allowed_execution_kinds(mode, project_ctx)
+
+    cond do
+      execution_kind == :strategy_run ->
+        :ok
+
+      allowed_execution_kinds == :all ->
+        :ok
+
+      is_list(allowed_execution_kinds) and execution_kind in allowed_execution_kinds ->
+        :ok
+
+      true ->
+        {:error, {:execution_kind_not_allowed_for_mode, mode, execution_kind}}
+    end
+  end
+
+  defp acquire_execution_capacity(project_ctx, envelope) do
+    pseudo_call = %{
+      meta: %{
+        "conversation_id" => map_get_any(envelope, "conversation_id")
+      }
+    }
+
+    case acquire_conversation_capacity(project_ctx, pseudo_call) do
+      {:ok, token} ->
+        {:ok, token}
+
+      {:error, :conversation_max_concurrency_reached} ->
+        {:error, :execution_conversation_max_concurrency_reached}
+    end
+  end
+
+  defp enforce_execution_limits(project_ctx, envelope, result) do
+    with :ok <- enforce_result_limits(project_ctx, result),
+         :ok <- enforce_execution_signal_limit(project_ctx, result) do
+      :ok
+    else
+      {:error, {:output_too_large, size, max}} ->
+        emit_execution_degraded(project_ctx, envelope, :execution_output_too_large, %{
+          size: size,
+          limit: max
+        })
+
+        {:error, {:execution_output_too_large, size, max}}
+
+      {:error, {:artifact_too_large, index, size, max}} ->
+        emit_execution_degraded(project_ctx, envelope, :execution_artifact_too_large, %{
+          artifact_index: index,
+          size: size,
+          limit: max
+        })
+
+        {:error, {:execution_artifact_too_large, index, size, max}}
+
+      {:error, {:execution_signal_limit_exceeded, count, max}} ->
+        emit_execution_degraded(project_ctx, envelope, :execution_signal_limit_exceeded, %{
+          signal_count: count,
+          limit: max
+        })
+
+        {:error, {:execution_signal_limit_exceeded, count, max}}
+    end
+  end
+
+  defp enforce_execution_signal_limit(project_ctx, result) do
+    max_signal_count =
+      case Map.get(project_ctx, :execution_max_signal_count) do
+        value when is_integer(value) and value > 0 -> value
+        _ -> @default_execution_max_signal_count
+      end
+
+    signal_count =
+      result
+      |> map_get_any("signals")
+      |> List.wrap()
+      |> length()
+
+    if signal_count > max_signal_count do
+      {:error, {:execution_signal_limit_exceeded, signal_count, max_signal_count}}
+    else
+      :ok
+    end
+  end
+
+  defp maybe_record_execution_denial(project_ctx, envelope, reason) do
+    if execution_denial_reason?(reason) do
+      record_execution_policy_decision(project_ctx, envelope, :deny, reason)
+    end
+  end
+
+  defp execution_denial_reason?(:execution_conversation_max_concurrency_reached), do: true
+  defp execution_denial_reason?({:execution_output_too_large, _, _}), do: true
+  defp execution_denial_reason?({:execution_artifact_too_large, _, _, _}), do: true
+  defp execution_denial_reason?({:execution_signal_limit_exceeded, _, _}), do: true
+  defp execution_denial_reason?(_reason), do: false
+
+  defp record_execution_policy_decision(project_ctx, envelope, decision, reason) do
+    attrs = execution_policy_attrs(project_ctx, envelope, decision, reason)
+    policy = Map.get(project_ctx, :policy)
+
+    case policy do
+      nil ->
+        emit_execution_policy_fallback(attrs)
+
+      _ ->
+        case Policy.record_execution_decision(policy, attrs) do
+          :ok -> :ok
+          _other -> emit_execution_policy_fallback(attrs)
+        end
+    end
+
+    :ok
+  end
+
+  defp execution_policy_attrs(project_ctx, envelope, decision, reason) do
+    execution_kind = map_get_any(envelope, "execution_kind")
+    strategy_type = map_get_any(envelope, "strategy_type")
+
+    %{
+      project_id: map_get_any(project_ctx, "project_id"),
+      conversation_id: map_get_any(envelope, "conversation_id"),
+      correlation_id: map_get_any(envelope, "correlation_id"),
+      run_id: map_get_any(envelope, "run_id"),
+      step_id: map_get_any(envelope, "step_id"),
+      execution_kind: execution_kind,
+      strategy_type: strategy_type,
+      tool_name: execution_policy_tool_name(execution_kind, strategy_type),
+      decision: decision,
+      reason: reason
+    }
+  end
+
+  defp execution_policy_tool_name(execution_kind, strategy_type)
+       when is_atom(execution_kind) and is_binary(strategy_type) and strategy_type != "" do
+    "execution.#{execution_kind}.#{strategy_type}"
+  end
+
+  defp execution_policy_tool_name(execution_kind, _strategy_type)
+       when is_atom(execution_kind) do
+    "execution.#{execution_kind}"
+  end
+
+  defp execution_policy_tool_name(_execution_kind, _strategy_type), do: "execution.unknown"
+
+  defp emit_execution_policy_fallback(attrs) when is_map(attrs) do
+    payload =
+      attrs
+      |> Map.put(:outside_root_exception_reason_codes, [])
+      |> Map.put(:at, DateTime.utc_now())
+
+    case Map.get(attrs, :decision) do
+      :deny -> Telemetry.emit("policy.denied", payload)
+      _ -> Telemetry.emit("policy.allowed", payload)
+    end
+  end
+
+  defp emit_execution_degraded(project_ctx, envelope, reason, details) do
+    Telemetry.emit("conversation.execution.degraded", %{
+      project_id: map_get_any(project_ctx, "project_id"),
+      conversation_id: map_get_any(envelope, "conversation_id"),
+      execution_id: map_get_any(envelope, "execution_id"),
+      execution_kind: map_get_any(envelope, "execution_kind"),
+      strategy_type: map_get_any(envelope, "strategy_type"),
+      correlation_id: map_get_any(envelope, "correlation_id"),
+      cause_id: map_get_any(envelope, "cause_id"),
+      run_id: map_get_any(envelope, "run_id"),
+      step_id: map_get_any(envelope, "step_id"),
+      reason: reason,
+      details: details
+    })
+  end
+
+  defp unwrap_execution_error({:execution_policy_denied, reason}), do: reason
+  defp unwrap_execution_error(reason), do: reason
 
   @spec cancel_task(map(), pid(), map()) :: :ok
   def cancel_task(project_ctx, task_pid, tool_call \\ %{})
