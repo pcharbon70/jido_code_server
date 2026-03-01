@@ -75,8 +75,6 @@ defmodule Jido.Code.Server.Project.WorkflowRunner do
     end
   end
 
-  defp workflow_inputs_from_call(_args), do: %{}
-
   defp workflow_execution_opts(project_ctx, call, definition) do
     []
     |> Keyword.put(:workflow_id, definition.name)
@@ -99,14 +97,13 @@ defmodule Jido.Code.Server.Project.WorkflowRunner do
   end
 
   defp preview_asset_tool_result(asset, args, note, reason) when is_binary(note) do
-    base = %{
+    %{
       asset: asset,
       args: args,
       mode: :preview,
-      note: note
+      note: note,
+      reason: reason
     }
-
-    if is_nil(reason), do: base, else: Map.put(base, :reason, reason)
   end
 
   defp parse_workflow_markdown(body) when is_binary(body) do
