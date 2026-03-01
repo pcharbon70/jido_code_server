@@ -64,6 +64,49 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
     assert "conversation.run.closed" in types
   end
 
+  test "strategy execution failures are re-ingested as canonical llm failure lifecycle events" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase4-reingest-failure",
+               conversation_orchestration: true,
+               llm_adapter: :missing_adapter
+             )
+
+    assert {:ok, "phase4-reingest-failure-c1"} =
+             Runtime.start_conversation(project_id, conversation_id: "phase4-reingest-failure-c1")
+
+    assert :ok =
+             RuntimeSignal.send_signal(project_id, "phase4-reingest-failure-c1", %{
+               "type" => "conversation.user.message",
+               "data" => %{"content" => "hello"}
+             })
+
+    assert {:ok, timeline} =
+             wait_for_timeline(project_id, "phase4-reingest-failure-c1", fn events ->
+               types = event_types(events)
+               "conversation.llm.failed" in types and "conversation.run.closed" in types
+             end)
+
+    failed_event =
+      Enum.find(timeline, fn event ->
+        map_lookup(event, :type) == "conversation.llm.failed"
+      end)
+
+    assert failed_event
+    assert String.contains?(map_lookup(map_lookup(failed_event, :data), :reason), "invalid_llm_adapter")
+
+    run_closed =
+      Enum.find(timeline, fn event ->
+        map_lookup(event, :type) == "conversation.run.closed"
+      end)
+
+    assert run_closed
+    assert map_lookup(map_lookup(run_closed, :data), :status) == "failed"
+  end
+
   test "tool requests flow through execution runner and continue conversation after completion" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)

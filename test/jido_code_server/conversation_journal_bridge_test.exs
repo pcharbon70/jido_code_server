@@ -52,6 +52,66 @@ defmodule Jido.Code.Server.ConversationJournalBridgeTest do
     assert Enum.any?(canonical_context, &(&1.role == :assistant))
   end
 
+  test "strategy tool-loop traces are mirrored into canonical outbound status and assistant events" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    project_id = unique_id("journal-bridge-tool-loop")
+    conversation_id = unique_id("journal-bridge-tool-conversation")
+
+    assert {:ok, ^project_id} =
+             Runtime.start_project(root,
+               project_id: project_id,
+               conversation_orchestration: true,
+               llm_adapter: :deterministic
+             )
+
+    assert {:ok, ^conversation_id} =
+             Runtime.start_conversation(project_id, conversation_id: conversation_id)
+
+    assert :ok =
+             RuntimeSignal.send_signal(project_id, conversation_id, %{
+               "type" => "conversation.user.message",
+               "data" => %{"content" => "please list skills"}
+             })
+
+    assert_eventually(fn ->
+      case Runtime.conversation_projection(project_id, conversation_id, :canonical_timeline) do
+        {:ok, timeline} ->
+          types = Enum.map(timeline, &map_lookup(&1, :type))
+          "conv.out.tool.status" in types and "conv.out.assistant.completed" in types
+
+        _ ->
+          false
+      end
+    end)
+
+    assert {:ok, canonical_timeline} =
+             Runtime.conversation_projection(project_id, conversation_id, :canonical_timeline)
+
+    types = Enum.map(canonical_timeline, &map_lookup(&1, :type))
+    assert "conv.out.assistant.delta" in types
+    assert "conv.out.assistant.completed" in types
+    assert "conv.out.tool.status" in types
+
+    tool_status_entries =
+      Enum.filter(canonical_timeline, fn entry ->
+        map_lookup(entry, :type) == "conv.out.tool.status"
+      end)
+
+    statuses =
+      tool_status_entries
+      |> Enum.map(fn entry ->
+        entry
+        |> map_lookup(:metadata)
+        |> map_lookup(:status)
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    assert "requested" in statuses
+    assert "completed" in statuses
+  end
+
   test "same conversation id is isolated across projects in canonical mirror" do
     root_a = TempProject.create!()
     root_b = TempProject.create!()
@@ -195,4 +255,10 @@ defmodule Jido.Code.Server.ConversationJournalBridgeTest do
   defp assert_eventually(_fun, 0) do
     flunk("condition did not become true in time")
   end
+
+  defp map_lookup(map, key) when is_map(map) do
+    Map.get(map, key) || Map.get(map, Atom.to_string(key))
+  end
+
+  defp map_lookup(_map, _key), do: nil
 end

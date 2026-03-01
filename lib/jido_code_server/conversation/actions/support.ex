@@ -8,7 +8,7 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
   alias Jido.Code.Server.Conversation.ExecutionEnvelope
   alias Jido.Code.Server.Conversation.Instructions.CancelPendingToolsInstruction
   alias Jido.Code.Server.Conversation.Instructions.CancelSubagentsInstruction
-  alias Jido.Code.Server.Conversation.Instructions.RunLLMInstruction
+  alias Jido.Code.Server.Conversation.Instructions.RunExecutionInstruction
   alias Jido.Code.Server.Conversation.Instructions.RunToolInstruction
   alias Jido.Code.Server.Conversation.JournalBridge
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
@@ -96,15 +96,31 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
       end
 
     params = %{
-      "conversation_id" => domain.conversation_id,
-      "source_signal" => source_signal,
-      "llm_context" => domain.projection_cache[:llm_context] || %{},
-      "mode" => domain.mode,
-      "mode_state" => domain.mode_state,
-      "execution_envelope" => envelope_meta(envelope)
+      "execution_envelope" => %{
+        "execution_kind" => "strategy_run",
+        "name" => map_get(envelope, :name),
+        "conversation_id" => domain.conversation_id,
+        "mode" => Atom.to_string(domain.mode),
+        "mode_state" => domain.mode_state,
+        "strategy_type" => map_get(envelope, :strategy_type),
+        "strategy_opts" => map_get(envelope, :strategy_opts) || %{},
+        "source_signal" => source_signal,
+        "llm_context" => domain.projection_cache[:llm_context] || %{},
+        "correlation_id" => map_get(envelope, :correlation_id),
+        "cause_id" => map_get(envelope, :cause_id),
+        "meta" => map_get(envelope, :meta) || %{}
+      }
     }
 
-    [run_instruction(RunLLMInstruction, params, state_map, "llm")]
+    [
+      run_instruction(
+        RunExecutionInstruction,
+        params,
+        state_map,
+        "execution",
+        %{"execution_kind" => "strategy_run"}
+      )
+    ]
   end
 
   defp envelope_to_directive(
@@ -120,7 +136,15 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
       "execution_envelope" => envelope_meta(envelope)
     }
 
-    [run_instruction(RunToolInstruction, params, state_map, "tool")]
+    [
+      run_instruction(
+        RunToolInstruction,
+        params,
+        state_map,
+        "tool",
+        %{"execution_kind" => Atom.to_string(execution_kind)}
+      )
+    ]
   end
 
   defp envelope_to_directive(%{execution_kind: :cancel_tools} = envelope, _domain, state_map) do
@@ -129,7 +153,15 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
       "correlation_id" => map_get(envelope, :correlation_id)
     }
 
-    [run_instruction(CancelPendingToolsInstruction, params, state_map, "cancel_pending_tools")]
+    [
+      run_instruction(
+        CancelPendingToolsInstruction,
+        params,
+        state_map,
+        "cancel_pending_tools",
+        %{"execution_kind" => "cancel_tools"}
+      )
+    ]
   end
 
   defp envelope_to_directive(%{execution_kind: :cancel_subagents} = envelope, _domain, state_map) do
@@ -139,7 +171,15 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
       "reason" => map_get(envelope, :args) |> map_get("reason")
     }
 
-    [run_instruction(CancelSubagentsInstruction, params, state_map, "cancel_pending_subagents")]
+    [
+      run_instruction(
+        CancelSubagentsInstruction,
+        params,
+        state_map,
+        "cancel_pending_subagents",
+        %{"execution_kind" => "cancel_subagents"}
+      )
+    ]
   end
 
   defp envelope_to_directive(_envelope, _domain, _state_map), do: []
@@ -198,7 +238,7 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
     })
   end
 
-  defp run_instruction(action_module, params, state_map, effect_kind) do
+  defp run_instruction(action_module, params, state_map, effect_kind, meta) do
     instruction =
       Jido.Instruction.new!(%{
         action: action_module,
@@ -213,15 +253,22 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
 
     Directive.run_instruction(instruction,
       result_action: HandleInstructionResultAction,
-      meta: %{"effect_kind" => effect_kind}
+      meta: Map.merge(%{"effect_kind" => effect_kind}, meta)
     )
   end
 
-  defp map_get(map, key) when is_map(map) and is_atom(key),
-    do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
+  defp map_get(map, key) when is_map(map) do
+    cond do
+      is_atom(key) ->
+        Map.get(map, key) || Map.get(map, Atom.to_string(key))
 
-  defp map_get(map, key) when is_map(map) and is_binary(key),
-    do: Map.get(map, key) || Map.get(map, to_existing_atom(key))
+      is_binary(key) ->
+        Map.get(map, key) || Map.get(map, to_existing_atom(key))
+
+      true ->
+        nil
+    end
+  end
 
   defp map_get(_map, _key), do: nil
 

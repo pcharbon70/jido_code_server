@@ -212,10 +212,8 @@ defmodule Jido.Code.Server.Conversation.JournalBridge do
   end
 
   defp ingest_opts(%Jido.Signal{} = signal) do
-    case map_get(normalize_map(signal.extensions), "cause_id") do
-      cause_id when is_binary(cause_id) and cause_id != "" -> [cause_id: cause_id]
-      _ -> []
-    end
+    _signal = signal
+    []
   end
 
   defp signal_extensions(extensions, project_id, correlation_id) do
