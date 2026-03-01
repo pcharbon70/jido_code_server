@@ -132,6 +132,29 @@ defmodule Jido.Code.Server.ConversationModeRegistryConfigTest do
 
     assert get_in(strategy_with_pipeline, [:meta, "pipeline", "step_id"]) ==
              strategy_with_pipeline.step_id
+
+    assert {:ok, cancel_strategy_envelope} =
+             ExecutionEnvelope.from_intent(
+               %{
+                 kind: :cancel_active_strategy,
+                 run_id: "corr-envelope",
+                 step_id: "corr-envelope:strategy:2",
+                 strategy_type: "planning",
+                 mode: "planning",
+                 correlation_id: "corr-envelope",
+                 reason: "conversation_cancelled",
+                 source_signal: source_signal
+               },
+               mode: :planning,
+               mode_state: %{"strategy" => "planning"}
+             )
+
+    assert cancel_strategy_envelope.execution_kind == :cancel_strategy
+    assert cancel_strategy_envelope.run_id == "corr-envelope"
+    assert cancel_strategy_envelope.step_id == "corr-envelope:strategy:2"
+    assert cancel_strategy_envelope.strategy_type == "planning"
+    assert cancel_strategy_envelope.mode == :planning
+    assert get_in(cancel_strategy_envelope, [:args, "reason"]) == "conversation_cancelled"
   end
 
   test "planning mode keeps asset tools exposed and rejects command tools for LLM turns" do

@@ -59,6 +59,25 @@ defmodule Jido.Code.Server.Project.StrategyRunner do
     end
   end
 
+  @spec cancel(map(), map(), keyword()) :: :ok | {:error, term()}
+  def cancel(project_ctx, envelope, opts \\ []) when is_map(project_ctx) and is_map(envelope) do
+    with {:ok, prepared} <- prepare(project_ctx, envelope),
+         runner <- map_get(prepared, :strategy_runner) || @default_runner,
+         :ok <- validate_runner(runner) do
+      emit_strategy_cancel_requested(project_ctx, prepared, runner)
+
+      case cancel_with_runner(runner, project_ctx, prepared, opts) do
+        :ok ->
+          emit_strategy_cancelled(project_ctx, prepared, runner)
+          :ok
+
+        {:error, reason} = error ->
+          emit_strategy_cancel_failed(project_ctx, prepared, runner, reason)
+          error
+      end
+    end
+  end
+
   defp handle_runner_success(project_ctx, envelope, result) when is_map(result) do
     with {:ok, normalized} <- Normalizer.normalize_success(envelope, result) do
       emit_strategy_terminal(project_ctx, envelope, normalized)
@@ -368,6 +387,61 @@ defmodule Jido.Code.Server.Project.StrategyRunner do
 
   defp runner_name(runner) when is_binary(runner), do: runner
   defp runner_name(_runner), do: "unknown"
+
+  defp cancel_with_runner(runner, project_ctx, envelope, opts) when is_atom(runner) do
+    if function_exported?(runner, :cancel, 3) do
+      case runner.cancel(project_ctx, envelope, opts) do
+        :ok -> :ok
+        {:error, _reason} = error -> error
+        _other -> {:error, {:invalid_cancel_response, runner}}
+      end
+    else
+      :ok
+    end
+  end
+
+  defp emit_strategy_cancel_requested(project_ctx, envelope, runner) do
+    Telemetry.emit("conversation.strategy.cancel.requested", %{
+      project_id: map_get(project_ctx, :project_id),
+      conversation_id: map_get(envelope, :conversation_id),
+      run_id: map_get(envelope, :run_id),
+      step_id: map_get(envelope, :step_id),
+      strategy_type: map_get(envelope, :strategy_type),
+      strategy_runner: runner_name(runner),
+      correlation_id: map_get(envelope, :correlation_id),
+      cause_id: map_get(envelope, :cause_id),
+      reason: map_get(envelope, :reason)
+    })
+  end
+
+  defp emit_strategy_cancelled(project_ctx, envelope, runner) do
+    Telemetry.emit("conversation.strategy.cancelled", %{
+      project_id: map_get(project_ctx, :project_id),
+      conversation_id: map_get(envelope, :conversation_id),
+      run_id: map_get(envelope, :run_id),
+      step_id: map_get(envelope, :step_id),
+      strategy_type: map_get(envelope, :strategy_type),
+      strategy_runner: runner_name(runner),
+      correlation_id: map_get(envelope, :correlation_id),
+      cause_id: map_get(envelope, :cause_id),
+      reason: map_get(envelope, :reason),
+      lifecycle_status: "canceled"
+    })
+  end
+
+  defp emit_strategy_cancel_failed(project_ctx, envelope, runner, reason) do
+    Telemetry.emit("conversation.strategy.cancel.failed", %{
+      project_id: map_get(project_ctx, :project_id),
+      conversation_id: map_get(envelope, :conversation_id),
+      run_id: map_get(envelope, :run_id),
+      step_id: map_get(envelope, :step_id),
+      strategy_type: map_get(envelope, :strategy_type),
+      strategy_runner: runner_name(runner),
+      correlation_id: map_get(envelope, :correlation_id),
+      cause_id: map_get(envelope, :cause_id),
+      reason: inspect(reason)
+    })
+  end
 
   defp normalize_map(map) when is_map(map), do: map
   defp normalize_map(_map), do: %{}

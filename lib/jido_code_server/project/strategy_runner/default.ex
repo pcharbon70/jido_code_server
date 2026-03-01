@@ -98,6 +98,9 @@ defmodule Jido.Code.Server.Project.StrategyRunner.Default do
     }
   end
 
+  @impl true
+  def cancel(_project_ctx, _envelope, _opts), do: :ok
+
   defp runner_name do
     __MODULE__
     |> Atom.to_string()

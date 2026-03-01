@@ -146,7 +146,8 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
 
   defp tool_failed_event(call, reason) do
     event_meta = event_meta(call.meta)
-    lifecycle_status = failure_lifecycle_status(reason)
+    failure = ExecutionLifecycle.failure_profile(reason)
+    lifecycle_status = map_get(failure, "lifecycle_status") || "failed"
     execution = execution_from_call(call, lifecycle_status)
 
     %{
@@ -158,6 +159,10 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
         "args" => call.args,
         "meta" => call.meta,
         "reason" => reason,
+        "retryable" => map_get(failure, "retryable") == true,
+        "timeout_category" => map_get(failure, "timeout_category"),
+        "terminal_status" => map_get(failure, "terminal_status"),
+        "failure" => failure,
         "execution" => execution
       }
     }
@@ -224,24 +229,6 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
       |> map_get(:name)
       |> ExecutionLifecycle.execution_kind_for_tool_name()
   end
-
-  defp failure_lifecycle_status(reason) do
-    reason
-    |> normalize_failure_reason()
-    |> case do
-      "conversation_cancelled" -> "canceled"
-      _other -> "failed"
-    end
-  end
-
-  defp normalize_failure_reason(reason) when is_binary(reason), do: String.trim(reason)
-  defp normalize_failure_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
-
-  defp normalize_failure_reason(reason) when is_map(reason) do
-    map_get(normalize_string_map(reason), "reason") || inspect(reason)
-  end
-
-  defp normalize_failure_reason(reason), do: inspect(reason)
 
   defp maybe_put_correlation(meta, correlation_id) when is_binary(correlation_id) do
     case Correlation.fetch(meta) do

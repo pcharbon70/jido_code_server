@@ -47,11 +47,50 @@ defmodule Jido.Code.Server.ConversationInterruptPolicyTest do
     assert cancel_intent
     assert cancel_intent.reason == "operator_cancel"
     assert cancel_intent.source_signal.id == cancel_signal.id
+    assert cancel_intent.cancellation_scope == "pending_queue"
+    assert cancel_intent.cancellation_precedence == 1
+
+    strategy_cancel_intent = Enum.find(intents, &(&1[:kind] == :cancel_active_strategy))
+    assert strategy_cancel_intent
+    assert strategy_cancel_intent.run_id == "run-1"
+    assert strategy_cancel_intent.step_id
+    assert strategy_cancel_intent.cancellation_scope == "active_step"
+    assert strategy_cancel_intent.cancellation_precedence == 3
 
     closed_signal = emitted_signal(intents, "conversation.run.closed")
     assert closed_signal.data["reason"] == "operator_cancel"
     assert closed_signal.data["interruption_kind"] == "tool"
     assert closed_signal.extensions["cause_id"] == cancel_signal.id
+  end
+
+  test "cancel strategy intent has highest precedence when no pending queue work exists" do
+    state =
+      State.new(
+        project_id: "interrupt-p1b",
+        conversation_id: "interrupt-c1b",
+        orchestration_enabled: true
+      )
+
+    {state, _intents} =
+      Reducer.apply_signal(
+        state,
+        signal("conversation.user.message", %{"content" => "start"}, "run-1b")
+      )
+
+    {state, _intents} =
+      Reducer.apply_signal(state, signal("conversation.llm.requested", %{}, "run-1b"))
+
+    {_state, intents} =
+      Reducer.apply_signal(
+        state,
+        signal("conversation.cancel", %{"reason" => "manual"}, "run-1b")
+      )
+
+    strategy_cancel_intent = Enum.find(intents, &(&1[:kind] == :cancel_active_strategy))
+    assert strategy_cancel_intent
+    assert strategy_cancel_intent.run_id == "run-1b"
+    assert strategy_cancel_intent.cancellation_precedence == 1
+    assert strategy_cancel_intent.cancellation_scope == "active_step"
   end
 
   test "forced mode switch marks strategy interruption and propagates cause links" do

@@ -13,6 +13,7 @@ defmodule Jido.Code.Server.Conversation.ExecutionEnvelope do
           | :workflow_run
           | :subagent_spawn
           | :cancel_tools
+          | :cancel_strategy
           | :cancel_subagents
 
   @spec from_intent(map(), keyword()) :: {:ok, map()} | {:error, term()}
@@ -77,6 +78,32 @@ defmodule Jido.Code.Server.Conversation.ExecutionEnvelope do
        correlation_id: map_get(intent, :correlation_id),
        cause_id: nil,
        pending_subagents: pending
+     }}
+  end
+
+  def from_intent(%{kind: :cancel_active_strategy} = intent, opts) do
+    source_signal = map_get(intent, :source_signal)
+    run_id = map_get(intent, :run_id)
+    mode = map_get(intent, :mode) || Keyword.get(opts, :mode)
+
+    {:ok,
+     %{
+       execution_kind: :cancel_strategy,
+       name: "conversation.cancel_active_strategy",
+       args: %{
+         "run_id" => run_id,
+         "step_id" => map_get(intent, :step_id),
+         "strategy_type" => map_get(intent, :strategy_type),
+         "reason" => map_get(intent, :reason)
+       },
+       mode: normalize_mode(mode),
+       strategy_type: map_get(intent, :strategy_type),
+       meta: build_meta(opts, source_signal),
+       correlation_id: map_get(intent, :correlation_id),
+       cause_id: source_signal_id(source_signal),
+       run_id: run_id,
+       step_id: map_get(intent, :step_id),
+       source_signal: source_signal
      }}
   end
 

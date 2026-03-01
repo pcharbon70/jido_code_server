@@ -80,12 +80,12 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
   end
 
   defp effect_intents_for_signal(
-         _previous_state,
+         %State{} = previous_state,
          %State{} = state,
          %Jido.Signal{type: "conversation.cancel"} = signal,
          lifecycle_intents
        ) do
-    cancel_effect_intents(state, signal) ++ lifecycle_intents
+    cancel_effect_intents(previous_state, state, signal) ++ lifecycle_intents
   end
 
   defp effect_intents_for_signal(
@@ -749,22 +749,66 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
 
   defp tool_call_payload(_data), do: nil
 
-  defp cancel_effect_intents(state, signal) do
+  defp cancel_effect_intents(previous_state, state, signal) do
     correlation_id = ConversationSignal.correlation_id(signal)
     reason = cancel_reason(signal)
-
-    intents = [
-      %{
-        kind: :cancel_pending_tools,
-        pending_tool_calls: state.pending_tool_calls,
-        correlation_id: correlation_id,
-        reason: reason,
-        source_signal: signal
-      }
-    ]
-
     pending_subagents = state.pending_subagents |> Map.values() |> List.wrap()
+    pending_tools = state.pending_tool_calls
+    strategy_cancel_target = strategy_cancel_target(previous_state, state)
 
+    []
+    |> maybe_add_cancel_pending_tools_intent(
+      pending_tools,
+      correlation_id,
+      reason,
+      signal
+    )
+    |> maybe_add_cancel_pending_subagents_intent(
+      pending_subagents,
+      correlation_id,
+      reason,
+      signal
+    )
+    |> maybe_add_cancel_strategy_intent(
+      strategy_cancel_target,
+      pending_tools,
+      pending_subagents,
+      correlation_id,
+      reason,
+      signal
+    )
+  end
+
+  defp maybe_add_cancel_pending_tools_intent(
+         intents,
+         pending_tools,
+         correlation_id,
+         reason,
+         signal
+       )
+       when is_list(intents) and is_list(pending_tools) do
+    intents ++
+      [
+        %{
+          kind: :cancel_pending_tools,
+          pending_tool_calls: pending_tools,
+          correlation_id: correlation_id,
+          reason: reason,
+          source_signal: signal,
+          cancellation_scope: "pending_queue",
+          cancellation_precedence: 1
+        }
+      ]
+  end
+
+  defp maybe_add_cancel_pending_subagents_intent(
+         intents,
+         pending_subagents,
+         correlation_id,
+         reason,
+         signal
+       )
+       when is_list(intents) and is_list(pending_subagents) do
     if pending_subagents == [] do
       intents
     else
@@ -775,9 +819,73 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
             pending_subagents: pending_subagents,
             correlation_id: correlation_id,
             reason: reason,
-            source_signal: signal
+            source_signal: signal,
+            cancellation_scope: "pending_queue",
+            cancellation_precedence: 2
           }
         ]
+    end
+  end
+
+  defp maybe_add_cancel_strategy_intent(
+         intents,
+         nil,
+         _pending_tools,
+         _pending_subagents,
+         _correlation_id,
+         _reason,
+         _signal
+       ),
+       do: intents
+
+  defp maybe_add_cancel_strategy_intent(
+         intents,
+         strategy_cancel_target,
+         pending_tools,
+         pending_subagents,
+         correlation_id,
+         reason,
+         signal
+       )
+       when is_list(intents) and is_map(strategy_cancel_target) do
+    precedence =
+      if pending_tools == [] and pending_subagents == [] do
+        1
+      else
+        3
+      end
+
+    intents ++
+      [
+        %{
+          kind: :cancel_active_strategy,
+          run_id: map_get(strategy_cancel_target, "run_id"),
+          step_id: map_get(strategy_cancel_target, "step_id"),
+          strategy_type: map_get(strategy_cancel_target, "strategy_type"),
+          mode: map_get(strategy_cancel_target, "mode"),
+          correlation_id: correlation_id,
+          reason: reason,
+          source_signal: signal,
+          cancellation_scope: "active_step",
+          cancellation_precedence: precedence
+        }
+      ]
+  end
+
+  defp strategy_cancel_target(%State{} = previous_state, %State{} = state) do
+    active_run = previous_state.active_run || state.active_run || %{}
+    run_id = map_get(active_run, "run_id")
+
+    if is_binary(run_id) and String.trim(run_id) != "" do
+      %{
+        "run_id" => run_id,
+        "step_id" => map_get(active_run, "current_step_id"),
+        "strategy_type" =>
+          map_get(previous_state.mode_state, "strategy") || map_get(state.mode_state, "strategy"),
+        "mode" => Atom.to_string(previous_state.mode || state.mode)
+      }
+    else
+      nil
     end
   end
 
@@ -836,7 +944,7 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
 
         additional_intents =
           if force? and previous_state.active_run != nil do
-            cancel_effect_intents(state, signal)
+            cancel_effect_intents(previous_state, state, signal)
           else
             []
           end
