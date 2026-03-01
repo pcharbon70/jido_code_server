@@ -1,4 +1,4 @@
-defmodule Jido.Code.Server.Project.ToolRunner do
+defmodule Jido.Code.Server.Project.ExecutionRunner do
   @moduledoc """
   Unified, policy-gated tool execution path for project runtime.
   """

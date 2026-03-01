@@ -11,7 +11,7 @@ The runtime previously used a custom event-loop conversation server. We need a s
 
 1. Use `Jido.AgentServer` as the only conversation execution runtime.
 2. Use `Jido.Signal` as canonical conversation input/output.
-3. Keep the single tool execution path: `Project.Policy` followed by `Project.ToolRunner`.
+3. Keep the single tool execution path: `Project.Policy` followed by `Project.ExecutionRunner`.
 4. Enable sub-agent spawning only through policy-gated templates exposed as tools.
 
 ## Consequences

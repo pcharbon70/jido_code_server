@@ -17,7 +17,7 @@ Elixir runtime for project-scoped coding assistance built on the Jido ecosystem.
 
 - Agent-first conversation runtime (`Jido.Code.Server.Conversation.Agent`)
 - Signal-first conversation contract (`Jido.Signal`)
-- Single execution core for tools (`Project.ToolRunner` + `Project.Policy`)
+- Single execution core for tools (`Project.ExecutionRunner` + `Project.Policy`)
 - Template-gated sub-agent spawning (`agent.spawn.<template_id>`)
 - Canonical conversation journaling through `jido_conversation`
 

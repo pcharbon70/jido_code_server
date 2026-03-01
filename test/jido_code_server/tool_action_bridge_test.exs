@@ -88,7 +88,7 @@ defmodule Jido.Code.Server.ToolActionBridgeTest do
     assert Enum.any?(result.result.items, &(&1.name == "example_skill"))
   end
 
-  test "execute_from_action keeps ToolRunner policy enforcement" do
+  test "execute_from_action keeps ExecutionRunner policy enforcement" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
 

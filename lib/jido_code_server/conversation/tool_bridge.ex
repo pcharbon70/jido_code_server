@@ -4,7 +4,7 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
   """
 
   alias Jido.Code.Server.Correlation
-  alias Jido.Code.Server.Project.ToolRunner
+  alias Jido.Code.Server.Project.ExecutionRunner
   alias Jido.Code.Server.Types.ToolCall
 
   @task_table __MODULE__.PendingTasks
@@ -59,7 +59,7 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
 
     list_pending_tasks(project_id, conversation_id)
     |> Enum.each(fn {task_pid, call} ->
-      _ = ToolRunner.cancel_task(project_ctx, task_pid, call)
+      _ = ExecutionRunner.cancel_task(project_ctx, task_pid, call)
 
       delete_pending_task(project_id, conversation_id, task_pid)
     end)
@@ -89,7 +89,7 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
   end
 
   defp run_tool_request_sync(project_ctx, call_with_meta) do
-    case ToolRunner.run(project_ctx, call_with_meta) do
+    case ExecutionRunner.run(project_ctx, call_with_meta) do
       {:ok, result} ->
         {:ok, [tool_completed_event(call_with_meta, result)]}
 
@@ -101,7 +101,7 @@ defmodule Jido.Code.Server.Conversation.ToolBridge do
   defp run_tool_request_async(project_ctx, conversation_id, call_with_meta) do
     notify = Map.get(project_ctx, :conversation_server)
 
-    case ToolRunner.run_async(project_ctx, call_with_meta, notify: notify) do
+    case ExecutionRunner.run_async(project_ctx, call_with_meta, notify: notify) do
       {:ok, task_pid} ->
         track_pending_task(
           project_id_from_ctx(project_ctx),

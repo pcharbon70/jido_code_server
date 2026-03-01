@@ -18,13 +18,13 @@ defmodule Jido.Code.Server.Project.Server do
   alias Jido.Code.Server.Project.AssetStore
   alias Jido.Code.Server.Project.ConversationRegistry
   alias Jido.Code.Server.Project.ConversationSupervisor
+  alias Jido.Code.Server.Project.ExecutionRunner
   alias Jido.Code.Server.Project.Layout
   alias Jido.Code.Server.Project.Naming
   alias Jido.Code.Server.Project.Policy
   alias Jido.Code.Server.Project.SubAgentManager
   alias Jido.Code.Server.Project.SubAgentTemplate
   alias Jido.Code.Server.Project.ToolCatalog
-  alias Jido.Code.Server.Project.ToolRunner
   alias Jido.Code.Server.Telemetry
 
   @type conversation_id :: String.t()
@@ -449,7 +449,7 @@ defmodule Jido.Code.Server.Project.Server do
     reply =
       state
       |> project_ctx()
-      |> ToolRunner.run(tool_call)
+      |> ExecutionRunner.run(tool_call)
 
     {:reply, reply, state}
   end

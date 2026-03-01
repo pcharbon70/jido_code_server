@@ -1,17 +1,17 @@
 defmodule Jido.Code.Server.Project.ToolActionBridge do
   @moduledoc """
-  Bridges project-scoped ToolRunner tools into Jido action modules.
+  Bridges project-scoped ExecutionRunner tools into Jido action modules.
 
   This lets Jido.AI tool-calling actions execute project tools while preserving the
-  existing `Jido.Code.Server.Project.ToolRunner` policy and sandbox controls.
+  existing `Jido.Code.Server.Project.ExecutionRunner` policy and sandbox controls.
   """
 
   alias Jido.Code.Server, as: Runtime
-  alias Jido.Code.Server.Project.ToolRunner
+  alias Jido.Code.Server.Project.ExecutionRunner
   alias Jido.Code.Server.Telemetry
 
   @generated_root Jido.Code.Server.Project.ToolActions.Generated
-  @bridge_tags ["tool", "jido_code_server", "tool_runner_bridge"]
+  @bridge_tags ["tool", "jido_code_server", "execution_runner_bridge"]
 
   @type tool_name :: String.t()
   @type action_name :: String.t()
@@ -68,7 +68,7 @@ defmodule Jido.Code.Server.Project.ToolActionBridge do
   Executes a tool call from a generated action module.
 
   Supports either:
-  - `%{project_ctx: %{...}}` in context for direct ToolRunner execution
+  - `%{project_ctx: %{...}}` in context for direct ExecutionRunner execution
   - `%{project_id: "..."}`
   """
   @spec execute_from_action(tool_name(), map(), map()) :: {:ok, map()} | {:error, term()}
@@ -82,7 +82,7 @@ defmodule Jido.Code.Server.Project.ToolActionBridge do
 
     case project_target_from_context(context) do
       {:project_ctx, project_ctx} ->
-        ToolRunner.run(project_ctx, call)
+        ExecutionRunner.run(project_ctx, call)
 
       {:project_id, project_id} ->
         Runtime.run_tool(project_id, call)

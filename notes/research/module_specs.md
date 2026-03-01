@@ -2,7 +2,7 @@
 
 This document specifies a **module-by-module architecture** for the Jido.Code.Server runtime, aligned to:
 
-- **Project = container** (supervision boundary, shared assets, sandbox policy, tool runner)
+- **Project = container** (supervision boundary, shared assets, sandbox policy, execution runner)
 - **Conversation = `JidoConversation` runtime instance** (event ingestion + projections)
 - **Protocols/UIs = adapters** (translate external messages into conversation events and/or tool invocations)
 
@@ -324,7 +324,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, Ji
 
 ---
 
-## `Jido.Code.Server.Project.ToolRunner`
+## `Jido.Code.Server.Project.ExecutionRunner`
 **Summary:** Single execution pathway for all tool calls in a project.
 
 **Responsibilities**
@@ -439,7 +439,7 @@ Supervisor.start_link(children, strategy: :one_for_one, name: via(project_id, Ji
 
 **Responsibilities**
 - When `tool.requested` event is emitted:
-  - call `Project.ToolRunner.run/2` (sync) or async variant
+  - call `Project.ExecutionRunner.run/2` (sync) or async variant
   - emit `tool.completed` or `tool.failed` back into the conversation
 
 **Contract**
@@ -458,7 +458,7 @@ Implementation choices:
 
 **Responsibilities**
 - `tools/list` -> call `Project.Server.list_tools/0`
-- `tools/call` -> call `Project.ToolRunner.run/2` (policy enforced)
+- `tools/call` -> call `Project.ExecutionRunner.run/2` (policy enforced)
 - optional “chat” mapping -> inject `user.message` events into conversations
 
 **Inbound mapping**

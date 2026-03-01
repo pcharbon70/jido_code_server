@@ -5,15 +5,15 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
 
   alias Jido.Code.Server.Engine.ProjectRegistry
   alias Jido.Code.Server.Project.AssetStore
+  alias Jido.Code.Server.Project.ExecutionRunner
   alias Jido.Code.Server.Project.Layout
   alias Jido.Code.Server.Project.Policy
-  alias Jido.Code.Server.Project.ToolRunner
   alias Jido.Code.Server.Telemetry
   alias Jido.Code.Server.TestSupport.RuntimeSignal
   alias Jido.Code.Server.TestSupport.TempProject
 
   @pending_task_table Module.concat(Jido.Code.Server.Conversation.ToolBridge, PendingTasks)
-  @child_process_table Module.concat(Jido.Code.Server.Project.ToolRunner, ChildProcesses)
+  @child_process_table Module.concat(Jido.Code.Server.Project.ExecutionRunner, ChildProcesses)
 
   defmodule ArtifactProbeExecutor do
     @behaviour JidoCommand.Extensibility.CommandRuntime
@@ -37,7 +37,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     :ok
   end
 
-  test "tool runner rejects payloads that fail input schema validation" do
+  test "execution runner rejects payloads that fail input schema validation" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
 
@@ -52,7 +52,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert {:invalid_tool_args, {:missing_required_args, ["query"]}} = reason
   end
 
-  test "tool runner enforces output size caps" do
+  test "execution runner enforces output size caps" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
 
@@ -63,7 +63,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
       )
 
     assert {:error, %{status: :error, reason: {:output_too_large, _size, 64}}} =
-             ToolRunner.run(project_ctx, %{name: "asset.list", args: %{"type" => "skill"}})
+             ExecutionRunner.run(project_ctx, %{name: "asset.list", args: %{"type" => "skill"}})
   end
 
   test "policy decisions are audited and emitted in telemetry" do
@@ -962,7 +962,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
       :ok
     end)
 
-    :ok = ToolRunner.register_child_process(pending_task_pid, child_pid)
+    :ok = ExecutionRunner.register_child_process(pending_task_pid, child_pid)
 
     assert :ok =
              RuntimeSignal.send_signal(
@@ -1083,7 +1083,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
 
     run_task =
       Task.async(fn ->
-        ToolRunner.run(project_ctx, %{
+        ExecutionRunner.run(project_ctx, %{
           name: "command.run.example_command",
           args: %{"path" => ".jido/commands/example_command.md"}
         })
@@ -1103,7 +1103,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert event_count(diagnostics, "conversation.tool.child_processes_terminated") >= 1
   end
 
-  test "tool runner prunes dead child registrations after successful execution" do
+  test "execution runner prunes dead child registrations after successful execution" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
 
@@ -1115,7 +1115,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
 
     run_task =
       Task.async(fn ->
-        ToolRunner.run(project_ctx, %{
+        ExecutionRunner.run(project_ctx, %{
           name: "command.run.example_command",
           args: %{
             "path" => ".jido/commands/example_command.md",
@@ -1131,7 +1131,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     stale_child = spawn(fn -> Process.sleep(:infinity) end)
     on_exit(fn -> if Process.alive?(stale_child), do: Process.exit(stale_child, :kill) end)
 
-    assert :ok = ToolRunner.register_child_process(run_task.pid, stale_child)
+    assert :ok = ExecutionRunner.register_child_process(run_task.pid, stale_child)
     Process.exit(stale_child, :kill)
 
     assert_eventually(fn ->
@@ -1262,7 +1262,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert diagnostics.policy.sensitive_path_allowlist == [".env"]
   end
 
-  test "tool runner flags sensitive artifacts in result payloads and emits security signal" do
+  test "execution runner flags sensitive artifacts in result payloads and emits security signal" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
 
@@ -1733,10 +1733,10 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
       )
 
     assert {:error, %{status: :error, reason: :timeout}} =
-             ToolRunner.run(project_ctx, %{name: "asset.list", args: %{"type" => "skill"}})
+             ExecutionRunner.run(project_ctx, %{name: "asset.list", args: %{"type" => "skill"}})
 
     assert {:error, %{status: :error, reason: :timeout}} =
-             ToolRunner.run(project_ctx, %{name: "asset.list", args: %{"type" => "skill"}})
+             ExecutionRunner.run(project_ctx, %{name: "asset.list", args: %{"type" => "skill"}})
 
     diagnostics = %{telemetry: Telemetry.snapshot("phase9-timeout")}
     assert event_count(diagnostics, "conversation.tool.timeout") >= 2
@@ -1760,10 +1760,10 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
       :ok
     end)
 
-    :ok = ToolRunner.register_child_process(self(), child_pid)
+    :ok = ExecutionRunner.register_child_process(self(), child_pid)
 
     assert {:error, %{status: :error, reason: :timeout}} =
-             ToolRunner.run(project_ctx, %{name: "asset.list", args: %{"type" => "skill"}})
+             ExecutionRunner.run(project_ctx, %{name: "asset.list", args: %{"type" => "skill"}})
 
     assert_eventually(fn -> not Process.alive?(child_pid) end)
 
@@ -1809,7 +1809,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
       )
 
     assert {:error, %{status: :error, reason: {:artifact_too_large, _index, _size, 64}}} =
-             ToolRunner.run(project_ctx, %{
+             ExecutionRunner.run(project_ctx, %{
                name: "command.run.example_command",
                args: %{
                  "path" => ".jido/commands/example_command.md",
@@ -1831,7 +1831,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
 
     first_call =
       Task.async(fn ->
-        ToolRunner.run(project_ctx, %{
+        ExecutionRunner.run(project_ctx, %{
           name: "command.run.example_command",
           args: %{
             "path" => ".jido/commands/example_command.md",
@@ -1846,7 +1846,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     end)
 
     assert {:error, %{status: :error, reason: :max_concurrency_reached}} =
-             ToolRunner.run(project_ctx, %{
+             ExecutionRunner.run(project_ctx, %{
                name: "asset.list",
                args: %{"type" => "skill"}
              })

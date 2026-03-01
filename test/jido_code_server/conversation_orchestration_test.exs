@@ -47,7 +47,7 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
            ]
   end
 
-  test "tool requests flow through tool runner and continue conversation after completion" do
+  test "tool requests flow through execution runner and continue conversation after completion" do
     root = TempProject.create!(with_seed_files: true)
     on_exit(fn -> TempProject.cleanup(root) end)
 

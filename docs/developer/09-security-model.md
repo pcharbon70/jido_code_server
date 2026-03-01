@@ -37,7 +37,7 @@ Security is enforced as layered controls:
 
 - env payloads for command/workflow tools require explicit allowed keys (`tool_env_allowlist`)
 
-## Execution Layer (`Project.ToolRunner`)
+## Execution Layer (`Project.ExecutionRunner`)
 
 - timeout control per call
 - output and artifact byte caps

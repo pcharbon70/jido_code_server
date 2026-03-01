@@ -77,11 +77,11 @@ flowchart LR
 - `Project.Server`: project control plane, conversation routing, diagnostics assembly.
 - `Conversation.Agent`: state machine for one conversation.
 - `Policy`: authorization and sandbox checks.
-- `ToolRunner`: execution and guardrails.
+- `ExecutionRunner`: execution and guardrails.
 - `SubAgentManager`: child-agent lifecycle.
 - `Telemetry`: event stream, counters, redaction, and incident support.
 - `Conversation.JournalBridge`: canonical journaling bridge into `jido_conversation`.
 
 ## Security Aside
 
-The architecture enforces policy close to execution, not just at API ingress. `ToolRunner` always calls `Policy.authorize_tool/6` before executing a tool, including tool calls initiated from conversation orchestration and Jido.AI tool-calling bridges.
+The architecture enforces policy close to execution, not just at API ingress. `ExecutionRunner` always calls `Policy.authorize_tool/6` before executing a tool, including tool calls initiated from conversation orchestration and Jido.AI tool-calling bridges.

@@ -6,7 +6,7 @@ This document locks the implementation direction for the signal-first conversati
 
 1. Conversation execution runtime is `Jido.AgentServer` only.
 2. Canonical conversation envelope is `Jido.Signal`.
-3. Tool execution remains centralized through `Project.Policy -> Project.ToolRunner`.
+3. Tool execution remains centralized through `Project.Policy -> Project.ExecutionRunner`.
 4. Sub-agent spawning is template-gated (`agent.spawn.<template_id>`), not free-form.
 5. Runtime APIs are agent-first (`conversation_call`, `conversation_cast`, `conversation_state`, `conversation_projection`).
 
