@@ -33,6 +33,28 @@ defmodule Jido.Code.Server.Conversation.ExecutionLifecycle do
     "running" => "progress"
   }
 
+  @retryable_failure_reasons MapSet.new([
+                               "temporary_failure",
+                               "transient_failure",
+                               "transient_error",
+                               "service_unavailable",
+                               "rate_limited"
+                             ])
+  @timeout_failure_reasons MapSet.new([
+                             "timeout",
+                             "execution_timeout",
+                             "tool_timeout",
+                             "strategy_timeout",
+                             "request_timeout"
+                           ])
+  @cancelled_failure_reasons MapSet.new([
+                               "conversation_cancelled",
+                               "cancelled",
+                               "canceled",
+                               "user_cancelled",
+                               "user_canceled"
+                             ])
+
   @spec normalize_status(term()) :: String.t() | nil
   def normalize_status(status) when is_atom(status) do
     status
@@ -94,6 +116,48 @@ defmodule Jido.Code.Server.Conversation.ExecutionLifecycle do
   end
 
   def execution_kind_label(_kind), do: "unknown"
+
+  @spec failure_profile(term()) :: map()
+  def failure_profile(reason) do
+    normalized_reason = normalize_failure_reason(reason)
+    timeout_category = timeout_category(reason, normalized_reason)
+    cancelled? = cancelled_reason?(normalized_reason)
+    retryable = resolve_retryable(reason, normalized_reason, timeout_category, cancelled?)
+    lifecycle_status = lifecycle_status_for(cancelled?)
+    terminal_status = terminal_status_for(lifecycle_status)
+
+    %{
+      "reason" => normalized_reason || "unknown",
+      "lifecycle_status" => lifecycle_status,
+      "terminal_status" => terminal_status,
+      "retryable" => retryable
+    }
+    |> maybe_put("timeout_category", timeout_category)
+  end
+
+  defp resolve_retryable(_reason, _normalized_reason, _timeout_category, true), do: false
+
+  defp resolve_retryable(reason, normalized_reason, timeout_category, false) do
+    case retryable_override(reason) do
+      {:ok, explicit} ->
+        explicit
+
+      :error ->
+        derived_retryable?(reason, normalized_reason, timeout_category)
+    end
+  end
+
+  defp derived_retryable?(reason, normalized_reason, timeout_category) do
+    retryable_reason?(normalized_reason) or
+      timeout_category in ["execution_timeout", "task_timeout"] or
+      match?({:task_exit, _}, reason)
+  end
+
+  defp lifecycle_status_for(true), do: "canceled"
+  defp lifecycle_status_for(false), do: "failed"
+
+  defp terminal_status_for("canceled"), do: "cancelled"
+  defp terminal_status_for(_lifecycle_status), do: "failed"
 
   @spec execution_metadata(map(), map()) :: map()
   def execution_metadata(envelope, overrides \\ %{})
@@ -250,6 +314,87 @@ defmodule Jido.Code.Server.Conversation.ExecutionLifecycle do
 
   defp normalize_mode(_mode), do: nil
 
+  defp normalize_failure_reason(reason) when is_binary(reason) do
+    case String.trim(reason) do
+      "" -> nil
+      value -> String.trim_leading(String.downcase(value), ":")
+    end
+  end
+
+  defp normalize_failure_reason(reason) when is_atom(reason),
+    do: reason |> Atom.to_string() |> normalize_failure_reason()
+
+  defp normalize_failure_reason(reason) when is_map(reason) do
+    payload = normalize_string_key_map(reason)
+
+    cond do
+      is_binary(map_get(payload, "reason")) ->
+        normalize_failure_reason(map_get(payload, "reason"))
+
+      is_atom(map_get(payload, "reason")) ->
+        normalize_failure_reason(map_get(payload, "reason"))
+
+      is_map(map_get(payload, "reason")) ->
+        normalize_failure_reason(map_get(payload, "reason"))
+
+      is_binary(map_get(payload, "message")) ->
+        normalize_failure_reason(map_get(payload, "message"))
+
+      true ->
+        nil
+    end
+  end
+
+  defp normalize_failure_reason({:task_exit, reason}),
+    do: normalize_failure_reason(reason) || "task_exit"
+
+  defp normalize_failure_reason(_reason), do: nil
+
+  defp timeout_category(reason, normalized_reason) do
+    cond do
+      task_timeout_reason?(reason) ->
+        "task_timeout"
+
+      normalized_reason in @timeout_failure_reasons ->
+        "execution_timeout"
+
+      is_map(reason) and is_binary(map_get(normalize_string_key_map(reason), "timeout_category")) ->
+        map_get(normalize_string_key_map(reason), "timeout_category")
+
+      true ->
+        nil
+    end
+  end
+
+  defp task_timeout_reason?({:task_exit, :timeout}), do: true
+  defp task_timeout_reason?({:task_exit, {:timeout, _details}}), do: true
+  defp task_timeout_reason?(_reason), do: false
+
+  defp cancelled_reason?(reason) when is_binary(reason),
+    do: MapSet.member?(@cancelled_failure_reasons, reason)
+
+  defp cancelled_reason?(_reason), do: false
+
+  defp retryable_reason?(reason) when is_binary(reason),
+    do: MapSet.member?(@retryable_failure_reasons, reason)
+
+  defp retryable_reason?(_reason), do: false
+
+  defp retryable_override(reason) when is_map(reason) do
+    payload = normalize_string_key_map(reason)
+
+    case map_get(payload, "retryable") do
+      value when is_boolean(value) ->
+        {:ok, value}
+
+      _other ->
+        nested = map_get(payload, "reason")
+        if is_map(nested), do: retryable_override(nested), else: :error
+    end
+  end
+
+  defp retryable_override(_reason), do: :error
+
   defp normalize_string(nil), do: nil
 
   defp normalize_string(value) when is_binary(value) do
@@ -272,7 +417,13 @@ defmodule Jido.Code.Server.Conversation.ExecutionLifecycle do
   end
 
   defp map_get(map, key) when is_map(map) and is_binary(key) do
-    Map.get(map, key) || Map.get(map, to_existing_atom(key))
+    case Map.fetch(map, key) do
+      {:ok, value} ->
+        value
+
+      :error ->
+        Map.get(map, to_existing_atom(key))
+    end
   end
 
   defp map_get(_map, _key), do: nil

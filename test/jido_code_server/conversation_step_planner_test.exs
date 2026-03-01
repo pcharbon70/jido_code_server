@@ -129,6 +129,11 @@ defmodule Jido.Code.Server.ConversationStepPlannerTest do
 
     assert retry_intent
     assert get_in(retry_intent, [:meta, "pipeline", "reason"]) == "retry"
+    assert get_in(retry_intent, [:meta, "pipeline", "retry_count"]) == 0
+    assert get_in(retry_intent, [:meta, "pipeline", "max_retries"]) == 1
+    assert get_in(retry_intent, [:meta, "pipeline", "retry_attempt"]) == 1
+    assert get_in(retry_intent, [:meta, "pipeline", "retry_backoff_ms"]) == 250
+    assert get_in(retry_intent, [:meta, "pipeline", "retry_policy", "strategy"]) == "exponential"
     assert state.active_run.retry_count == 0
     assert state.active_run.pending_retry == true
 
@@ -150,6 +155,92 @@ defmodule Jido.Code.Server.ConversationStepPlannerTest do
 
     assert state.active_run == nil
     assert [%{status: :failed}] = state.run_history
+  end
+
+  test "retry metadata honors configured retry backoff policy bounds" do
+    state =
+      State.new(
+        project_id: "planner-p3b",
+        conversation_id: "planner-c3b",
+        orchestration_enabled: true,
+        mode_state: %{
+          "max_retries" => 3,
+          "retry_backoff_base_ms" => 100,
+          "retry_backoff_max_ms" => 250
+        }
+      )
+
+    {state, _intents} =
+      Reducer.apply_signal(
+        state,
+        signal("conversation.user.message", %{"content" => "hello"}, "planner-run-3b")
+      )
+
+    {state, _intents} =
+      Reducer.apply_signal(state, signal("conversation.llm.requested", %{}, "planner-run-3b"))
+
+    # first retry
+    {state, intents} =
+      Reducer.apply_signal(
+        state,
+        signal(
+          "conversation.llm.failed",
+          %{"reason" => "timeout", "retryable" => true},
+          "planner-run-3b"
+        )
+      )
+
+    first_retry =
+      Enum.find(intents, fn intent ->
+        intent[:kind] == :run_execution and intent[:execution_kind] == :strategy_run
+      end)
+
+    assert first_retry
+    assert get_in(first_retry, [:meta, "pipeline", "retry_backoff_ms"]) == 100
+
+    {state, _intents} =
+      Reducer.apply_signal(state, signal("conversation.llm.requested", %{}, "planner-run-3b"))
+
+    # second retry
+    {state, intents} =
+      Reducer.apply_signal(
+        state,
+        signal(
+          "conversation.llm.failed",
+          %{"reason" => "timeout", "retryable" => true},
+          "planner-run-3b"
+        )
+      )
+
+    second_retry =
+      Enum.find(intents, fn intent ->
+        intent[:kind] == :run_execution and intent[:execution_kind] == :strategy_run
+      end)
+
+    assert second_retry
+    assert get_in(second_retry, [:meta, "pipeline", "retry_backoff_ms"]) == 200
+
+    {state, _intents} =
+      Reducer.apply_signal(state, signal("conversation.llm.requested", %{}, "planner-run-3b"))
+
+    # third retry should cap at max backoff.
+    {_state, intents} =
+      Reducer.apply_signal(
+        state,
+        signal(
+          "conversation.llm.failed",
+          %{"reason" => "timeout", "retryable" => true},
+          "planner-run-3b"
+        )
+      )
+
+    third_retry =
+      Enum.find(intents, fn intent ->
+        intent[:kind] == :run_execution and intent[:execution_kind] == :strategy_run
+      end)
+
+    assert third_retry
+    assert get_in(third_retry, [:meta, "pipeline", "retry_backoff_ms"]) == 250
   end
 
   test "max turn-step guardrail emits canonical llm.failed signal intent" do

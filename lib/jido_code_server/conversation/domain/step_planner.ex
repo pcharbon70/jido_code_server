@@ -9,6 +9,8 @@ defmodule Jido.Code.Server.Conversation.Domain.StepPlanner do
 
   @default_max_turn_steps 32
   @default_max_retries 1
+  @default_retry_backoff_base_ms 250
+  @default_retry_backoff_max_ms 4_000
 
   @spec plan(State.t(), State.t(), Jido.Signal.t()) :: [map()]
   def plan(%State{} = previous_state, %State{} = state, %Jido.Signal{} = signal) do
@@ -118,6 +120,11 @@ defmodule Jido.Code.Server.Conversation.Domain.StepPlanner do
     active_run = state.active_run || %{}
     run_id = map_get(active_run, "run_id")
     next_step_index = current_step_count(active_run) + 1
+    retry_count = current_retry_count(active_run)
+    max_retries = max_retries(active_run)
+    retry_attempt = retry_attempt(reason, retry_count)
+    retry_backoff_ms = retry_backoff_ms(reason, retry_attempt, active_run, state.mode_state)
+    retry_policy = retry_policy(active_run, state.mode_state)
 
     %{
       kind: :run_execution,
@@ -132,7 +139,11 @@ defmodule Jido.Code.Server.Conversation.Domain.StepPlanner do
             predecessor_step_id:
               map_get(active_run, "current_step_id") ||
                 map_get(active_run, "last_completed_step_id"),
-            retry_count: current_retry_count(active_run)
+            retry_count: retry_count,
+            max_retries: max_retries,
+            retry_attempt: retry_attempt,
+            retry_backoff_ms: retry_backoff_ms,
+            retry_policy: retry_policy
           )
       }
     }
@@ -227,6 +238,64 @@ defmodule Jido.Code.Server.Conversation.Domain.StepPlanner do
   end
 
   defp max_turn_steps(_active_run, _mode_state), do: @default_max_turn_steps
+
+  defp retry_attempt("retry", retry_count), do: retry_count + 1
+  defp retry_attempt(_reason, retry_count), do: retry_count
+
+  defp retry_backoff_ms("retry", retry_attempt, active_run, mode_state)
+       when is_integer(retry_attempt) and retry_attempt > 0 do
+    base_ms = retry_backoff_base_ms(active_run, mode_state)
+    max_ms = retry_backoff_max_ms(active_run, mode_state)
+    exponent = max(retry_attempt - 1, 0)
+    unbounded = trunc(base_ms * :math.pow(2, exponent))
+    min(unbounded, max_ms)
+  end
+
+  defp retry_backoff_ms(_reason, _retry_attempt, _active_run, _mode_state), do: 0
+
+  defp retry_policy(active_run, mode_state) do
+    %{
+      "strategy" => "exponential",
+      "base_ms" => retry_backoff_base_ms(active_run, mode_state),
+      "max_ms" => retry_backoff_max_ms(active_run, mode_state)
+    }
+  end
+
+  defp retry_backoff_base_ms(active_run, mode_state)
+       when is_map(active_run) and is_map(mode_state) do
+    from_run =
+      active_run
+      |> map_get("retry_backoff_base_ms")
+      |> normalize_non_neg_integer(nil)
+
+    from_mode_state =
+      mode_state
+      |> map_get("retry_backoff_base_ms")
+      |> normalize_non_neg_integer(nil)
+
+    (from_run || from_mode_state || @default_retry_backoff_base_ms)
+    |> max(1)
+  end
+
+  defp retry_backoff_base_ms(_active_run, _mode_state), do: @default_retry_backoff_base_ms
+
+  defp retry_backoff_max_ms(active_run, mode_state)
+       when is_map(active_run) and is_map(mode_state) do
+    from_run =
+      active_run
+      |> map_get("retry_backoff_max_ms")
+      |> normalize_non_neg_integer(nil)
+
+    from_mode_state =
+      mode_state
+      |> map_get("retry_backoff_max_ms")
+      |> normalize_non_neg_integer(nil)
+
+    resolved = from_run || from_mode_state || @default_retry_backoff_max_ms
+    max(resolved, retry_backoff_base_ms(active_run, mode_state))
+  end
+
+  defp retry_backoff_max_ms(_active_run, _mode_state), do: @default_retry_backoff_max_ms
 
   defp normalize_non_neg_integer(value, _default) when is_integer(value) and value >= 0, do: value
 

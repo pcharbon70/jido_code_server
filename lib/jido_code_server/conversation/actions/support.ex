@@ -6,6 +6,7 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
   alias Jido.Code.Server.Conversation.Domain.Reducer
   alias Jido.Code.Server.Conversation.Domain.State
   alias Jido.Code.Server.Conversation.ExecutionEnvelope
+  alias Jido.Code.Server.Conversation.Instructions.CancelActiveStrategyInstruction
   alias Jido.Code.Server.Conversation.Instructions.CancelPendingToolsInstruction
   alias Jido.Code.Server.Conversation.Instructions.CancelSubagentsInstruction
   alias Jido.Code.Server.Conversation.Instructions.RunExecutionInstruction
@@ -187,6 +188,29 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
     ]
   end
 
+  defp envelope_to_directive(%{execution_kind: :cancel_strategy} = envelope, domain, state_map) do
+    params = %{
+      "run_id" => map_get(envelope, :run_id),
+      "step_id" => map_get(envelope, :step_id),
+      "strategy_type" => map_get(envelope, :strategy_type),
+      "mode" => map_get(envelope, :mode) |> to_mode_label(),
+      "mode_state" => domain.mode_state,
+      "reason" => map_get(envelope, :args) |> map_get("reason"),
+      "correlation_id" => map_get(envelope, :correlation_id),
+      "cause_id" => map_get(envelope, :cause_id)
+    }
+
+    [
+      run_instruction(
+        CancelActiveStrategyInstruction,
+        params,
+        state_map,
+        "cancel_active_strategy",
+        %{"execution_kind" => "cancel_strategy"}
+      )
+    ]
+  end
+
   defp envelope_to_directive(_envelope, _domain, _state_map), do: []
 
   defp ingest_signal(%Jido.Signal{} = signal, state_map) do
@@ -292,4 +316,8 @@ defmodule Jido.Code.Server.Conversation.Actions.Support do
   rescue
     ArgumentError -> nil
   end
+
+  defp to_mode_label(mode) when is_atom(mode), do: Atom.to_string(mode)
+  defp to_mode_label(mode) when is_binary(mode), do: mode
+  defp to_mode_label(_mode), do: "coding"
 end

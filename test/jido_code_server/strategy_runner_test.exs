@@ -76,6 +76,31 @@ defmodule Jido.Code.Server.StrategyRunnerTest.FailingRunner do
   end
 end
 
+defmodule Jido.Code.Server.StrategyRunnerTest.CancellableRunner do
+  @behaviour Jido.Code.Server.Project.StrategyRunner
+
+  @impl true
+  def start(_project_ctx, _envelope, _opts) do
+    {:ok, %{"signals" => [], "result_meta" => %{}, "execution_ref" => "noop"}}
+  end
+
+  @impl true
+  def cancel(_project_ctx, envelope, _opts) do
+    send(self(), {:strategy_cancelled, envelope.run_id, envelope.step_id, envelope.strategy_type})
+    :ok
+  end
+
+  @impl true
+  def capabilities do
+    %{
+      streaming?: false,
+      tool_calling?: true,
+      cancellable?: true,
+      supported_strategies: [:planning]
+    }
+  end
+end
+
 defmodule Jido.Code.Server.StrategyRunnerTest do
   use ExUnit.Case, async: true
 
@@ -255,5 +280,36 @@ defmodule Jido.Code.Server.StrategyRunnerTest do
     assert Map.get(snapshot.event_counts, "conversation.strategy.started", 0) >= 1
     assert Map.get(snapshot.event_counts, "conversation.strategy.failed", 0) >= 1
     assert Map.get(snapshot.event_counts, "conversation.strategy.retryable", 0) >= 1
+  end
+
+  test "cancel delegates to strategy runner cancel callback and emits cancellation telemetry" do
+    project_id = "strategy-runner-cancel-#{System.unique_integer([:positive])}"
+
+    project_ctx = %{
+      project_id: project_id,
+      strategy_runner_registry: %{
+        "planning" => Jido.Code.Server.StrategyRunnerTest.CancellableRunner
+      }
+    }
+
+    envelope = %{
+      conversation_id: "c-cancel",
+      mode: :planning,
+      mode_state: %{},
+      strategy_type: "planning",
+      strategy_opts: %{},
+      run_id: "run-cancel-1",
+      step_id: "run-cancel-1:strategy:2",
+      correlation_id: "corr-cancel-1",
+      cause_id: "cause-cancel-1",
+      reason: "conversation_cancelled"
+    }
+
+    assert :ok = StrategyRunner.cancel(project_ctx, envelope)
+    assert_receive {:strategy_cancelled, "run-cancel-1", "run-cancel-1:strategy:2", "planning"}
+
+    snapshot = Telemetry.snapshot(project_id)
+    assert Map.get(snapshot.event_counts, "conversation.strategy.cancel.requested", 0) >= 1
+    assert Map.get(snapshot.event_counts, "conversation.strategy.cancelled", 0) >= 1
   end
 end

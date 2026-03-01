@@ -304,9 +304,17 @@ defmodule Jido.Code.Server.Project.StrategyRunner.Normalizer do
   defp enrich_terminal_data(data, "conversation.llm.failed", payload, envelope) do
     reason = failure_reason(payload, :error) || "strategy_failed"
 
+    failure =
+      ExecutionLifecycle.failure_profile(%{
+        "reason" => reason,
+        "retryable" => retryable_error?(payload)
+      })
+
     data
     |> Map.put_new("reason", reason)
-    |> Map.put_new("retryable", retryable_error?(payload))
+    |> Map.put_new("retryable", map_get(failure, "retryable") == true)
+    |> Map.put_new("timeout_category", map_get(failure, "timeout_category"))
+    |> Map.put_new("terminal_status", map_get(failure, "terminal_status"))
     |> Map.put_new("strategy_type", map_get(envelope, :strategy_type))
     |> Map.put_new("strategy_runner", runner_name(map_get(envelope, :strategy_runner)))
   end
