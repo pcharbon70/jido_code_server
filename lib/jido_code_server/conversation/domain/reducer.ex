@@ -3,6 +3,7 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
   Pure conversation domain reducer with deterministic queue semantics.
   """
 
+  alias Jido.Code.Server.Conversation.Domain.ModeRun
   alias Jido.Code.Server.Conversation.Domain.Projections
   alias Jido.Code.Server.Conversation.Domain.State
   alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
@@ -48,6 +49,7 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
       |> update_status(signal)
       |> put_correlation_index(signal)
       |> update_pending_sets(signal)
+      |> update_mode_runtime(signal)
       |> increment_drain_iteration()
 
     intents = derive_effect_intents(next_state, signal)
@@ -108,6 +110,195 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
       _other ->
         state
     end
+  end
+
+  @spec update_mode_runtime(State.t(), Jido.Signal.t()) :: State.t()
+  def update_mode_runtime(%State{} = state, %Jido.Signal{} = signal) do
+    state
+    |> maybe_start_mode_run(signal)
+    |> maybe_touch_active_run(signal)
+    |> update_pending_steps(signal)
+    |> maybe_finalize_mode_run(signal)
+    |> sync_active_run_step_count()
+  end
+
+  defp maybe_start_mode_run(
+         %State{active_run: nil} = state,
+         %Jido.Signal{
+           type: "conversation.user.message"
+         } = signal
+       ) do
+    %{state | active_run: new_mode_run(state, signal), pending_steps: []}
+  end
+
+  defp maybe_start_mode_run(state, _signal), do: state
+
+  defp maybe_touch_active_run(%State{active_run: nil} = state, _signal), do: state
+
+  defp maybe_touch_active_run(%State{} = state, %Jido.Signal{} = signal) do
+    active_run =
+      state.active_run
+      |> Map.put(:last_signal_id, signal.id)
+      |> Map.put(:last_signal_type, signal.type)
+      |> Map.put(:updated_at, signal.time)
+
+    %{state | active_run: active_run}
+  end
+
+  defp update_pending_steps(
+         %State{} = state,
+         %Jido.Signal{type: "conversation.tool.requested"} = signal
+       ) do
+    case {state.active_run, extract_tool_call(signal)} do
+      {%{} = active_run, {:ok, tool_call}} ->
+        step = pending_step(active_run, tool_call, signal)
+
+        pending_steps =
+          if Enum.any?(state.pending_steps, &(&1.step_id == step.step_id)) do
+            state.pending_steps
+          else
+            state.pending_steps ++ [step]
+          end
+
+        %{state | pending_steps: pending_steps}
+
+      _other ->
+        state
+    end
+  end
+
+  defp update_pending_steps(
+         %State{} = state,
+         %Jido.Signal{type: type} = signal
+       )
+       when type in [
+              "conversation.tool.completed",
+              "conversation.tool.failed",
+              "conversation.tool.cancelled"
+            ] do
+    step_name = extract_tool_name(signal)
+    correlation_id = ConversationSignal.correlation_id(signal)
+
+    if is_binary(step_name) do
+      pending_steps =
+        Enum.reject(state.pending_steps, fn step ->
+          same_name? = step.name == step_name
+          same_correlation? = is_nil(correlation_id) or step.correlation_id == correlation_id
+          same_name? and same_correlation?
+        end)
+
+      %{state | pending_steps: pending_steps}
+    else
+      state
+    end
+  end
+
+  defp update_pending_steps(%State{} = state, %Jido.Signal{type: "conversation.cancel"}) do
+    %{state | pending_steps: []}
+  end
+
+  defp update_pending_steps(state, _signal), do: state
+
+  defp maybe_finalize_mode_run(
+         %State{} = state,
+         %Jido.Signal{type: "conversation.cancel"} = signal
+       ) do
+    close_active_run(state, :cancelled, signal, "conversation_cancelled")
+  end
+
+  defp maybe_finalize_mode_run(
+         %State{} = state,
+         %Jido.Signal{type: "conversation.llm.failed"} = signal
+       ) do
+    close_active_run(state, :failed, signal, nil)
+  end
+
+  defp maybe_finalize_mode_run(
+         %State{} = state,
+         %Jido.Signal{
+           type: "conversation.llm.completed"
+         } = signal
+       ) do
+    if state.pending_tool_calls == [] and state.pending_steps == [] do
+      close_active_run(state, :completed, signal, nil)
+    else
+      state
+    end
+  end
+
+  defp maybe_finalize_mode_run(state, _signal), do: state
+
+  defp sync_active_run_step_count(%State{active_run: nil} = state), do: state
+
+  defp sync_active_run_step_count(%State{} = state) do
+    %{state | active_run: Map.put(state.active_run, :step_count, length(state.pending_steps))}
+  end
+
+  defp close_active_run(%State{active_run: nil} = state, _status, _signal, _reason), do: state
+
+  defp close_active_run(%State{} = state, status, %Jido.Signal{} = signal, reason) do
+    active_run = state.active_run
+
+    if ModeRun.valid_transition?(active_run.status, status) do
+      completed_run =
+        active_run
+        |> Map.put(:status, status)
+        |> Map.put(:updated_at, signal.time)
+        |> Map.put(:ended_at, signal.time)
+        |> maybe_put(:reason, reason)
+        |> Map.put(:step_count, length(state.pending_steps))
+
+      %{
+        state
+        | active_run: nil,
+          run_history: append_run_history(state, completed_run),
+          pending_steps: []
+      }
+    else
+      state
+    end
+  end
+
+  defp append_run_history(%State{} = state, run_snapshot) when is_map(run_snapshot) do
+    [run_snapshot | state.run_history]
+    |> Enum.take(state.max_run_history)
+  end
+
+  defp new_mode_run(%State{} = state, %Jido.Signal{} = signal) do
+    run_id = ConversationSignal.correlation_id(signal) || signal.id
+
+    %{
+      run_id: run_id,
+      mode: state.mode,
+      status: :running,
+      started_at: signal.time,
+      updated_at: signal.time,
+      source_signal_id: signal.id,
+      source_signal_type: signal.type,
+      last_signal_id: signal.id,
+      last_signal_type: signal.type,
+      step_count: 0
+    }
+  end
+
+  defp pending_step(active_run, tool_call, signal) do
+    run_id = active_run.run_id
+    name = map_get(tool_call, "name")
+
+    correlation_id =
+      map_get(tool_call, "correlation_id") || ConversationSignal.correlation_id(signal)
+
+    %{
+      step_id: "#{run_id}:#{name}:#{correlation_id || signal.id}",
+      run_id: run_id,
+      kind: :tool,
+      status: :requested,
+      name: name,
+      correlation_id: correlation_id,
+      created_at: signal.time,
+      updated_at: signal.time,
+      source_signal_id: signal.id
+    }
   end
 
   defp do_drain(%State{} = state, intents, steps) when steps >= state.max_drain_steps do

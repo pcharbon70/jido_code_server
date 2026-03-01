@@ -11,6 +11,7 @@ defmodule Jido.Code.Server.Conversation.Domain.Projections do
       timeline: timeline(state),
       llm_context: llm_context(state),
       diagnostics: diagnostics(state),
+      mode_runtime: mode_runtime(state),
       subagent_status: subagent_status(state),
       pending_tool_calls: state.pending_tool_calls
     }
@@ -40,6 +41,11 @@ defmodule Jido.Code.Server.Conversation.Domain.Projections do
 
     %{
       status: state.status,
+      mode: state.mode,
+      mode_state: summarize_mode_state(state.mode_state),
+      active_run: sanitize_run(state.active_run),
+      run_history_count: length(state.run_history),
+      pending_step_count: length(state.pending_steps),
       event_count: length(state.timeline),
       queue_size: state.queue_size,
       pending_tool_call_count: length(state.pending_tool_calls),
@@ -48,6 +54,19 @@ defmodule Jido.Code.Server.Conversation.Domain.Projections do
       drain_iteration: state.drain_iteration,
       max_queue_size: state.max_queue_size,
       max_drain_steps: state.max_drain_steps
+    }
+  end
+
+  @spec mode_runtime(map()) :: map()
+  def mode_runtime(state) do
+    %{
+      mode: state.mode,
+      mode_state: summarize_mode_state(state.mode_state),
+      active_run: sanitize_run(state.active_run),
+      run_history: state.run_history |> Enum.map(&sanitize_run/1),
+      run_history_count: length(state.run_history),
+      pending_steps: state.pending_steps |> Enum.map(&sanitize_step/1),
+      pending_step_count: length(state.pending_steps)
     }
   end
 
@@ -168,4 +187,60 @@ defmodule Jido.Code.Server.Conversation.Domain.Projections do
     do: Enum.map(value, &normalize_string_map/1)
 
   defp normalize_string_map(value), do: value
+
+  defp summarize_mode_state(mode_state) when is_map(mode_state) do
+    keys =
+      mode_state
+      |> Map.keys()
+      |> Enum.map(fn
+        key when is_atom(key) -> Atom.to_string(key)
+        key when is_binary(key) -> key
+        key -> inspect(key)
+      end)
+      |> Enum.sort()
+
+    %{key_count: map_size(mode_state), keys: keys}
+  end
+
+  defp summarize_mode_state(_mode_state), do: %{key_count: 0, keys: []}
+
+  defp sanitize_run(nil), do: nil
+
+  defp sanitize_run(run) when is_map(run) do
+    normalized = normalize_string_map(run)
+
+    %{
+      run_id: Map.get(normalized, "run_id"),
+      mode: Map.get(normalized, "mode"),
+      status: Map.get(normalized, "status"),
+      started_at: Map.get(normalized, "started_at"),
+      updated_at: Map.get(normalized, "updated_at"),
+      ended_at: Map.get(normalized, "ended_at"),
+      source_signal_id: Map.get(normalized, "source_signal_id"),
+      source_signal_type: Map.get(normalized, "source_signal_type"),
+      last_signal_id: Map.get(normalized, "last_signal_id"),
+      last_signal_type: Map.get(normalized, "last_signal_type"),
+      step_count: Map.get(normalized, "step_count", 0),
+      reason: Map.get(normalized, "reason")
+    }
+  end
+
+  defp sanitize_run(_run), do: nil
+
+  defp sanitize_step(step) when is_map(step) do
+    normalized = normalize_string_map(step)
+
+    %{
+      step_id: Map.get(normalized, "step_id"),
+      run_id: Map.get(normalized, "run_id"),
+      kind: Map.get(normalized, "kind"),
+      status: Map.get(normalized, "status"),
+      name: Map.get(normalized, "name"),
+      correlation_id: Map.get(normalized, "correlation_id"),
+      created_at: Map.get(normalized, "created_at"),
+      updated_at: Map.get(normalized, "updated_at")
+    }
+  end
+
+  defp sanitize_step(_step), do: nil
 end
