@@ -37,6 +37,7 @@ defmodule Jido.Code.Server.Conversation.Signal do
     "conversation.run.resumed",
     "conversation.resume",
     "conversation.resume.rejected",
+    "conversation.strategy.cancelled",
     "conversation.subagent.completed",
     "conversation.subagent.failed",
     "conversation.subagent.requested",

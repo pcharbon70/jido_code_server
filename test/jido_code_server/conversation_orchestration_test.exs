@@ -1,3 +1,35 @@
+defmodule Jido.Code.Server.ConversationOrchestrationTest.NonStreamingCodegenRunner do
+  @behaviour Jido.Code.Server.Project.StrategyRunner
+
+  alias Jido.Code.Server.Conversation.Signal, as: ConversationSignal
+
+  @impl true
+  def start(_project_ctx, envelope, _opts) do
+    signal =
+      Jido.Signal.new!("conversation.assistant.message", %{
+        "content" => "non-streaming response",
+        "strategy" => envelope.strategy_type
+      })
+
+    {:ok,
+     %{
+       "signals" => [ConversationSignal.to_map(signal)],
+       "result_meta" => %{"strategy_runner" => "non_streaming"},
+       "execution_ref" => "non_streaming:#{envelope.strategy_type}"
+     }}
+  end
+
+  @impl true
+  def capabilities do
+    %{
+      streaming?: false,
+      tool_calling?: true,
+      cancellable?: true,
+      supported_strategies: [:code_generation, :planning, :engineering_design, :reasoning]
+    }
+  end
+end
+
 defmodule Jido.Code.Server.ConversationOrchestrationTest do
   use ExUnit.Case, async: false
 
@@ -358,6 +390,307 @@ defmodule Jido.Code.Server.ConversationOrchestrationTest do
     assert map_lookup(execution_result, :executor) == "workspace_shell"
     assert map_lookup(execution_result, :workspace_id) =~ "phase6-command-executor"
     assert map_lookup(execution_result, :output) =~ "workspace-sandbox-ok"
+  end
+
+  test "sync and async tool execution paths emit parity lifecycle metadata" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    sync_correlation = "phase6-tool-sync"
+    async_correlation = "phase6-tool-async"
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase6-tool-parity",
+               conversation_orchestration: true,
+               network_egress_policy: :allow
+             )
+
+    assert {:ok, "phase6-tool-parity-c1"} =
+             Runtime.start_conversation(project_id, conversation_id: "phase6-tool-parity-c1")
+
+    assert :ok =
+             RuntimeSignal.send_signal(project_id, "phase6-tool-parity-c1", %{
+               "type" => "conversation.tool.requested",
+               "meta" => %{"correlation_id" => sync_correlation},
+               "data" => %{
+                 "name" => "command.run.example_command",
+                 "args" => %{"path" => ".jido/commands/example_command.md"}
+               }
+             })
+
+    assert :ok =
+             RuntimeSignal.send_signal(project_id, "phase6-tool-parity-c1", %{
+               "type" => "conversation.tool.requested",
+               "meta" => %{"correlation_id" => async_correlation},
+               "data" => %{
+                 "name" => "command.run.example_command",
+                 "args" => %{
+                   "path" => ".jido/commands/example_command.md",
+                   "simulate_delay_ms" => 150
+                 },
+                 "meta" => %{"run_mode" => "async"}
+               }
+             })
+
+    assert {:ok, timeline} =
+             wait_for_timeline(project_id, "phase6-tool-parity-c1", fn events ->
+               Enum.any?(events, fn event ->
+                 map_lookup(event, :type) == "conversation.tool.completed" and
+                   map_lookup(map_lookup(event, :meta), :correlation_id) == sync_correlation
+               end) and
+                 Enum.any?(events, fn event ->
+                   map_lookup(event, :type) == "conversation.tool.completed" and
+                     map_lookup(map_lookup(event, :meta), :correlation_id) == async_correlation
+                 end)
+             end)
+
+    sync_completed =
+      Enum.find(timeline, fn event ->
+        map_lookup(event, :type) == "conversation.tool.completed" and
+          map_lookup(map_lookup(event, :meta), :correlation_id) == sync_correlation
+      end)
+
+    async_completed =
+      Enum.find(timeline, fn event ->
+        map_lookup(event, :type) == "conversation.tool.completed" and
+          map_lookup(map_lookup(event, :meta), :correlation_id) == async_correlation
+      end)
+
+    sync_execution = map_lookup(map_lookup(sync_completed, :data), :execution)
+    async_execution = map_lookup(map_lookup(async_completed, :data), :execution)
+
+    assert map_lookup(sync_execution, :execution_kind) == "command_run"
+    assert map_lookup(async_execution, :execution_kind) == "command_run"
+    assert map_lookup(sync_execution, :lifecycle_status) == "completed"
+    assert map_lookup(async_execution, :lifecycle_status) == "completed"
+
+    assert {:ok, []} =
+             Runtime.conversation_projection(
+               project_id,
+               "phase6-tool-parity-c1",
+               :pending_tool_calls
+             )
+  end
+
+  test "streaming and non-streaming strategy paths keep terminal lifecycle semantics aligned" do
+    root_streaming = TempProject.create!(with_seed_files: true)
+    root_non_streaming = TempProject.create!(with_seed_files: true)
+
+    on_exit(fn ->
+      TempProject.cleanup(root_streaming)
+      TempProject.cleanup(root_non_streaming)
+    end)
+
+    assert {:ok, streaming_project_id} =
+             Runtime.start_project(root_streaming,
+               project_id: "phase6-strategy-streaming",
+               conversation_orchestration: true,
+               llm_adapter: :deterministic
+             )
+
+    assert {:ok, non_streaming_project_id} =
+             Runtime.start_project(root_non_streaming,
+               project_id: "phase6-strategy-non-streaming",
+               conversation_orchestration: true,
+               llm_adapter: :deterministic,
+               conversation_mode_unknown_key_policy: :allow
+             )
+
+    assert {:ok, "phase6-strategy-streaming-c1"} =
+             Runtime.start_conversation(streaming_project_id,
+               conversation_id: "phase6-strategy-streaming-c1"
+             )
+
+    assert {:ok, "phase6-strategy-non-streaming-c1"} =
+             Runtime.start_conversation(non_streaming_project_id,
+               conversation_id: "phase6-strategy-non-streaming-c1",
+               mode_state: %{
+                 strategy: "code_generation",
+                 runner: Jido.Code.Server.ConversationOrchestrationTest.NonStreamingCodegenRunner
+               }
+             )
+
+    assert :ok =
+             RuntimeSignal.send_signal(streaming_project_id, "phase6-strategy-streaming-c1", %{
+               "type" => "conversation.user.message",
+               "data" => %{"content" => "streaming path"}
+             })
+
+    assert :ok =
+             RuntimeSignal.send_signal(
+               non_streaming_project_id,
+               "phase6-strategy-non-streaming-c1",
+               %{
+                 "type" => "conversation.user.message",
+                 "data" => %{"content" => "non-streaming path"}
+               }
+             )
+
+    assert {:ok, streaming_timeline} =
+             wait_for_timeline(streaming_project_id, "phase6-strategy-streaming-c1", fn events ->
+               types = event_types(events)
+               "conversation.llm.completed" in types and "conversation.run.closed" in types
+             end)
+
+    assert {:ok, non_streaming_timeline} =
+             wait_for_timeline(
+               non_streaming_project_id,
+               "phase6-strategy-non-streaming-c1",
+               fn events ->
+                 types = event_types(events)
+                 "conversation.llm.completed" in types and "conversation.run.closed" in types
+               end
+             )
+
+    assert count_type(streaming_timeline, "conversation.assistant.delta") >= 1
+    assert count_type(non_streaming_timeline, "conversation.assistant.delta") == 0
+
+    streaming_completed = find_event(streaming_timeline, "conversation.llm.completed")
+    non_streaming_completed = find_event(non_streaming_timeline, "conversation.llm.completed")
+
+    streaming_execution = map_lookup(map_lookup(streaming_completed, :data), :execution)
+    non_streaming_execution = map_lookup(map_lookup(non_streaming_completed, :data), :execution)
+
+    assert map_lookup(streaming_execution, :execution_kind) == "strategy_run"
+    assert map_lookup(non_streaming_execution, :execution_kind) == "strategy_run"
+    assert map_lookup(streaming_execution, :lifecycle_status) == "completed"
+    assert map_lookup(non_streaming_execution, :lifecycle_status) == "completed"
+    assert map_lookup(streaming_execution, :run_id) =~ "corr-"
+    assert map_lookup(non_streaming_execution, :run_id) =~ "corr-"
+    assert map_lookup(streaming_execution, :step_id) =~ ":strategy:"
+    assert map_lookup(non_streaming_execution, :step_id) =~ ":strategy:"
+
+    streaming_run_closed = find_last_event(streaming_timeline, "conversation.run.closed")
+    non_streaming_run_closed = find_last_event(non_streaming_timeline, "conversation.run.closed")
+
+    assert map_lookup(map_lookup(streaming_run_closed, :data), :status) == "completed"
+    assert map_lookup(map_lookup(non_streaming_run_closed, :data), :status) == "completed"
+  end
+
+  test "cancelled runs emit deterministic strategy terminal cancellation events" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    run_correlation_id = "phase6-cancel-run"
+    cancel_correlation_id = "phase6-cancel-request"
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase6-cancel-terminalization",
+               conversation_orchestration: false,
+               network_egress_policy: :allow
+             )
+
+    assert {:ok, "phase6-cancel-terminalization-c1"} =
+             Runtime.start_conversation(project_id,
+               conversation_id: "phase6-cancel-terminalization-c1"
+             )
+
+    assert :ok =
+             RuntimeSignal.send_signal(project_id, "phase6-cancel-terminalization-c1", %{
+               "type" => "conversation.user.message",
+               "meta" => %{"correlation_id" => run_correlation_id},
+               "data" => %{"content" => "start run"}
+             })
+
+    assert {:ok, _timeline_before_cancel} =
+             wait_for_timeline(project_id, "phase6-cancel-terminalization-c1", fn events ->
+               Enum.any?(events, fn event ->
+                 map_lookup(event, :type) == "conversation.run.opened" and
+                   map_lookup(map_lookup(event, :meta), :correlation_id) == run_correlation_id
+               end)
+             end)
+
+    assert :ok =
+             RuntimeSignal.send_signal(project_id, "phase6-cancel-terminalization-c1", %{
+               "type" => "conversation.cancel",
+               "meta" => %{"correlation_id" => cancel_correlation_id}
+             })
+
+    timeline =
+      case wait_for_timeline(
+             project_id,
+             "phase6-cancel-terminalization-c1",
+             fn events ->
+               types = event_types(events)
+
+               "conversation.strategy.cancelled" in types and "conversation.run.closed" in types
+             end,
+             200
+           ) do
+        {:ok, timeline} ->
+          timeline
+
+        {:error, :timeline_timeout} ->
+          {:ok, snapshot} =
+            Runtime.conversation_projection(
+              project_id,
+              "phase6-cancel-terminalization-c1",
+              :timeline
+            )
+
+          flunk(
+            "expected cancellation lifecycle events, got timeline types: #{inspect(event_types(snapshot))}"
+          )
+      end
+
+    strategy_cancelled = find_event(timeline, "conversation.strategy.cancelled")
+    run_closed = find_last_event(timeline, "conversation.run.closed")
+
+    assert map_lookup(map_lookup(strategy_cancelled, :data), :reason) == "conversation_cancelled"
+
+    strategy_cancelled_correlation_id =
+      map_lookup(map_lookup(strategy_cancelled, :meta), :correlation_id) ||
+        map_lookup(map_lookup(strategy_cancelled, :extensions), :correlation_id)
+
+    assert strategy_cancelled_correlation_id == cancel_correlation_id
+
+    assert map_lookup(map_lookup(run_closed, :data), :status) == "cancelled"
+
+    assert map_lookup(map_lookup(run_closed, :data), :interruption_kind) in ["strategy", "run"]
+  end
+
+  test "retry exhaustion closes run with failed terminal status after strategy failures" do
+    root = TempProject.create!(with_seed_files: true)
+    on_exit(fn -> TempProject.cleanup(root) end)
+
+    assert {:ok, project_id} =
+             Runtime.start_project(root,
+               project_id: "phase6-retry-exhaustion",
+               conversation_orchestration: true,
+               llm_adapter: :missing_adapter
+             )
+
+    assert {:ok, "phase6-retry-exhaustion-c1"} =
+             Runtime.start_conversation(project_id,
+               conversation_id: "phase6-retry-exhaustion-c1"
+             )
+
+    assert :ok =
+             RuntimeSignal.send_signal(project_id, "phase6-retry-exhaustion-c1", %{
+               "type" => "conversation.user.message",
+               "data" => %{"content" => "fail and retry"}
+             })
+
+    assert {:ok, timeline} =
+             wait_for_timeline(
+               project_id,
+               "phase6-retry-exhaustion-c1",
+               fn events ->
+                 count_type(events, "conversation.llm.failed") >= 1 and
+                   Enum.any?(events, fn event ->
+                     map_lookup(event, :type) == "conversation.run.closed" and
+                       map_lookup(map_lookup(event, :data), :status) == "failed"
+                   end)
+               end,
+               200
+             )
+
+    assert count_type(timeline, "conversation.llm.failed") >= 1
+
+    run_closed = find_last_event(timeline, "conversation.run.closed")
+    assert map_lookup(map_lookup(run_closed, :data), :status) == "failed"
   end
 
   test "mode templates drive deterministic start continue and terminal transitions" do
