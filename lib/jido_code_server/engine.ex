@@ -27,7 +27,7 @@ defmodule Jido.Code.Server.Engine do
     :subagent_ttl_ms
   ]
   @non_negative_integer_runtime_opts [:tool_max_concurrency_per_conversation]
-  @boolean_runtime_opts [:watcher, :conversation_orchestration, :strict_asset_loading]
+  @boolean_runtime_opts [:watcher, :strict_asset_loading]
   @string_list_runtime_opts [
     :deny_tools,
     :network_allowlist,
@@ -349,6 +349,9 @@ defmodule Jido.Code.Server.Engine do
   defp validate_runtime_opt(:allow_tools, nil), do: {:ok, nil}
 
   defp validate_runtime_opt(:allow_tools, value), do: validate_string_list(value)
+
+  defp validate_runtime_opt(:conversation_orchestration, _value),
+    do: {:error, :removed_code_server_orchestration_is_default}
 
   defp validate_runtime_opt(key, value) when key in @passthrough_runtime_opts,
     do: {:ok, value}

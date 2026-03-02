@@ -126,7 +126,6 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert {:ok, project_id} =
              Runtime.start_project(root,
                project_id: "phase9-correlation-tool",
-               conversation_orchestration: true,
                llm_adapter: :deterministic
              )
 
@@ -192,7 +191,6 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert {:ok, project_id} =
              Runtime.start_project(root,
                project_id: "phase9-correlation-generate",
-               conversation_orchestration: true,
                llm_adapter: :deterministic
              )
 
@@ -235,7 +233,6 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert {:ok, project_id} =
              Runtime.start_project(root,
                project_id: "phase9-incident-timeline",
-               conversation_orchestration: true,
                llm_adapter: :deterministic
              )
 
@@ -296,8 +293,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
 
     assert {:ok, project_id} =
              Runtime.start_project(root,
-               project_id: "phase9-incident-telemetry-cancelled",
-               conversation_orchestration: false
+               project_id: "phase9-incident-telemetry-cancelled"
              )
 
     assert {:ok, "phase9-incident-telemetry-cancelled-c1"} =
@@ -336,7 +332,6 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert {:ok, project_id} =
              Runtime.start_project(root,
                project_id: "phase9-incident-stopped",
-               conversation_orchestration: true,
                llm_adapter: :deterministic
              )
 
@@ -402,7 +397,6 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert {:ok, project_id} =
              Runtime.start_project(root,
                project_id: "phase9-incident-stopped-filter",
-               conversation_orchestration: true,
                llm_adapter: :deterministic
              )
 
@@ -473,8 +467,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
 
     assert {:ok, project_id} =
              Runtime.start_project(root,
-               project_id: "phase9-incident-atom-cancelled",
-               conversation_orchestration: false
+               project_id: "phase9-incident-atom-cancelled"
              )
 
     assert {:ok, "phase9-incident-atom-cancelled-c1"} =
@@ -520,8 +513,7 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
 
     assert {:ok, project_id} =
              Runtime.start_project(root,
-               project_id: "phase9-incident-failed-message-cancelled",
-               conversation_orchestration: false
+               project_id: "phase9-incident-failed-message-cancelled"
              )
 
     assert {:ok, "phase9-incident-failed-message-cancelled-c1"} =
@@ -796,7 +788,6 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert {:ok, project_id} =
              Runtime.start_project(root,
                project_id: "phase9-conversation-cancel",
-               conversation_orchestration: true,
                llm_adapter: :deterministic
              )
 
@@ -870,7 +861,6 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert {:ok, project_id} =
              Runtime.start_project(root,
                project_id: "phase9-async-complete",
-               conversation_orchestration: true,
                network_egress_policy: :allow
              )
 
@@ -929,7 +919,6 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert {:ok, project_id} =
              Runtime.start_project(root,
                project_id: "phase9-async-cancel",
-               conversation_orchestration: true,
                network_egress_policy: :allow
              )
 
@@ -1012,7 +1001,6 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert {:ok, project_id} =
              Runtime.start_project(root,
                project_id: "phase9-workspace-child-tracking",
-               conversation_orchestration: true,
                network_egress_policy: :allow,
                command_executor: :workspace_shell
              )
@@ -1946,7 +1934,6 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
     assert {:ok, project_id} =
              Runtime.start_project(root,
                project_id: "phase9-llm-failure",
-               conversation_orchestration: true,
                llm_adapter: :missing_adapter
              )
 
@@ -2042,7 +2029,6 @@ defmodule Jido.Code.Server.RuntimeHardeningTest do
         assert {:ok, ^project_id} =
                  Runtime.start_project(root,
                    project_id: project_id,
-                   conversation_orchestration: true,
                    llm_adapter: :deterministic
                  )
 

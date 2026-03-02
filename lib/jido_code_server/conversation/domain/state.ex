@@ -60,7 +60,7 @@ defmodule Jido.Code.Server.Conversation.Domain.State do
             max_queue_size: 10_000,
             max_drain_steps: 128,
             max_run_history: 25,
-            orchestration_enabled: false
+            orchestration_enabled: true
 
   @spec new(keyword()) :: t()
   def new(opts) when is_list(opts) do
@@ -72,7 +72,7 @@ defmodule Jido.Code.Server.Conversation.Domain.State do
       max_queue_size: Keyword.get(opts, :max_queue_size, Config.conversation_max_queue_size()),
       max_drain_steps: Keyword.get(opts, :max_drain_steps, Config.conversation_max_drain_steps()),
       max_run_history: normalize_max_run_history(Keyword.get(opts, :max_run_history, 25)),
-      orchestration_enabled: Keyword.get(opts, :orchestration_enabled, false) == true
+      orchestration_enabled: true
     }
 
     %{state | projection_cache: Projections.build(state)}

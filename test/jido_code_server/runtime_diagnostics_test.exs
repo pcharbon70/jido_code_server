@@ -27,7 +27,6 @@ defmodule Jido.Code.Server.RuntimeDiagnosticsTest do
     assert {:ok, project_id} =
              Runtime.start_project(root,
                project_id: "phase7-diag",
-               conversation_orchestration: true,
                llm_adapter: :deterministic
              )
 
@@ -114,7 +113,6 @@ defmodule Jido.Code.Server.RuntimeDiagnosticsTest do
     assert {:ok, project_id} =
              Runtime.start_project(root,
                project_id: "phase7-errors",
-               conversation_orchestration: true,
                llm_adapter: :deterministic,
                allow_tools: ["asset.list"]
              )

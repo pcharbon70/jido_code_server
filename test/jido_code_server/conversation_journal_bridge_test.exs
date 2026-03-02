@@ -26,7 +26,6 @@ defmodule Jido.Code.Server.ConversationJournalBridgeTest do
     assert {:ok, ^project_id} =
              Runtime.start_project(root,
                project_id: project_id,
-               conversation_orchestration: true,
                llm_adapter: :deterministic
              )
 
@@ -62,7 +61,6 @@ defmodule Jido.Code.Server.ConversationJournalBridgeTest do
     assert {:ok, ^project_id} =
              Runtime.start_project(root,
                project_id: project_id,
-               conversation_orchestration: true,
                llm_adapter: :deterministic
              )
 

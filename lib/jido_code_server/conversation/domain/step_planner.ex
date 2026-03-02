@@ -34,9 +34,6 @@ defmodule Jido.Code.Server.Conversation.Domain.StepPlanner do
 
   defp plan_start(%State{} = previous_state, %State{} = state, %Jido.Signal{} = signal) do
     cond do
-      not state.orchestration_enabled ->
-        []
-
       state.status == :cancelled ->
         []
 
@@ -58,9 +55,6 @@ defmodule Jido.Code.Server.Conversation.Domain.StepPlanner do
     mode_pipeline = ModePipeline.resolve(state.mode, state.mode_state)
 
     cond do
-      not state.orchestration_enabled ->
-        []
-
       state.status == :cancelled ->
         []
 
@@ -86,9 +80,6 @@ defmodule Jido.Code.Server.Conversation.Domain.StepPlanner do
 
   defp plan_retry(%State{} = state, %Jido.Signal{} = signal) do
     cond do
-      not state.orchestration_enabled ->
-        []
-
       state.status == :cancelled ->
         []
 

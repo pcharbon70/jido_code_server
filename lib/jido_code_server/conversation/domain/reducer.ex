@@ -1323,7 +1323,7 @@ defmodule Jido.Code.Server.Conversation.Domain.Reducer do
   defp retryable_failure?(_signal), do: false
 
   defp can_retry_active_run?(%State{active_run: %{} = active_run} = state, _signal) do
-    state.orchestration_enabled and state.pending_tool_calls == [] and
+    state.pending_tool_calls == [] and
       normalize_non_neg_integer(active_run.retry_count, 0) < max_retries(active_run)
   end
 

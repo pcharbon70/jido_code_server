@@ -164,7 +164,6 @@ defmodule Jido.Code.Server.ConversationModeRegistryConfigTest do
     assert {:ok, project_id} =
              Runtime.start_project(root,
                project_id: "phase3-mode-llm-tools",
-               conversation_orchestration: true,
                llm_adapter: :deterministic
              )
 
