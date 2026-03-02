@@ -3,7 +3,133 @@
 Prev: [05. Conversation Runtime](./05-conversation-runtime.md)  
 Next: [07. Sub Agent Runtime](./07-subagent-runtime.md)
 
-## LLM Execution Path
+## Single Execution Gateway
+
+All execution goes through one gateway: `Project.ExecutionRunner`.
+
+- `RunExecutionInstruction` delegates strategy envelopes to `ExecutionRunner.run_execution/2`.
+- `RunToolInstruction` delegates tool calls to `ExecutionRunner.run/2` or `run_async/3`.
+- `ExecutionRunner` enforces policy, limits, and guardrails before delegating:
+  - `ToolRunner` (`asset.*`, `agent.spawn.*`)
+  - `CommandRunner` (`command.run.*`)
+  - `WorkflowRunner` (`workflow.run.*`)
+  - `StrategyRunner` (`strategy_run`)
+
+No mode, strategy, or tool path is allowed to bypass `ExecutionRunner`.
+
+## Mode Pipeline and Strategy Path
+
+Mode pipeline planning starts in the reducer (`Conversation.Domain.Reducer`) using
+`Conversation.Domain.ModePipeline` and `Conversation.ExecutionEnvelope`.
+
+```mermaid
+sequenceDiagram
+    participant Client as Client
+    participant Agent as Conversation.Agent
+    participant Reducer as Domain.Reducer
+    participant Instr as RunExecutionInstruction
+    participant Exec as ExecutionRunner
+    participant Strat as StrategyRunner
+    participant LLM as Conversation.LLM
+
+    Client->>Agent: conversation.user.message
+    Agent->>Reducer: enqueue + drain
+    Reducer->>Reducer: resolve mode pipeline and step intent
+    Reducer-->>Instr: directive run_execution(strategy_run)
+    Instr->>Exec: run_execution(envelope)
+    Exec->>Exec: authorize execution kind for mode
+    Exec->>Strat: run(project_ctx, envelope)
+    Strat->>LLM: start_completion(tool_specs, llm_context)
+    LLM-->>Strat: normalized conversation.* events
+    Strat-->>Exec: signals + result_meta
+    Exec-->>Agent: execution result
+    Agent->>Reducer: ingest emitted signals
+```
+
+`ModeRegistry` controls mode capabilities, including allowed execution kinds and
+supported strategy types.
+
+## Tool Loop Path
+
+Strategy output can emit `conversation.tool.requested`. Tool execution then
+flows through the same gateway.
+
+```mermaid
+sequenceDiagram
+    participant Reducer as Domain.Reducer
+    participant ToolInstr as RunToolInstruction
+    participant Catalog as ToolCatalog
+    participant Exec as ExecutionRunner
+    participant Policy as Policy
+    participant Runner as Tool/Command/Workflow Runner
+
+    Reducer-->>ToolInstr: directive run_tool(tool_call)
+    ToolInstr->>Catalog: llm_tool_allowed?(name, mode)
+    Catalog-->>ToolInstr: allowed tool spec or error
+    ToolInstr->>Exec: run or run_async
+    Exec->>Policy: authorize_tool(...)
+    Policy-->>Exec: allow or deny
+    Exec->>Runner: execute delegated runner
+    Runner-->>Exec: result or error
+    Exec-->>ToolInstr: normalized response
+    ToolInstr-->>Reducer: conversation.tool.completed/failed/cancelled
+```
+
+## Cancellation and Resume Flow
+
+```mermaid
+sequenceDiagram
+    participant Client as Client
+    participant Agent as Conversation.Agent
+    participant Reducer as Domain.Reducer
+    participant CancelInstr as CancelPendingToolsInstruction
+    participant Exec as ExecutionRunner
+    participant SubCancel as CancelSubagentsInstruction
+
+    Client->>Agent: conversation.cancel
+    Agent->>Reducer: apply cancel signal
+    Reducer-->>CancelInstr: cancel pending tools intent
+    CancelInstr->>Exec: cancel_task(task_pid,...)
+    Exec-->>CancelInstr: tool task terminated
+    Reducer-->>SubCancel: cancel pending subagents intent
+    SubCancel-->>Reducer: subagent cancellation signals
+    Client->>Agent: conversation.resume
+    Agent->>Reducer: orchestration resumes from idle
+```
+
+## Tool Declaration and LLM Exposure Flow
+
+Tool definitions are assembled in `ToolCatalog` from four sources:
+
+1. built-ins (`asset.list`, `asset.search`, `asset.get`)
+2. asset-backed tools (`command.run.*`, `workflow.run.*`)
+3. provider modules implementing `ToolCatalog.Provider` (`tools/1`)
+4. sub-agent spawn tools (`agent.spawn.<template_id>`)
+
+Only LLM-visible tools are exposed to a turn:
+
+1. `ToolCatalog.llm_tools/2` filters by `llm_exposed`
+2. mode policy filters by `ModeRegistry.allowed_execution_kinds/2`
+3. runtime policy filters by `Policy.filter_tools/2`
+4. `StrategyRunner.Default` passes resulting specs to `Conversation.LLM`
+
+```mermaid
+flowchart LR
+  A["Provider modules (ToolCatalog.Provider)"] --> B["ToolCatalog.all_tools/1"]
+  C["Command/Workflow assets"] --> B
+  D["Builtins + spawn tools"] --> B
+  B --> E["ToolCatalog.llm_tools/2"]
+  E --> F["ModeRegistry execution-kind filter"]
+  F --> G["Policy.filter_tools/2"]
+  G --> H["StrategyRunner.Default"]
+  H --> I["Conversation.LLM tool specs"]
+```
+
+At execution time, `RunToolInstruction` re-validates the requested tool with
+`ToolCatalog.llm_tool_allowed?/3` and still routes the call through
+`ExecutionRunner` guardrails.
+
+## Adapter Notes
 
 `RunLLMInstruction` executes one LLM turn:
 
@@ -27,40 +153,6 @@ Message normalization accepts these roles:
 - `:system`
 
 Current behavior limits tool calls from a single completion to the first call (`Enum.take(1)`).
-
-## Tool Execution Path
-
-All direct tool calls route through `Project.ExecutionRunner`, which enforces policy and guardrails then dispatches execution to `ToolRunner`, `CommandRunner`, or `WorkflowRunner`.
-
-```mermaid
-sequenceDiagram
-    participant Conv as Conversation instruction
-    participant TB as ToolBridge
-    participant TR as ExecutionRunner
-    participant P as Policy
-
-    Conv->>TB: handle_tool_requested
-    TB->>TR: run or run_async
-    TR->>P: authorize_tool
-    P-->>TR: allow or deny
-    TR-->>TB: result or error
-    TB-->>Conv: conversation.tool.completed or conversation.tool.failed signal
-```
-
-## Tool Catalog Composition
-
-`ToolCatalog.all_tools/1` returns:
-
-- Builtins (`asset.list`, `asset.search`, `asset.get`)
-- Asset-backed tools (`command.run.*`, `workflow.run.*`)
-- Spawn tools (`agent.spawn.<template_id>`)
-
-Each tool includes:
-
-- input schema
-- output schema
-- safety metadata (`sandboxed`, `network_capable`)
-- execution kind
 
 ## Guardrails in ExecutionRunner Gateway
 

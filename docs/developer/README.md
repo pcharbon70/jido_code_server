@@ -19,3 +19,4 @@ Reading order:
 9. [09. Security Model](./09-security-model.md)
 10. [10. Observability and Operations](./10-observability-and-operations.md)
 11. [11. Testing and Quality](./11-testing-and-quality.md)
+12. [12. Mode and Strategy Extension Model](./12-mode-and-strategy-extension-model.md)

@@ -18,6 +18,7 @@ Core test areas under `test/jido_code_server`:
 - Sub-agent policy and lifecycle
 - Protocol gateways and allowlist enforcement
 - Tool action bridge integration with Jido.AI tool calling context
+- Cross-repo contract gates shared with `jido_conversation`
 
 ## Quality Gates
 
@@ -39,6 +40,7 @@ The current suite explicitly validates:
 - no project cross-talk under concurrent load
 - cancellation cleanup of async tools and child processes
 - reproducible incident/telemetry observability
+- canonical `conversation.*` to `conv.*` parity against shared fixture traces
 
 ## Recommended Extensions
 
