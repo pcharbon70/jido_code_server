@@ -16,6 +16,7 @@ These guides document the architecture implemented in `lib/jido_code_server`:
 - Protocol adapters (MCP and A2A)
 - Security controls and telemetry
 - Operational diagnostics and test strategy
+- Release readiness, SLOs, and incident governance
 
 ## Mental Model
 

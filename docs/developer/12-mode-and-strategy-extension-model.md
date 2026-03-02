@@ -1,7 +1,7 @@
 # 12. Mode and Strategy Extension Model
 
 Prev: [11. Testing and Quality](./11-testing-and-quality.md)  
-Next: `None`
+Next: [13. Release Governance and Readiness](./13-release-governance-and-readiness.md)
 
 ## Purpose
 
