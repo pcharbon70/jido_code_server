@@ -64,7 +64,7 @@ defmodule Jido.Code.Server.Conversation.Agent do
         max_queue_size: Keyword.get(opts, :max_queue_size, Config.conversation_max_queue_size()),
         max_drain_steps:
           Keyword.get(opts, :max_drain_steps, Config.conversation_max_drain_steps()),
-        orchestration_enabled: Keyword.get(opts, :orchestration_enabled, false)
+        orchestration_enabled: true
       )
 
     initial_state = %{

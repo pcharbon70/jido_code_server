@@ -183,7 +183,6 @@ defmodule Jido.Code.Server.Benchmark.Phase9Harness do
 
       case Runtime.start_project(root,
              project_id: project_id,
-             conversation_orchestration: true,
              llm_adapter: :deterministic
            ) do
         {:ok, ^project_id} ->

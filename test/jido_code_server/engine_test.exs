@@ -83,6 +83,9 @@ defmodule Jido.Code.Server.EngineTest do
     assert {:error, {:invalid_runtime_opt, :strict_asset_loading, :expected_boolean}} =
              Runtime.start_project(root, strict_asset_loading: :enabled)
 
+    assert {:error, {:invalid_runtime_opt, :conversation_orchestration, :unknown_option}} =
+             Runtime.start_project(root, conversation_orchestration: true)
+
     assert {:error, {:invalid_runtime_opt, :network_egress_policy, :expected_allow_or_deny}} =
              Runtime.start_project(root, network_egress_policy: :blocked)
 

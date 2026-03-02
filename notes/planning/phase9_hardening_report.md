@@ -213,7 +213,7 @@
 - Validation covers:
   - positive integer guards (`tool_timeout_ms`, `tool_max_output_bytes`, etc.)
   - non-negative integer guards (`tool_max_concurrency_per_conversation`)
-  - boolean guards (`watcher`, `conversation_orchestration`, `strict_asset_loading`)
+  - boolean guards (`watcher`, `strict_asset_loading`)
   - list-of-string guards for allow/deny and path/network list options
   - `network_egress_policy` value validation with normalization from `"allow"/"deny"` to atoms
   - optional LLM option type checks (`llm_model`, `llm_system_prompt`, `llm_temperature`, `llm_max_tokens`)

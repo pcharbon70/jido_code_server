@@ -844,7 +844,7 @@ defmodule Jido.Code.Server.Project.Server do
         runtime_opt(state, :conversation_max_queue_size, Config.conversation_max_queue_size()),
       max_drain_steps:
         runtime_opt(state, :conversation_max_drain_steps, Config.conversation_max_drain_steps()),
-      orchestration_enabled: conversation_orchestration_enabled?(state.runtime_opts),
+      orchestration_enabled: true,
       subagent_templates: state.subagent_templates
     ]
   end
@@ -903,12 +903,6 @@ defmodule Jido.Code.Server.Project.Server do
 
   defp normalize_protocol_name(_protocol), do: nil
 
-  defp conversation_orchestration_enabled?(runtime_opts) when is_list(runtime_opts) do
-    Keyword.get(runtime_opts, :conversation_orchestration, false) == true
-  end
-
-  defp conversation_orchestration_enabled?(_runtime_opts), do: false
-
   defp diagnostics_snapshot(state) do
     assets = AssetStore.diagnostics(state.asset_store)
     policy = Policy.diagnostics(state.policy)
@@ -922,7 +916,6 @@ defmodule Jido.Code.Server.Project.Server do
       watcher_enabled: Keyword.get(state.opts, :watcher, false) == true,
       runtime_opts:
         Keyword.take(state.runtime_opts, [
-          :conversation_orchestration,
           :llm_adapter,
           :watcher,
           :strict_asset_loading,

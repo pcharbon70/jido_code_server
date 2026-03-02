@@ -27,7 +27,7 @@ defmodule Jido.Code.Server.Engine do
     :subagent_ttl_ms
   ]
   @non_negative_integer_runtime_opts [:tool_max_concurrency_per_conversation]
-  @boolean_runtime_opts [:watcher, :conversation_orchestration, :strict_asset_loading]
+  @boolean_runtime_opts [:watcher, :strict_asset_loading]
   @string_list_runtime_opts [
     :deny_tools,
     :network_allowlist,
