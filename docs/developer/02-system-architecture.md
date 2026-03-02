@@ -76,11 +76,14 @@ flowchart LR
 - `Engine`: validates runtime options and routes project operations.
 - `Project.Server`: project control plane, conversation routing, diagnostics assembly.
 - `Conversation.Agent`: state machine for one conversation.
+- `Conversation.Domain.ModePipeline`: baseline mode templates and step-chain metadata.
+- `Conversation.ModeRegistry`: mode capabilities and allowed execution kinds.
 - `Policy`: authorization and sandbox checks.
-- `ExecutionRunner`: policy/guardrail gateway and dispatch.
-- `ToolRunner`: base tool execution (`asset.*`, `agent.spawn.*`).
-- `CommandRunner`: command asset execution (`command.run.*`).
-- `WorkflowRunner`: workflow asset execution (`workflow.run.*`).
+- `ExecutionRunner`: single policy/guardrail gateway for strategy/tool/command/workflow execution.
+- `StrategyRunner`: strategy adapter gateway used by `ExecutionRunner` for `strategy_run`.
+- `ToolRunner`: delegated base tool execution (`asset.*`, `agent.spawn.*`).
+- `CommandRunner`: delegated command asset execution (`command.run.*`).
+- `WorkflowRunner`: delegated workflow asset execution (`workflow.run.*`).
 - `SubAgentManager`: child-agent lifecycle.
 - `Telemetry`: event stream, counters, redaction, and incident support.
 - `Conversation.JournalBridge`: canonical journaling bridge into `jido_conversation`.

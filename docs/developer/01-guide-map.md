@@ -11,10 +11,12 @@ These guides document the architecture implemented in `lib/jido_code_server`:
 - Conversation runtime on `Jido.AgentServer`
 - Canonical journaling via `Conversation.JournalBridge` + `jido_conversation`
 - Tool catalog, policy enforcement, and execution
+- Mode templates and strategy adapter extension model
 - Sub-agent spawning and lifecycle management
 - Protocol adapters (MCP and A2A)
 - Security controls and telemetry
 - Operational diagnostics and test strategy
+- Release readiness, SLOs, and incident governance
 
 ## Mental Model
 

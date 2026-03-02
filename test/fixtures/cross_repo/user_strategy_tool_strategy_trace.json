@@ -1,0 +1,123 @@
+{
+  "fixture_version": 1,
+  "trace_name": "user_strategy_tool_strategy",
+  "conversation_events": [
+    {
+      "type": "conversation.user.message",
+      "data": {
+        "content": "list available skills"
+      }
+    },
+    {
+      "type": "conversation.assistant.delta",
+      "data": {
+        "delta": "Checking ",
+        "channel": "jido_code_server",
+        "execution": {
+          "execution_kind": "strategy_run",
+          "lifecycle_status": "progress"
+        }
+      }
+    },
+    {
+      "type": "conversation.tool.requested",
+      "data": {
+        "name": "asset.list",
+        "tool_call_id": "tool-call-1",
+        "execution": {
+          "execution_kind": "tool_run",
+          "lifecycle_status": "requested"
+        }
+      }
+    },
+    {
+      "type": "conversation.tool.completed",
+      "data": {
+        "name": "asset.list",
+        "tool_call_id": "tool-call-1",
+        "execution": {
+          "execution_kind": "tool_run",
+          "lifecycle_status": "completed"
+        }
+      }
+    },
+    {
+      "type": "conversation.assistant.message",
+      "data": {
+        "content": "Checking complete. Skills are available.",
+        "channel": "jido_code_server",
+        "execution": {
+          "execution_kind": "strategy_run",
+          "lifecycle_status": "completed"
+        }
+      }
+    }
+  ],
+  "canonical_events": [
+    {
+      "type": "conv.in.message.received",
+      "data": {
+        "message_id": "msg-1",
+        "ingress": "jido_code_server",
+        "content": "list available skills"
+      }
+    },
+    {
+      "type": "conv.out.assistant.delta",
+      "data": {
+        "output_id": "out-1",
+        "channel": "jido_code_server",
+        "delta": "Checking ",
+        "status": "progress",
+        "lifecycle": "progress"
+      }
+    },
+    {
+      "type": "conv.out.tool.status",
+      "data": {
+        "output_id": "tool-1",
+        "channel": "jido_code_server",
+        "status": "requested",
+        "lifecycle": "requested",
+        "tool_name": "asset.list",
+        "tool_call_id": "tool-call-1",
+        "message": "tool requested"
+      }
+    },
+    {
+      "type": "conv.out.tool.status",
+      "data": {
+        "output_id": "tool-1",
+        "channel": "jido_code_server",
+        "status": "completed",
+        "lifecycle": "completed",
+        "tool_name": "asset.list",
+        "tool_call_id": "tool-call-1",
+        "message": "tool completed"
+      }
+    },
+    {
+      "type": "conv.out.assistant.completed",
+      "data": {
+        "output_id": "out-1",
+        "channel": "jido_code_server",
+        "content": "Checking complete. Skills are available.",
+        "status": "completed",
+        "lifecycle": "completed"
+      }
+    }
+  ],
+  "expected": {
+    "canonical_timeline_types": [
+      "conv.in.message.received",
+      "conv.out.assistant.delta",
+      "conv.out.tool.status",
+      "conv.out.tool.status",
+      "conv.out.assistant.completed"
+    ],
+    "canonical_tool_statuses": [
+      "requested",
+      "completed"
+    ]
+  }
+}

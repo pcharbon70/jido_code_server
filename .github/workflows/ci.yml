@@ -15,6 +15,25 @@ jobs:
     name: Lint
     uses: agentjido/github-actions/.github/workflows/elixir-lint.yml@main
 
+  contract_gates:
+    name: Cross-Repo Contract Gates
+    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@main
+    with:
+      otp_versions: '["28"]'
+      elixir_versions: '["1.19"]'
+      test_command: >-
+        mix test
+        test/jido_code_server/phase8_contract_gates_test.exs
+        test/jido_code_server/conversation_journal_bridge_test.exs
+
+  release_readiness:
+    name: Release Readiness
+    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@main
+    with:
+      otp_versions: '["28"]'
+      elixir_versions: '["1.19"]'
+      test_command: bash scripts/release/readiness_check.sh
+
   test:
     name: Test
     uses: agentjido/github-actions/.github/workflows/elixir-test.yml@main
