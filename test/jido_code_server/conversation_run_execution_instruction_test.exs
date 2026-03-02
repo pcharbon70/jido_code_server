@@ -474,7 +474,7 @@ defmodule Jido.Code.Server.ConversationRunExecutionInstructionTest do
              )
 
     on_exit(fn ->
-      if Process.alive?(policy), do: GenServer.stop(policy)
+      safe_stop_process(policy)
     end)
 
     source_signal =
@@ -609,5 +609,77 @@ defmodule Jido.Code.Server.ConversationRunExecutionInstructionTest do
 
     assert {:error, result} = RunExecutionInstruction.run(params, context)
     assert result["reason"] =~ "execution_output_too_large"
+  end
+
+  test "records deny policy audit trail when strategy output limits are exceeded" do
+    assert {:ok, policy} =
+             Policy.start_link(
+               project_id: "p-1",
+               root_path: File.cwd!(),
+               allow_tools: nil
+             )
+
+    on_exit(fn ->
+      safe_stop_process(policy)
+    end)
+
+    source_signal =
+      Jido.Signal.new!("conversation.user.message", %{"content" => "hello"},
+        source: "/conversation/c-1",
+        extensions: %{"correlation_id" => "corr-exec-large-policy"}
+      )
+
+    params = %{
+      "execution_envelope" => %{
+        "execution_kind" => "strategy_run",
+        "conversation_id" => "c-1",
+        "mode" => "coding",
+        "mode_state" => %{"strategy" => "code_generation"},
+        "strategy_type" => "code_generation",
+        "strategy_opts" => %{
+          "runner" => Jido.Code.Server.ConversationRunExecutionInstructionTest.LargePayloadRunner
+        },
+        "source_signal" => Jido.Code.Server.Conversation.Signal.to_map(source_signal),
+        "llm_context" => %{
+          "messages" => [%{"role" => "user", "content" => "hello"}]
+        },
+        "correlation_id" => "corr-exec-large-policy",
+        "cause_id" => source_signal.id
+      }
+    }
+
+    context = %{
+      "conversation_id" => "c-1",
+      "project_ctx" => %{
+        project_id: "p-1",
+        conversation_id: "c-1",
+        policy: policy,
+        tool_max_output_bytes: 256
+      }
+    }
+
+    assert {:error, result} = RunExecutionInstruction.run(params, context)
+    assert result["reason"] =~ "execution_output_too_large"
+
+    diagnostics = Policy.diagnostics(policy)
+
+    assert Enum.any?(diagnostics.recent_decisions, fn decision ->
+             decision.decision == :deny and
+               decision.execution_kind == "strategy_run" and
+               decision.run_id == "corr-exec-large-policy" and
+               match?({:execution_output_too_large, _, _}, decision.reason)
+           end)
+  end
+
+  defp safe_stop_process(pid) when is_pid(pid) do
+    if Process.alive?(pid) do
+      try do
+        GenServer.stop(pid)
+      catch
+        :exit, _reason -> :ok
+      end
+    else
+      :ok
+    end
   end
 end
