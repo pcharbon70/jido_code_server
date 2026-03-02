@@ -23,8 +23,17 @@ permissions:
   contents: write
 
 jobs:
+  release_readiness:
+    name: Release Readiness
+    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@main
+    with:
+      otp_versions: '["28"]'
+      elixir_versions: '["1.19"]'
+      test_command: bash scripts/release/readiness_check.sh
+
   release:
     name: Release
+    needs: release_readiness
     uses: agentjido/github-actions/.github/workflows/elixir-release.yml@main
     with:
       dry_run: ${{ inputs.dry_run }}

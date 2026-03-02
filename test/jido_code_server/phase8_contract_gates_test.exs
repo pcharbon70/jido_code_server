@@ -40,11 +40,22 @@ defmodule Jido.Code.Server.Phase8ContractGatesTest do
 
     assert_eventually(fn ->
       timeline = JidoConversation.timeline(project_id, conversation_id, coalesce_deltas: false)
-      observed_statuses = Enum.map(tool_entries(timeline), &map_lookup(map_lookup(&1, :metadata), :status))
 
-      Enum.map(timeline, &map_lookup(&1, :type)) == expected_types and
-        Enum.frequencies(observed_statuses) == Enum.frequencies(expected_statuses)
+      case contract_drift_diagnostics(timeline, expected_types, expected_statuses) do
+        :ok -> true
+        {:error, _diagnostics} -> false
+      end
     end)
+
+    timeline = JidoConversation.timeline(project_id, conversation_id, coalesce_deltas: false)
+
+    case contract_drift_diagnostics(timeline, expected_types, expected_statuses) do
+      :ok ->
+        :ok
+
+      {:error, diagnostics} ->
+        flunk(diagnostics)
+    end
   end
 
   test "deterministic orchestration ordering and restart parity are stable" do
@@ -215,6 +226,38 @@ defmodule Jido.Code.Server.Phase8ContractGatesTest do
 
   defp tool_entries(timeline) do
     Enum.filter(timeline, &(map_lookup(&1, :type) == "conv.out.tool.status"))
+  end
+
+  defp contract_drift_diagnostics(timeline, expected_types, expected_statuses) do
+    observed_types = Enum.map(timeline, &map_lookup(&1, :type))
+    observed_statuses = Enum.map(tool_entries(timeline), &map_lookup(map_lookup(&1, :metadata), :status))
+    expected_type_freq = Enum.frequencies(expected_types)
+    observed_type_freq = Enum.frequencies(observed_types)
+    expected_status_freq = Enum.frequencies(expected_statuses)
+    observed_status_freq = Enum.frequencies(observed_statuses)
+
+    cond do
+      observed_type_freq != expected_type_freq ->
+        {:error,
+         """
+         contract drift: canonical type frequencies do not match fixture
+         expected type frequencies: #{inspect(expected_type_freq)}
+         observed type frequencies: #{inspect(observed_type_freq)}
+         observed timeline types: #{inspect(observed_types)}
+         """}
+
+      observed_status_freq != expected_status_freq ->
+        {:error,
+         """
+         contract drift: canonical tool status frequencies do not match fixture
+         expected status frequencies: #{inspect(expected_status_freq)}
+         observed status frequencies: #{inspect(observed_status_freq)}
+         observed tool statuses: #{inspect(observed_statuses)}
+         """}
+
+      true ->
+        :ok
+    end
   end
 
   defp unique_id(prefix) do
