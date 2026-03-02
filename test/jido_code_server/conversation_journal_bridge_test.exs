@@ -2,6 +2,8 @@ defmodule Jido.Code.Server.ConversationJournalBridgeTest do
   use ExUnit.Case, async: false
 
   alias Jido.Code.Server, as: Runtime
+  alias Jido.Code.Server.Conversation.JournalBridge
+  alias Jido.Code.Server.TestSupport.CanonicalMappingFixture
   alias Jido.Code.Server.TestSupport.RuntimeSignal
   alias Jido.Code.Server.TestSupport.TempProject
   alias JidoConversation
@@ -222,6 +224,34 @@ defmodule Jido.Code.Server.ConversationJournalBridgeTest do
     end)
   end
 
+  test "shared canonical mapping fixture stays in parity with journal bridge adapters" do
+    project_id = unique_id("journal-bridge-mapping-project")
+    conversation_id = unique_id("journal-bridge-mapping-conversation")
+
+    Enum.each(CanonicalMappingFixture.mapping_cases(), fn mapping ->
+      correlation_id = unique_id("mapping-correlation")
+
+      signal =
+        Jido.Signal.new!(mapping.conversation_type, mapping.data,
+          source: "/test/canonical_mapping_fixture",
+          extensions: %{"correlation_id" => correlation_id}
+        )
+
+      assert :ok = JournalBridge.ingest(project_id, conversation_id, signal)
+    end)
+
+    assert_eventually(fn ->
+      timeline = JidoConversation.timeline(project_id, conversation_id, [])
+
+      Enum.all?(CanonicalMappingFixture.mapping_cases(), fn mapping ->
+        Enum.any?(timeline, fn entry ->
+          entry.type == mapping.expected_canonical_type and
+            status_matches?(entry, mapping.expected_status)
+        end)
+      end)
+    end)
+  end
+
   test "canonical projections remain queryable after conversation stop" do
     root = TempProject.create!()
     on_exit(fn -> TempProject.cleanup(root) end)
@@ -284,4 +314,12 @@ defmodule Jido.Code.Server.ConversationJournalBridgeTest do
   end
 
   defp map_lookup(_map, _key), do: nil
+
+  defp status_matches?(_entry, nil), do: true
+
+  defp status_matches?(entry, expected_status) when is_binary(expected_status) do
+    metadata = map_lookup(entry, :metadata)
+    status = map_lookup(metadata, :status)
+    status == expected_status
+  end
 end

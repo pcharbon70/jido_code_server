@@ -350,9 +350,6 @@ defmodule Jido.Code.Server.Engine do
 
   defp validate_runtime_opt(:allow_tools, value), do: validate_string_list(value)
 
-  defp validate_runtime_opt(:conversation_orchestration, _value),
-    do: {:error, :removed_code_server_orchestration_is_default}
-
   defp validate_runtime_opt(key, value) when key in @passthrough_runtime_opts,
     do: {:ok, value}
 

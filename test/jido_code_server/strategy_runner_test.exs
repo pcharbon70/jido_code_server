@@ -102,11 +102,16 @@ defmodule Jido.Code.Server.StrategyRunnerTest.CancellableRunner do
 end
 
 defmodule Jido.Code.Server.StrategyRunnerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Jido.Code.Server.Project.StrategyRunner
   alias Jido.Code.Server.Project.StrategyRunner.Default, as: DefaultRunner
   alias Jido.Code.Server.Telemetry
+
+  setup do
+    Telemetry.reset()
+    :ok
+  end
 
   test "prepare resolves default strategy per mode" do
     envelope = %{
